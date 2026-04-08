@@ -59,23 +59,24 @@ iso-sd-boot target:
     mkdir -p {{output_dir}}
     OUTPUT_DIR=$(realpath "{{output_dir}}")
 
-    # Build squashfs and export boot files from the container image using
-    # podman unshare (user namespace).  This gives us uid 0 ownership in the
-    # squashfs (correct setuid/ownership) and avoids podman create/run which
-    # trigger buildah's /var/tmp scan and fail on SELinux hosts with
-    # root-owned systemd-private-* dirs.
+    # Build squashfs and export boot files using podman unshare (user namespace).
+    # podman create gives a writable upper layer so we can write containers-storage
+    # into the rootfs before squashfs is assembled.
     SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
     BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
-    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'" EXIT
+    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; podman rm -f {{target}}-live-build 2>/dev/null || true" EXIT
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
+    podman rm -f {{target}}-live-build 2>/dev/null || true
+    podman create --name {{target}}-live-build localhost/{{target}}-installer /bin/true
     podman unshare bash -c "
         set -euo pipefail
-        MOUNT=\$(podman image mount localhost/{{target}}-installer)
+        MOUNT=\$(podman mount {{target}}-live-build)
         PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH
 
         # Embed the Dakota OCI image into the squashfs containers-storage so that
-        # bootc install can run fully offline from the live ISO.  We use an
-        # oci-archive intermediate to decouple source and destination storage configs.
+        # bootc install can run fully offline from the live ISO.
+        # podman create gives a writable upper layer — image mount is read-only.
+        # Two-step skopeo copy decouples source and destination storage configs.
         PAYLOAD_OCI='${OUTPUT_DIR}/{{target}}-payload.oci.tar'
         SQUASHFS_STORAGE=\"\${MOUNT}/var/lib/containers/storage\"
         LIVE_RUNROOT=\"\$(mktemp -d /tmp/live-runroot-XXXXXX)\"
@@ -98,7 +99,7 @@ iso-sd-boot target:
         rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
         rm -rf \"\${LIVE_RUNROOT}\"
 
-        # Build squashfs directly from overlay — preserves correct UIDs (uid 0 = root)
+        # Build squashfs directly from writable container mount.
         # Compression preset: fast=zstd/3/128K (quick), release=zstd/15/1M (~20% smaller)
         SFS_LEVEL=3; SFS_BLOCK=131072
         [[ '{{compression}}' == 'release' ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
@@ -110,8 +111,9 @@ iso-sd-boot target:
             -cf '${BOOT_TAR}' \
             ./usr/lib/modules \
             ./usr/lib/systemd/boot/efi
-        podman image umount localhost/{{target}}-installer
+        podman umount {{target}}-live-build
     "
+    podman rm -f {{target}}-live-build
 
     # Run build-iso.sh directly on the host — no container needed.
     # All required tools (xorriso, mkfs.fat, mtools) are present.
