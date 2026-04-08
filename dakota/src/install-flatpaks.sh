@@ -26,9 +26,13 @@ flatpak remote-add --system --if-not-exists flathub \
 #   stable (default) → continuous   (latest stable build from main/prod)
 #   dev              → continuous-dev (latest dev build, tracks dev branch)
 RELEASE_TAG="continuous"
-[[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && RELEASE_TAG="continuous-dev"
+FLATPAK_FILENAME="org.bootcinstaller.Installer.flatpak"
+if [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]]; then
+    RELEASE_TAG="continuous-dev"
+    FLATPAK_FILENAME="org.bootcinstaller.Installer.Devel.flatpak"
+fi
 curl --retry 3 --location \
-    "https://github.com/tuna-os/tuna-installer/releases/download/${RELEASE_TAG}/org.bootcinstaller.Installer.flatpak" \
+    "https://github.com/tuna-os/tuna-installer/releases/download/${RELEASE_TAG}/${FLATPAK_FILENAME}" \
     -o /tmp/tuna-installer.flatpak
 INSTALLER_APP_ID="org.bootcinstaller.Installer"
 [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
