@@ -47,28 +47,38 @@ iso-sd-boot target:
     mkdir -p {{output_dir}}
     OUTPUT_DIR=$(realpath "{{output_dir}}")
 
-    # Export the live rootfs by mounting the image via podman unshare (user
-    # namespace) and tarring the overlay merged dir directly.  This avoids
-    # podman create/run which trigger buildah's /var/tmp scan and fail on
-    # SELinux hosts with root-owned systemd-private-* dirs present there.
-    echo "Exporting rootfs from localhost/{{target}}-installer..."
-    ROOTFS_TAR="${OUTPUT_DIR}/{{target}}-rootfs.tar"
-    trap "rm -f '${ROOTFS_TAR}'" EXIT
+    # Build squashfs and export boot files from the container image using
+    # podman unshare (user namespace).  This gives us uid 0 ownership in the
+    # squashfs (correct setuid/ownership) and avoids podman create/run which
+    # trigger buildah's /var/tmp scan and fail on SELinux hosts with
+    # root-owned systemd-private-* dirs.
+    SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
+    BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
+    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}'" EXIT
+    echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
     podman unshare bash -c "
         set -euo pipefail
         MOUNT=\$(podman image mount localhost/{{target}}-installer)
-        tar -C \"\$MOUNT\" --exclude=./proc --exclude=./sys --exclude=./dev \
-            -cf \"${ROOTFS_TAR}\" .
+        # Build squashfs directly from overlay — preserves correct UIDs (uid 0 = root)
+        PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH
+        mksquashfs \"\$MOUNT\" '${SQUASHFS}' \
+            -noappend -comp zstd -Xcompression-level 3 \
+            -e proc -e sys -e dev -e run -e tmp
+        # Export only boot files needed for ESP assembly
+        tar -C \"\$MOUNT\" \
+            -cf '${BOOT_TAR}' \
+            ./usr/lib/modules \
+            ./usr/lib/systemd/boot/efi
         podman image umount localhost/{{target}}-installer
     "
 
     # Run build-iso.sh directly on the host — no container needed.
-    # All required tools (xorriso, mksquashfs, mkfs.fat, mtools) are present.
+    # All required tools (xorriso, mkfs.fat, mtools) are present.
     # TMPDIR is redirected to OUTPUT_DIR so mktemp avoids the full /tmp tmpfs.
     # just always runs recipes from the justfile directory, so relative path works.
     TMPDIR="${OUTPUT_DIR}" \
     PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" \
-        bash "{{target}}/src/build-iso.sh" "${ROOTFS_TAR}" "${OUTPUT_DIR}/{{target}}-live.iso"
+        bash "{{target}}/src/build-iso.sh" "${BOOT_TAR}" "${SQUASHFS}" "${OUTPUT_DIR}/{{target}}-live.iso"
 
     echo "ISO ready: ${OUTPUT_DIR}/{{target}}-live.iso"
 

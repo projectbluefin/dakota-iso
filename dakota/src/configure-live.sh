@@ -131,3 +131,10 @@ DTEOF
 
 # Flatpaks are pre-installed in a separate cached layer (install-flatpaks.sh).
 # Nothing to do here.
+
+# ── Live network defaults ─────────────────────────────────────────────────────
+# /etc/hostname is bind-mounted by the container runtime during builds; writing
+# to it in a RUN step doesn't persist into the image layer.  Use tmpfiles.d to
+# create it at first boot instead.
+mkdir -p /usr/lib/tmpfiles.d
+echo 'f /etc/hostname 0644 - - - dakota-live' > /usr/lib/tmpfiles.d/live-hostname.conf

@@ -60,8 +60,7 @@ RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
 # Each run reconciles the repo to match src/flatpaks: installs/updates what's
 # new, removes what's been dropped.  Only deltas are downloaded on rebuilds.
 COPY src/flatpaks /tmp/flatpaks-list
-RUN --mount=type=cache,id=flatpak-system,sharing=locked,target=/var/lib/flatpak \
-    --mount=type=bind,source=src,target=/src \
+RUN --mount=type=bind,source=src,target=/src \
     /src/install-flatpaks.sh
 
 # ── Live-environment configure layer (always fresh) ──────────────────────────

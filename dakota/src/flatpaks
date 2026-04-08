@@ -1,6 +1,6 @@
 # Bluefin system flatpaks
-# Installed into the live squashfs at build time; copied offline to the
-# target by tuna-installer during installation.
+# Installed into the live squashfs at build time (committed to layer, not cache).
+# Copied offline to the target by tuna-installer during installation.
 #
 # Note: org.bootcinstaller.Installer is installed separately via the GitHub
 # Releases bundle (not on Flathub) earlier in build.sh.

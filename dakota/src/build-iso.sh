@@ -1,8 +1,10 @@
 #!/usr/bin/bash
-# build-iso.sh <rootfs-tar> <output-iso>
+# build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>
 #
-# Creates a UEFI-bootable systemd-boot live ISO from a clean Dakota rootfs
-# tarball (produced by `podman export`).
+# Creates a UEFI-bootable systemd-boot live ISO from pre-built components:
+#   <boot-files-tar>  — tar containing only kernel + EFI files from the rootfs
+#   <squashfs-img>    — squashfs of the full live rootfs (built with correct UIDs
+#                       via mksquashfs inside podman unshare)
 #
 # Boot architecture (no GRUB2, no shim):
 #   El Torito EFI entry → EFI/efi.img (FAT ESP image containing):
@@ -23,43 +25,31 @@
 
 set -euo pipefail
 
-ROOTFS_TAR="${1:?Usage: build-iso.sh <rootfs-tar> <output-iso>}"
-OUTPUT_ISO="${2:?Usage: build-iso.sh <rootfs-tar> <output-iso>}"
+BOOT_TAR="${1:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>}"
+SQUASHFS_SRC="${2:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>}"
+OUTPUT_ISO="${3:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>}"
 LABEL="DAKOTA_LIVE"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/iso-build.XXXXXX")
 trap "chmod -R u+rwX '${WORK}' 2>/dev/null; rm -rf '${WORK}'" EXIT
 
-ROOTFS="${WORK}/rootfs"
+BOOT_DIR="${WORK}/boot-files"
 ISO_ROOT="${WORK}/iso-root"
 ESP_STAGING="${WORK}/esp-staging"
 
-mkdir -p "${ROOTFS}" "${ISO_ROOT}/EFI" "${ISO_ROOT}/LiveOS"
+mkdir -p "${BOOT_DIR}" "${ISO_ROOT}/EFI" "${ISO_ROOT}/LiveOS"
 
-# ── Extract the clean Dakota rootfs ─────────────────────────────────────────
-echo ">>> Extracting rootfs..."
-tar -xf "${ROOTFS_TAR}" -C "${ROOTFS}" \
-    --exclude ./proc \
-    --exclude ./sys \
-    --exclude ./dev \
-    --exclude ./run \
-    --exclude ./tmp \
-    --exclude ./etc/hosts \
-    --exclude ./etc/resolv.conf \
-    --exclude ./etc/hostname
-
-# Reset container-injected network files to live-appropriate defaults
-printf '127.0.0.1\tlocalhost\n::1\t\tlocalhost\n' > "${ROOTFS}/etc/hosts"
-echo ""          > "${ROOTFS}/etc/resolv.conf"
-echo "dakota-live" > "${ROOTFS}/etc/hostname"
+# ── Extract boot files (kernel, initramfs, systemd-boot EFI) ─────────────────
+echo ">>> Extracting boot files..."
+tar -xf "${BOOT_TAR}" -C "${BOOT_DIR}" --no-same-owner
 
 # ── Locate kernel ────────────────────────────────────────────────────────────
-kernel=$(ls "${ROOTFS}/usr/lib/modules" | sort -V | tail -1)
+kernel=$(ls "${BOOT_DIR}/usr/lib/modules" | sort -V | tail -1)
 echo ">>> Kernel: ${kernel}"
 
-VMLINUZ="${ROOTFS}/usr/lib/modules/${kernel}/vmlinuz"
-INITRD="${ROOTFS}/usr/lib/modules/${kernel}/initramfs.img"
-BOOTX64="${ROOTFS}/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
+VMLINUZ="${BOOT_DIR}/usr/lib/modules/${kernel}/vmlinuz"
+INITRD="${BOOT_DIR}/usr/lib/modules/${kernel}/initramfs.img"
+BOOTX64="${BOOT_DIR}/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
 
 for f in "${VMLINUZ}" "${INITRD}" "${BOOTX64}"; do
     [[ -f "${f}" ]] || { echo "ERROR: missing ${f}"; exit 1; }
@@ -127,13 +117,9 @@ mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/entries/dakota-live.conf"  ::/loade
 mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/vmlinuz"           ::/images/pxeboot/vmlinuz
 mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/initrd.img"        ::/images/pxeboot/initrd.img
 
-# ── Squashfs of the full live rootfs ─────────────────────────────────────────
-echo ">>> Creating squashfs (this may take several minutes)..."
-mksquashfs "${ROOTFS}" "${ISO_ROOT}/LiveOS/squashfs.img" \
-    -noappend \
-    -comp zstd \
-    -Xcompression-level 3
-
+# ── Place the pre-built squashfs ─────────────────────────────────────────────
+echo ">>> Copying squashfs..."
+cp "${SQUASHFS_SRC}" "${ISO_ROOT}/LiveOS/squashfs.img"
 echo ">>> Squashfs: $(du -sh "${ISO_ROOT}/LiveOS/squashfs.img" | cut -f1)"
 
 # ── Assemble the ISO with xorriso ────────────────────────────────────────────
