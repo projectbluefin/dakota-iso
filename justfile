@@ -43,26 +43,17 @@ iso-sd-boot target:
     #!/usr/bin/bash
     set -euo pipefail
 
-    # Clean up stale buildah working dirs from interrupted previous builds.
-    # These are created in /var/tmp by podman run --privileged when the process
-    # is killed before it can clean up.  Safe to remove: they're temp dirs.
-    sudo rm -rf /var/tmp/buildah[0-9]* 2>/dev/null || true
-    # Also remove any exited/dead containers from prior interrupted runs.
-    podman ps -aq --filter status=exited --filter status=dead | xargs -r podman rm 2>/dev/null || true
-
     just debug={{debug}} container {{target}}
-    just iso-builder {{target}}
     mkdir -p {{output_dir}}
-    # Resolve to absolute path so Podman volume mount doesn't treat a relative
-    # path like "output" as a named volume instead of a host directory.
     OUTPUT_DIR=$(realpath "{{output_dir}}")
 
     # Export the live rootfs by mounting the image via podman unshare (user
     # namespace) and tarring the overlay merged dir directly.  This avoids
-    # `podman create` which triggers buildah's /var/tmp cleanup scan and fails
-    # on SELinux-enforcing hosts with root-owned systemd-private-* dirs there.
+    # podman create/run which trigger buildah's /var/tmp scan and fail on
+    # SELinux hosts with root-owned systemd-private-* dirs present there.
     echo "Exporting rootfs from localhost/{{target}}-installer..."
     ROOTFS_TAR="${OUTPUT_DIR}/{{target}}-rootfs.tar"
+    trap "rm -f '${ROOTFS_TAR}'" EXIT
     podman unshare bash -c "
         set -euo pipefail
         MOUNT=\$(podman image mount localhost/{{target}}-installer)
@@ -71,15 +62,14 @@ iso-sd-boot target:
         podman image umount localhost/{{target}}-installer
     "
 
-    # Run the Debian ISO builder against the exported rootfs tarball.
-    # Trap ensures the rootfs tar is cleaned up even if the build is interrupted.
-    trap "rm -f '${ROOTFS_TAR}'" EXIT
-    podman run --rm --privileged \
-        -v "${OUTPUT_DIR}:/output:Z" \
-        -v "${ROOTFS_TAR}:/rootfs.tar:ro" \
-        localhost/{{target}}-iso-builder \
-        /rootfs.tar \
-        /output/{{target}}-live.iso
+    # Run build-iso.sh directly on the host — no container needed.
+    # All required tools (xorriso, mksquashfs, mkfs.fat, mtools) are present.
+    # TMPDIR is redirected to OUTPUT_DIR so mktemp avoids the full /tmp tmpfs.
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    BUILD_ISO="${SCRIPT_DIR}/{{target}}/src/build-iso.sh"
+    TMPDIR="${OUTPUT_DIR}" \
+    PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" \
+        bash "${BUILD_ISO}" "${ROOTFS_TAR}" "${OUTPUT_DIR}/{{target}}-live.iso"
 
     echo "ISO ready: ${OUTPUT_DIR}/{{target}}-live.iso"
 
