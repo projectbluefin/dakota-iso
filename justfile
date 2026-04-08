@@ -60,27 +60,29 @@ iso-sd-boot target:
     OUTPUT_DIR=$(realpath "{{output_dir}}")
 
     # Build squashfs and export boot files using podman unshare (user namespace).
-    # podman create gives a writable upper layer so we can write containers-storage
-    # into the rootfs before squashfs is assembled.
+    #
+    # The OCI payload (for offline install) is built into a staging directory on
+    # /var (plenty of space) rather than inside the container's writable layer.
+    # mksquashfs merges the image rootfs + staging dir, deduplicating blocks that
+    # appear in both (most of the OCI layer data is identical to the live rootfs).
+    # -processors 4 caps memory usage — default (all CPUs) OOMs on this machine.
     SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
     BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
-    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; podman rm -f {{target}}-live-build 2>/dev/null || true" EXIT
+    CS_STAGING="${OUTPUT_DIR}/{{target}}-cs-staging"
+    trap "rm -rf '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar' '${CS_STAGING}'" EXIT
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
-    podman rm -f {{target}}-live-build 2>/dev/null || true
-    podman create --name {{target}}-live-build localhost/{{target}}-installer /bin/true
     podman unshare bash -c "
         set -euo pipefail
-        MOUNT=\$(podman mount {{target}}-live-build)
+        MOUNT=\$(podman image mount localhost/{{target}}-installer)
         PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH
 
-        # Embed the Dakota OCI image into the squashfs containers-storage so that
-        # bootc install can run fully offline from the live ISO.
-        # podman create gives a writable upper layer — image mount is read-only.
+        # Populate containers-storage in a staging dir on /var (197G free).
         # Two-step skopeo copy decouples source and destination storage configs.
         PAYLOAD_OCI='${OUTPUT_DIR}/{{target}}-payload.oci.tar'
-        SQUASHFS_STORAGE=\"\${MOUNT}/var/lib/containers/storage\"
-        LIVE_RUNROOT=\"\$(mktemp -d /tmp/live-runroot-XXXXXX)\"
-        STORAGE_CONF=\"\$(mktemp /tmp/live-storage-XXXXXX.conf)\"
+        CS_STAGING='${CS_STAGING}'
+        SQUASHFS_STORAGE=\"\${CS_STAGING}/var/lib/containers/storage\"
+        LIVE_RUNROOT=\"\$(mktemp -d '${OUTPUT_DIR}'/live-runroot-XXXXXX)\"
+        STORAGE_CONF=\"\$(mktemp '${OUTPUT_DIR}'/live-storage-XXXXXX.conf)\"
         mkdir -p \"\${SQUASHFS_STORAGE}\"
         printf '[storage]\ndriver = \"vfs\"\nrunroot = \"%s\"\ngraphroot = \"%s\"\n' \
             \"\${LIVE_RUNROOT}\" \"\${SQUASHFS_STORAGE}\" > \"\${STORAGE_CONF}\"
@@ -99,21 +101,25 @@ iso-sd-boot target:
         rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
         rm -rf \"\${LIVE_RUNROOT}\"
 
-        # Build squashfs directly from writable container mount.
+        # Build squashfs from the live rootfs + containers-storage staging dir.
+        # mksquashfs merges multiple source dirs at root; dedup removes blocks
+        # shared between the live env and the OCI layers (same base image).
+        # -processors 4: caps parallelism to avoid OOM (32 workers exhausts RAM).
         # Compression preset: fast=zstd/3/128K (quick), release=zstd/15/1M (~20% smaller)
         SFS_LEVEL=3; SFS_BLOCK=131072
         [[ '{{compression}}' == 'release' ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
-        mksquashfs \"\$MOUNT\" '${SQUASHFS}' \
+        mksquashfs \"\$MOUNT\" \"\${CS_STAGING}\" '${SQUASHFS}' \
             -noappend -comp zstd -Xcompression-level \${SFS_LEVEL} -b \${SFS_BLOCK} \
+            -processors 4 \
             -e proc -e sys -e dev -e run -e tmp
         # Export only boot files needed for ESP assembly
         tar -C \"\$MOUNT\" \
             -cf '${BOOT_TAR}' \
             ./usr/lib/modules \
             ./usr/lib/systemd/boot/efi
-        podman umount {{target}}-live-build
+        podman image umount localhost/{{target}}-installer
     "
-    podman rm -f {{target}}-live-build
+    rm -rf "${CS_STAGING}"
 
     # Run build-iso.sh directly on the host — no container needed.
     # All required tools (xorriso, mkfs.fat, mtools) are present.
