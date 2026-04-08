@@ -117,37 +117,5 @@ Type=Application
 X-GNOME-Autostart-enabled=true
 DTEOF
 
-# ── Flatpak pre-installation ──────────────────────────────────────────────────
-# Install tuna-installer + Bluefin system flatpaks into the live squashfs.
-# Requires network at build time; adds ~1-3 GB to the ISO.
-#
-# flatpak system installs talk to flatpak-system-helper via D-Bus, so we start
-# the system bus first.  CAP_SYS_ADMIN (granted by `just container`) allows
-# dbus-daemon to create its socket under /run/dbus.
-#
-# TMPDIR=/dev/shm: overlayfs (used inside Podman builds) does not support
-# O_TMPFILE, which flatpak uses for atomic downloads from Flathub.
-# /dev/shm is always a real tmpfs and supports O_TMPFILE.
-export TMPDIR=/dev/shm
-mkdir -p /run/dbus
-dbus-daemon --system --fork --nopidfile
-sleep 1
-
-flatpak remote-add --system --if-not-exists flathub \
-    https://dl.flathub.org/repo/flathub.flatpakrepo
-
-# tuna-installer: bundle from GitHub Releases per README install instructions
-# (not yet on Flathub — see https://github.com/tuna-os/tuna-installer#installing)
-curl --retry 3 --location \
-    https://github.com/tuna-os/tuna-installer/releases/download/continuous/org.bootcinstaller.Installer.flatpak \
-    -o /tmp/tuna-installer.flatpak
-flatpak install --system --noninteractive --bundle /tmp/tuna-installer.flatpak
-rm /tmp/tuna-installer.flatpak
-
-# Grant the installer access to /etc so it can read our branding overrides.
-# The bundle may not ship with filesystem=host; override ensures it works.
-flatpak override --system --filesystem=/etc:ro org.bootcinstaller.Installer
-
-# Remaining Bluefin system flatpaks from Flathub
-readarray -t FLATPAKS < <(grep -v '^[[:space:]]*#' "$SCRIPT_DIR/flatpaks" | grep -v '^[[:space:]]*$')
-flatpak install --system --noninteractive --or-update flathub "${FLATPAKS[@]}"
+# Flatpaks are pre-installed in a separate cached layer (install-flatpaks.sh).
+# Nothing to do here.

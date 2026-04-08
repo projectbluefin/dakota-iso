@@ -55,5 +55,15 @@ RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
     mv /tmp/initramfs.img "/usr/lib/modules/${kernel}/initramfs.img" && \
     echo "Replaced initramfs for kernel ${kernel}"
 
-# Apply live-environment setup: liveuser, GDM autologin, tuna-installer config
-RUN --mount=type=bind,source=src,target=/src /src/build.sh
+# ── Flatpak install layer (cached) ───────────────────────────────────────────
+# COPY the flatpaks list and install script so their content is the cache key.
+# This layer is only re-run when the flatpaks list or install script changes;
+# all other src/ edits skip straight to the configure layer below.
+COPY src/flatpaks /tmp/flatpaks-list
+COPY src/install-flatpaks.sh /tmp/install-flatpaks.sh
+RUN chmod +x /tmp/install-flatpaks.sh && /tmp/install-flatpaks.sh
+
+# ── Live-environment configure layer (always fresh) ──────────────────────────
+# COPY all of src/ so any change to config files busts this layer's cache.
+COPY src/ /tmp/src/
+RUN chmod +x /tmp/src/configure-live.sh && /tmp/src/configure-live.sh

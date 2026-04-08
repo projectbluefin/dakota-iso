@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      packages: read
+      packages: write
       pull-requests: write
 
     steps:
@@ -46,7 +46,7 @@ jobs:
 
       - name: Build Live ISO
         run: |
-          sudo just output_dir=output iso-sd-boot dakota
+          sudo WRITE_CACHE=1 just output_dir=output iso-sd-boot dakota
 
       - name: Compute ISO name
         id: iso

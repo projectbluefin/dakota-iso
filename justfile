@@ -10,12 +10,26 @@ output_dir := "output"
 # Never use debug=1 for production/release ISOs.
 debug := "0"
 
+# OCI reference used for Podman layer cache.
+# Local builds pull the cache (read-only); CI also pushes it (WRITE_CACHE=1).
+cache_ref := "ghcr.io/hanthor/dakota-iso:buildcache"
+
 # Helper: returns "--bootc-installer-payload-ref <ref>" or "" if no payload_ref file
 _payload_ref_flag target:
     @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
 
 container target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    # Always attempt to pull the layer cache from the registry (read-only, fails
+    # gracefully if the image doesn't exist yet).  CI sets WRITE_CACHE=1 to also
+    # push updated layers after a successful build.
+    cache_args=(--layers --cache-from {{cache_ref}})
+    if [[ "${WRITE_CACHE:-0}" == "1" ]]; then
+        cache_args+=(--cache-to {{cache_ref}})
+    fi
     podman build --cap-add sys_admin --security-opt label=disable \
+        "${cache_args[@]}" \
         --build-arg DEBUG={{debug}} \
         -t {{target}}-installer ./{{target}}
 
