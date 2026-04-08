@@ -63,12 +63,14 @@ systemctl enable var-tmp.mount
 install -Dm644 "$SCRIPT_DIR/dakota.png" /usr/share/pixmaps/dakota.png
 
 # ── Installer configuration ───────────────────────────────────────────────────
-# /etc/bootc-installer/ is the path read by the current installer.
-# /etc/tuna-installer/ is kept for compatibility with older builds.
-mkdir -p /etc/bootc-installer /etc/tuna-installer
-cp "$SCRIPT_DIR/etc/bootc-installer/images.json" /etc/bootc-installer/images.json
-cp "$SCRIPT_DIR/etc/tuna-installer/images.json"  /etc/tuna-installer/images.json
-cp "$SCRIPT_DIR/etc/tuna-installer/recipe.json"  /etc/tuna-installer/recipe.json
+# /etc/bootc-installer/images.json  — image catalog override (current installer)
+# /etc/tunaos-installer/recipe.json — install flow/branding (current installer)
+# /etc/tuna-installer/ kept for compatibility with older installer builds
+mkdir -p /etc/bootc-installer /etc/tunaos-installer /etc/tuna-installer
+cp "$SCRIPT_DIR/etc/bootc-installer/images.json"   /etc/bootc-installer/images.json
+cp "$SCRIPT_DIR/etc/tunaos-installer/recipe.json"  /etc/tunaos-installer/recipe.json
+cp "$SCRIPT_DIR/etc/tuna-installer/images.json"    /etc/tuna-installer/images.json
+cp "$SCRIPT_DIR/etc/tuna-installer/recipe.json"    /etc/tuna-installer/recipe.json
 
 # Autostart tuna-installer when the live GNOME session begins
 mkdir -p /etc/xdg/autostart

@@ -1,0 +1,36 @@
+{
+  "log_file": "/var/log/bootc-installer.log",
+  "distro_name": "Dakota",
+  "distro_logo": "resource:///org/bootcinstaller/Installer/images/dakota.png",
+  "tour": {
+    "welcome": {
+      "image": "resource:///org/bootcinstaller/Installer/images/dakota.png",
+      "title": "Installing Dakota",
+      "description": "This will take a few minutes. Dakota is a GNOME OS-based workstation powered by composefs and systemd-boot."
+    },
+    "completed": {
+      "resource": "/org/bootcinstaller/Installer/assets/complete.svg",
+      "title": "Installation Complete",
+      "description": "Dakota is ready. Remove the installation media and reboot."
+    }
+  },
+  "steps": {
+    "welcome": {
+      "template": "welcome",
+      "protected": true
+    },
+    "image": {
+      "template": "image",
+      "protected": true
+    },
+    "disk": {
+      "template": "disk"
+    },
+    "encryption": {
+      "template": "encryption"
+    },
+    "user": {
+      "template": "user"
+    }
+  }
+}
