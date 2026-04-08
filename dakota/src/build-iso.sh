@@ -27,8 +27,8 @@ ROOTFS_TAR="${1:?Usage: build-iso.sh <rootfs-tar> <output-iso>}"
 OUTPUT_ISO="${2:?Usage: build-iso.sh <rootfs-tar> <output-iso>}"
 LABEL="DAKOTA_LIVE"
 
-WORK=$(mktemp -d /tmp/iso-build.XXXXXX)
-trap "rm -rf ${WORK}" EXIT
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/iso-build.XXXXXX")
+trap "chmod -R u+rwX '${WORK}' 2>/dev/null; rm -rf '${WORK}'" EXIT
 
 ROOTFS="${WORK}/rootfs"
 ISO_ROOT="${WORK}/iso-root"
