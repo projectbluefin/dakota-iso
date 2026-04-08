@@ -49,20 +49,19 @@ iso-sd-boot target:
     # path like "output" as a named volume instead of a host directory.
     OUTPUT_DIR=$(realpath "{{output_dir}}")
 
-    # Redirect podman/buildah temp dir to a user-owned location so it never
-    # scans /var/tmp (which contains root-owned systemd-private-* dirs on
-    # SELinux-enforcing hosts that cause EPERM).  CI runners use /tmp by default
-    # and won't have stale dirs, so this is a safe cross-env override.
-    PODMAN_TMPDIR="${HOME}/.local/share/containers/tmp"
-    mkdir -p "${PODMAN_TMPDIR}"
-    export TMPDIR="${PODMAN_TMPDIR}"
-
-    # Export a clean merged rootfs from the installer image.
+    # Export the live rootfs by mounting the image via podman unshare (user
+    # namespace) and tarring the overlay merged dir directly.  This avoids
+    # `podman create` which triggers buildah's /var/tmp cleanup scan and fails
+    # on SELinux-enforcing hosts with root-owned systemd-private-* dirs there.
     echo "Exporting rootfs from localhost/{{target}}-installer..."
-    ROOTFS_TAR="${HOME}/{{target}}-rootfs.tar"
-    CID=$(TMPDIR="${PODMAN_TMPDIR}" podman create localhost/{{target}}-installer /bin/true)
-    TMPDIR="${PODMAN_TMPDIR}" podman export "${CID}" -o "${ROOTFS_TAR}"
-    podman rm "${CID}" >/dev/null
+    ROOTFS_TAR="${OUTPUT_DIR}/{{target}}-rootfs.tar"
+    podman unshare bash -c "
+        set -euo pipefail
+        MOUNT=\$(podman image mount localhost/{{target}}-installer)
+        tar -C \"\$MOUNT\" --exclude=./proc --exclude=./sys --exclude=./dev \
+            -cf \"${ROOTFS_TAR}\" .
+        podman image umount localhost/{{target}}-installer
+    "
 
     # Run the Debian ISO builder against the exported rootfs tarball
     podman run --rm --privileged \
