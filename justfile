@@ -42,6 +42,14 @@ iso-builder target:
 iso-sd-boot target:
     #!/usr/bin/bash
     set -euo pipefail
+
+    # Clean up stale buildah working dirs from interrupted previous builds.
+    # These are created in /var/tmp by podman run --privileged when the process
+    # is killed before it can clean up.  Safe to remove: they're temp dirs.
+    sudo rm -rf /var/tmp/buildah[0-9]* 2>/dev/null || true
+    # Also remove any exited/dead containers from prior interrupted runs.
+    podman ps -aq --filter status=exited --filter status=dead | xargs -r podman rm 2>/dev/null || true
+
     just debug={{debug}} container {{target}}
     just iso-builder {{target}}
     mkdir -p {{output_dir}}
@@ -63,7 +71,9 @@ iso-sd-boot target:
         podman image umount localhost/{{target}}-installer
     "
 
-    # Run the Debian ISO builder against the exported rootfs tarball
+    # Run the Debian ISO builder against the exported rootfs tarball.
+    # Trap ensures the rootfs tar is cleaned up even if the build is interrupted.
+    trap "rm -f '${ROOTFS_TAR}'" EXIT
     podman run --rm --privileged \
         -v "${OUTPUT_DIR}:/output:Z" \
         -v "${ROOTFS_TAR}:/rootfs.tar:ro" \
@@ -71,8 +81,6 @@ iso-sd-boot target:
         /rootfs.tar \
         /output/{{target}}-live.iso
 
-    # Clean up the intermediate rootfs tarball
-    rm -f "${ROOTFS_TAR}"
     echo "ISO ready: ${OUTPUT_DIR}/{{target}}-live.iso"
 
 iso target:
