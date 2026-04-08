@@ -85,6 +85,11 @@ DTEOF
 # flatpak system installs talk to flatpak-system-helper via D-Bus, so we start
 # the system bus first.  CAP_SYS_ADMIN (granted by `just container`) allows
 # dbus-daemon to create its socket under /run/dbus.
+#
+# TMPDIR=/dev/shm: overlayfs (used inside Podman builds) does not support
+# O_TMPFILE, which flatpak uses for atomic downloads from Flathub.
+# /dev/shm is always a real tmpfs and supports O_TMPFILE.
+export TMPDIR=/dev/shm
 mkdir -p /run/dbus
 dbus-daemon --system --fork --nopidfile
 sleep 1

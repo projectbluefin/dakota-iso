@@ -145,7 +145,9 @@ xorriso -as mkisofs \
     -iso-level 3 \
     -r \
     -V "${LABEL}" \
-    --efi-boot EFI/efi.img \
+    -eltorito-alt-boot \
+    -e EFI/efi.img \
+    -no-emul-boot \
     -efi-boot-part \
     --efi-boot-image \
     -o "${OUTPUT_ISO}" \

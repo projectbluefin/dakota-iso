@@ -32,25 +32,25 @@ iso-sd-boot target:
     set -euo pipefail
     just container {{target}}
     just iso-builder {{target}}
-    mkdir -p output
+    mkdir -p /var/home/james/dakota-iso-output
 
     # Export a clean merged rootfs from the installer image.
     # podman export gives the fully merged OCI layers as a flat tar.
     echo "Exporting rootfs from localhost/{{target}}-installer..."
     CID=$(podman create localhost/{{target}}-installer /bin/true)
-    podman export "${CID}" -o output/{{target}}-rootfs.tar
+    podman export "${CID}" -o /var/home/james/dakota-iso-output/{{target}}-rootfs.tar
     podman rm "${CID}" >/dev/null
 
     # Run the Debian ISO builder against the exported rootfs tarball
     podman run --rm --privileged \
-        -v "${PWD}/output:/output:Z" \
+        -v "/var/home/james/dakota-iso-output:/output:Z" \
         localhost/{{target}}-iso-builder \
         /output/{{target}}-rootfs.tar \
         /output/{{target}}-live.iso
 
     # Clean up the intermediate rootfs tarball
-    rm -f output/{{target}}-rootfs.tar
-    echo "ISO ready: output/{{target}}-live.iso"
+    rm -f /var/home/james/dakota-iso-output/{{target}}-rootfs.tar
+    echo "ISO ready: /var/home/james/dakota-iso-output/{{target}}-live.iso"
 
 iso target:
     {{image-builder}} build --bootc-ref localhost/{{target}}-installer --bootc-default-fs ext4 `just _payload_ref_flag {{target}}` bootc-generic-iso
@@ -92,7 +92,7 @@ iso-in-container target:
     #!/bin/bash
     set -euo pipefail
     just container {{target}}
-    mkdir -p output
+    mkdir -p /var/home/james/dakota-iso-output
 
     PAYLOAD_FLAG="$(just _payload_ref_flag {{target}})"
 
@@ -169,7 +169,7 @@ boot-iso-serial target:
     #!/usr/bin/bash
     set -euo pipefail
     ISO=$(ls \
-        output/{{target}}-live.iso \
+        /var/home/james/dakota-iso-output/{{target}}-live.iso \
         output/bootiso/install.iso \
         output/bootc-{{target}}*.iso \
         2>/dev/null | head -1 || true)

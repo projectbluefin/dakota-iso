@@ -1,9 +1,11 @@
-# Bluefin system flatpaks + tuna-installer
+# Bluefin system flatpaks
 # Installed into the live squashfs at build time; copied offline to the
 # target by tuna-installer during installation.
 #
+# Note: org.bootcinstaller.Installer is installed separately via the GitHub
+# Releases bundle (not on Flathub) earlier in build.sh.
+#
 # Format: one app ID per line, resolved from the flathub remote.
-org.bootcinstaller.Installer
 com.github.PintaProject.Pinta
 com.github.tchx84.Flatseal
 com.mattjakeman.ExtensionManager
