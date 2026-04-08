@@ -32,12 +32,15 @@ passwd --delete liveuser
 # Never enabled in production ISOs.
 if [[ "${DEBUG:-0}" == "1" ]]; then
     echo "liveuser:live" | chpasswd
-    systemctl enable sshd
+    usermod -aG wheel liveuser
+    # systemctl enable doesn't work in a container build; create the symlink directly
+    mkdir -p /etc/systemd/system/multi-user.target.wants
+    ln -sf /usr/lib/systemd/system/sshd.service \
+        /etc/systemd/system/multi-user.target.wants/sshd.service
     cat >> /etc/ssh/sshd_config << 'SSHEOF'
 PermitEmptyPasswords no
 PasswordAuthentication yes
 SSHEOF
-    echo "liveuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/liveuser
 fi
 
 # Skip gnome-initial-setup in the live session so GNOME Shell starts directly
