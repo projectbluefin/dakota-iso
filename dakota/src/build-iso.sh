@@ -108,13 +108,24 @@ echo ">>> Creating ${ESP_MB} MiB FAT ESP image..."
 truncate -s "${ESP_MB}M" "${ESP_IMG}"
 mkfs.fat -F 32 -n "ESP" "${ESP_IMG}"
 
-# Mount the FAT image via loop and copy the ESP staging tree
-LOOP_MNT="${WORK}/esp-mount"
-mkdir -p "${LOOP_MNT}"
-mount -o loop "${ESP_IMG}" "${LOOP_MNT}"
-cp -r "${ESP_STAGING}/." "${LOOP_MNT}/"
-sync
-umount "${LOOP_MNT}"
+# Populate the FAT image using mtools — no loop mount required, works
+# in unprivileged/restricted containers.
+# MTOOLS_SKIP_CHECK=1 suppresses geometry-mismatch warnings on raw images.
+export MTOOLS_SKIP_CHECK=1
+
+mmd -i "${ESP_IMG}" \
+    ::/EFI \
+    ::/EFI/BOOT \
+    ::/loader \
+    ::/loader/entries \
+    ::/images \
+    ::/images/pxeboot
+
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/EFI/BOOT/BOOTX64.EFI"            ::/EFI/BOOT/BOOTX64.EFI
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/loader.conf"               ::/loader/loader.conf
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/entries/dakota-live.conf"  ::/loader/entries/dakota-live.conf
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/vmlinuz"           ::/images/pxeboot/vmlinuz
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/initrd.img"        ::/images/pxeboot/initrd.img
 
 # ── Squashfs of the full live rootfs ─────────────────────────────────────────
 echo ">>> Creating squashfs (this may take several minutes)..."
