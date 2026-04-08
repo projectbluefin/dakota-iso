@@ -15,6 +15,12 @@ debug := "0"
 # Example: just installer_channel=dev iso-sd-boot dakota
 installer_channel := "stable"
 
+# Squashfs compression preset:
+#   fast    (default) — zstd level 3,  128K blocks — quick local builds/CI
+#   release           — zstd level 15, 1M blocks   — ~20% smaller, ~5× slower
+# Example: just compression=release iso-sd-boot dakota
+compression := "fast"
+
 # Helper: returns "--bootc-installer-payload-ref <ref>" or "" if no payload_ref file
 _payload_ref_flag target:
     @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
@@ -49,7 +55,7 @@ iso-sd-boot target:
     #!/usr/bin/bash
     set -euo pipefail
 
-    just debug={{debug}} container {{target}}
+    just debug={{debug}} installer_channel={{installer_channel}} container {{target}}
     mkdir -p {{output_dir}}
     OUTPUT_DIR=$(realpath "{{output_dir}}")
 
@@ -93,8 +99,11 @@ iso-sd-boot target:
         rm -rf \"\${LIVE_RUNROOT}\"
 
         # Build squashfs directly from overlay — preserves correct UIDs (uid 0 = root)
+        # Compression preset: fast=zstd/3/128K (quick), release=zstd/15/1M (~20% smaller)
+        SFS_LEVEL=3; SFS_BLOCK=131072
+        [[ '{{compression}}' == 'release' ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
         mksquashfs \"\$MOUNT\" '${SQUASHFS}' \
-            -noappend -comp zstd -Xcompression-level 3 \
+            -noappend -comp zstd -Xcompression-level \${SFS_LEVEL} -b \${SFS_BLOCK} \
             -e proc -e sys -e dev -e run -e tmp
         # Export only boot files needed for ESP assembly
         tar -C \"\$MOUNT\" \

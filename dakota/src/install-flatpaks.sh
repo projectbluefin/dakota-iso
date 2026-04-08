@@ -30,11 +30,14 @@ RELEASE_TAG="continuous"
 curl --retry 3 --location \
     "https://github.com/tuna-os/tuna-installer/releases/download/${RELEASE_TAG}/org.bootcinstaller.Installer.flatpak" \
     -o /tmp/tuna-installer.flatpak
+INSTALLER_APP_ID="org.bootcinstaller.Installer"
+[[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
+
 flatpak install --system --noninteractive --bundle /tmp/tuna-installer.flatpak || \
-    flatpak update --system --noninteractive org.bootcinstaller.Installer
+    flatpak update --system --noninteractive "${INSTALLER_APP_ID}"
 rm /tmp/tuna-installer.flatpak
 
-flatpak override --system --filesystem=/etc:ro org.bootcinstaller.Installer
+flatpak override --system --filesystem=/etc:ro "${INSTALLER_APP_ID}"
 
 # ── Reconcile Flathub apps against the wanted list ───────────────────────────
 # In debug mode, skip the full Flathub app list to keep builds fast.
@@ -52,8 +55,9 @@ flatpak install --system --noninteractive --no-related --or-update flathub "${WA
 # Remove any system app that is no longer in the wanted list
 readarray -t INSTALLED < <(flatpak list --app --system --columns=application 2>/dev/null || true)
 for app in "${INSTALLED[@]}"; do
-    # Keep the installer regardless
+    # Keep the installer regardless (stable or devel app ID)
     [[ "$app" == "org.bootcinstaller.Installer" ]] && continue
+    [[ "$app" == "org.bootcinstaller.Installer.Devel" ]] && continue
     if [[ ! " ${WANTED[*]} " =~ " ${app} " ]]; then
         echo "Removing dropped flatpak: $app"
         flatpak uninstall --system --noninteractive "$app" || true

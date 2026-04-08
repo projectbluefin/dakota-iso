@@ -118,12 +118,16 @@ mkdir -p /etc/bootc-installer
 cp "$SCRIPT_DIR/etc/bootc-installer/images.json" /etc/bootc-installer/images.json
 cp "$SCRIPT_DIR/etc/bootc-installer/recipe.json" /etc/bootc-installer/recipe.json
 
-# Autostart tuna-installer when the live GNOME session begins
+# ── Installer autostart ───────────────────────────────────────────────────────
+# App ID differs between stable and dev channel builds.
+INSTALLER_APP_ID="org.bootcinstaller.Installer"
+[[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
+
 mkdir -p /etc/xdg/autostart
-cat > /etc/xdg/autostart/tuna-installer.desktop << 'DTEOF'
+cat > /etc/xdg/autostart/tuna-installer.desktop << DTEOF
 [Desktop Entry]
 Name=Dakota Installer
-Exec=flatpak run org.bootcinstaller.Installer
+Exec=flatpak run ${INSTALLER_APP_ID}
 Icon=/usr/share/pixmaps/dakota.png
 Type=Application
 X-GNOME-Autostart-enabled=true
