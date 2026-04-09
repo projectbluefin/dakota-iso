@@ -92,6 +92,12 @@ BANNEREOF
     systemctl enable debug-ssh-banner.service
 fi
 
+# Give liveuser passwordless sudo so the live session is fully manageable
+# (polkit rules alone aren't enough — some tools like virsh and manual patches
+# require a real sudo session).
+echo 'liveuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/liveuser
+chmod 0440 /etc/sudoers.d/liveuser
+
 # Skip gnome-initial-setup in the live session so GNOME Shell starts directly
 mkdir -p /home/liveuser/.config
 touch /home/liveuser/.config/gnome-initial-setup-done
