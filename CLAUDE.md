@@ -2,19 +2,19 @@
 
 ## Local build setup
 
-### ⚠️ Background builds — use setsid + disown
+### Background builds — use `just build-bg`
 
 Running the build as a plain background job (`&`) will get killed by SIGHUP
-when the shell session ends. Always detach it fully:
+when the shell session ends. Use the dedicated recipe instead:
 
 ```bash
-cd /var/home/james/dev/dakota-iso
-setsid sudo just installer_channel=dev output_dir=output iso-sd-boot dakota \
-    > output/build.log 2>&1 &
-disown $!
-# Watch progress:
-tail -f output/build.log
+just installer_channel=dev build-bg dakota
+# Ctrl-C stops the log tail — build keeps running in background
+# Check progress any time: tail -f output/build.log
 ```
+
+The recipe uses `setsid ... & disown` internally so the build survives
+terminal closure.
 
 ### ⚠️ Never build from /tmp
 

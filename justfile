@@ -21,6 +21,28 @@ installer_channel := "stable"
 # Example: just compression=release iso-sd-boot dakota
 compression := "fast"
 
+# Build the ISO in the background, detached from the terminal session.
+# Logs are written to {{output_dir}}/build.log and tailed live.
+# Safe to close the terminal — the build will continue running.
+# Usage: just build-bg dakota
+#        just debug=1 installer_channel=dev build-bg dakota
+build-bg target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    mkdir -p {{output_dir}}
+    LOG=$(realpath {{output_dir}})/build.log
+    echo "Starting background build → ${LOG}"
+    setsid sudo just \
+        debug={{debug}} \
+        installer_channel={{installer_channel}} \
+        output_dir={{output_dir}} \
+        compression={{compression}} \
+        iso-sd-boot {{target}} \
+        > "${LOG}" 2>&1 &
+    disown $!
+    echo "Build PID $! — tailing log (Ctrl-C is safe, build continues)"
+    tail -f "${LOG}"
+
 # Helper: returns "--bootc-installer-payload-ref <ref>" or "" if no payload_ref file
 _payload_ref_flag target:
     @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
