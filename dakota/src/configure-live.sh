@@ -109,6 +109,11 @@ mkdir -p /home/liveuser/.config
 touch /home/liveuser/.config/gnome-initial-setup-done
 chown -R liveuser:liveuser /home/liveuser/.config
 
+# Remove gnome-tour desktop file so GNOME Shell can never launch it on the
+# live ISO regardless of dconf state.  This is belt-and-suspenders alongside
+# the welcome-dialog-last-shown-version=999 key below.
+rm -f /usr/share/applications/org.gnome.Tour.desktop
+
 # Suppress the GNOME Tour / "Welcome to Bluefin" dialog on first login.
 # GNOME Shell shows it whenever welcome-dialog-last-shown-version < current
 # shell version.  Setting it to 999 via a system dconf policy ensures it is
