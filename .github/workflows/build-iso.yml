@@ -31,8 +31,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Maximize build space
-        uses: ublue-os/container-storage-action@main
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        with:
+          tool-cache: true
+
+      - name: Mount BTRFS for podman storage
+        run: bash .github/scripts/mount_btrfs.sh
 
       - name: Install dependencies
         run: |
