@@ -48,7 +48,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y just podman rclone mtools
+          sudo apt-get install -y just podman rclone mtools xorriso
 
       - name: Log in to GHCR
         run: |
