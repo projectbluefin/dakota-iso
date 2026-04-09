@@ -37,10 +37,12 @@ jobs:
           tool-cache: true
 
       - name: Mount BTRFS for podman storage
-        # Use 90% of /mnt for the loopback (up from default 80%) to give more
-        # headroom for flatpak runtime downloads and container build layers.
+        # Use 95% of /mnt for the loopback to maximise space for flatpak runtime
+        # downloads, container image layers, OCI export, and squashfs assembly.
+        # The podman build --mount=type=cache uses this filesystem, so any
+        # GH Actions cache pointed at /var/lib/containers would just waste space.
         env:
-          BTRFS_LOOPBACK_FREE: "0.9"
+          BTRFS_LOOPBACK_FREE: "0.95"
         run: bash .github/scripts/mount_btrfs.sh
 
       - name: Install dependencies
@@ -52,21 +54,6 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             podman login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Get cache month
-        id: date
-        run: echo "month=$(date +%Y-%m)" >> $GITHUB_OUTPUT
-
-      - name: Restore flatpak build cache
-        uses: actions/cache@v4
-        with:
-          path: /var/lib/containers/cache
-          # Monthly date busts stale caches so new GNOME Platform runtimes are
-          # picked up when the installer updates its runtime dependency.
-          key: flatpak-cache-${{ steps.date.outputs.month }}-${{ hashFiles('dakota/src/flatpaks') }}
-          restore-keys: |
-            flatpak-cache-${{ steps.date.outputs.month }}-
-            flatpak-cache-
 
       - name: Build Live ISO
         run: |
