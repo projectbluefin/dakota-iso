@@ -113,8 +113,12 @@ chown -R liveuser:liveuser /home/liveuser/.config
 # GNOME Shell shows it whenever welcome-dialog-last-shown-version < current
 # shell version.  Setting it to 999 via a system dconf policy ensures it is
 # never shown in the live session for any user.
-mkdir -p /etc/dconf/db/local.d
-cat > /etc/dconf/db/local.d/00-live-iso << 'DCONFEOF'
+#
+# The base image profile already references system-db:distro; write our
+# overrides into distro.d/ so the existing profile picks them up without
+# modification (replacing the profile would lose Bluefin's own settings).
+mkdir -p /etc/dconf/db/distro.d /etc/dconf/db/distro.d/locks
+cat > /etc/dconf/db/distro.d/50-live-iso << 'DCONFEOF'
 [org/gnome/shell]
 welcome-dialog-last-shown-version='999'
 favorite-apps=['dakota-installer.desktop', 'org.mozilla.firefox.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Console.desktop']
@@ -125,17 +129,31 @@ idle-activation-enabled=false
 
 [org/gnome/desktop/session]
 idle-delay=uint32 0
+
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+sleep-inactive-ac-timeout=0
+sleep-inactive-battery-timeout=0
+power-button-action='nothing'
 DCONFEOF
 
-mkdir -p /etc/dconf/db/local.d/locks
-cat > /etc/dconf/db/local.d/locks/live-iso << 'LOCKSEOF'
+cat > /etc/dconf/db/distro.d/locks/50-live-iso << 'LOCKSEOF'
 /org/gnome/desktop/screensaver/lock-enabled
 /org/gnome/desktop/screensaver/idle-activation-enabled
 /org/gnome/desktop/session/idle-delay
 /org/gnome/shell/favorite-apps
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-ac-type
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-battery-type
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-ac-timeout
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-battery-timeout
 LOCKSEOF
 
 dconf update
+
+# Mask systemd sleep/suspend targets so the kernel never suspends regardless
+# of what any userspace tool requests — belt-and-suspenders for the install.
+systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 
 # ── GDM autologin ─────────────────────────────────────────────────────────────
 mkdir -p /etc/gdm
@@ -271,11 +289,15 @@ cat > /usr/share/polkit-1/actions/org.bootcinstaller.Installer.policy << 'POLICY
 </policyconfig>
 POLICYEOF
 
-# JS rule fallback: covers edge cases where the session is not yet marked active
+# JS rule: the installer copies fisherman to the user cache and calls
+# `pkexec /path/to/cached/fisherman`, which polkit sees as the generic
+# org.freedesktop.policykit.exec action — not our custom action above.
+# Grant YES for liveuser on both actions to cover both paths.
 mkdir -p /etc/polkit-1/rules.d
 cat > /etc/polkit-1/rules.d/99-live-installer.rules << 'EOF'
 polkit.addRule(function(action, subject) {
-    if (action.id === "org.tunaos.Installer.install" &&
+    if ((action.id === "org.freedesktop.policykit.exec" ||
+         action.id === "org.tunaos.Installer.install") &&
             subject.user === "liveuser" && subject.local) {
         return polkit.Result.YES;
     }
