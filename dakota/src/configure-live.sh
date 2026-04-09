@@ -33,6 +33,11 @@ passwd --delete liveuser
 if [[ "${DEBUG:-0}" == "1" ]]; then
     echo "liveuser:live" | chpasswd
 
+    # Enable root login with a known password so hotfixes can be applied
+    # directly via `ssh root@<ip>` or `su -` without going through sudo.
+    passwd --unlock root
+    echo "root:root" | chpasswd
+
     # Grant passwordless sudo via sudoers drop-in (usermod -aG wheel doesn't
     # persist reliably through the squashfs overlay at runtime).
     echo "liveuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/liveuser
@@ -50,6 +55,7 @@ if [[ "${DEBUG:-0}" == "1" ]]; then
     cat >> /etc/ssh/sshd_config << 'SSHEOF'
 PermitEmptyPasswords no
 PasswordAuthentication yes
+PermitRootLogin yes
 SSHEOF
 
     # Open SSH through firewalld so port 22 is reachable from the host
@@ -80,8 +86,8 @@ ExecStart=/bin/bash -c '\
   echo ""; \
   echo "========================================"; \
   echo " DEBUG SSH READY"; \
-  echo " ssh liveuser@${IP:-<no-ip>}"; \
-  echo " password: live"; \
+  echo " ssh liveuser@${IP:-<no-ip>}  (password: live)"; \
+  echo " ssh root@${IP:-<no-ip>}      (password: root)"; \
   echo "========================================"; \
   echo ""'
 StandardOutput=journal+console
