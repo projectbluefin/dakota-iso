@@ -67,6 +67,22 @@ jobs:
           echo "dated=dakota-live-${DATE}-${SHA}.iso" >> "$GITHUB_OUTPUT"
           echo "path=output/dakota-live.iso" >> "$GITHUB_OUTPUT"
 
+      - name: Generate SHA256 checksum
+        id: checksum
+        run: |
+          ISO="${{ steps.iso.outputs.path }}"
+          DATED="${{ steps.iso.outputs.dated }}"
+          CHECKSUM_PATH="output/${DATED}-CHECKSUM"
+          LATEST_CHECKSUM_PATH="output/dakota-live-latest.iso-CHECKSUM"
+          # Full sha256sum format (hash + filename) so users can run: sha256sum -c
+          # Two manifests: one with the dated filename, one with the "latest" alias.
+          # They share the same hash but different recorded filenames so both work.
+          sha256sum "$ISO" | sed "s|output/dakota-live.iso|${DATED}|" | tee "$CHECKSUM_PATH"
+          sha256sum "$ISO" | sed "s|output/dakota-live.iso|dakota-live-latest.iso|" > "$LATEST_CHECKSUM_PATH"
+          echo "path=${CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
+          echo "name=${DATED}-CHECKSUM" >> "$GITHUB_OUTPUT"
+          echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
+
       - name: Upload ISO to Cloudflare R2
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' }}
         env:
@@ -89,8 +105,19 @@ jobs:
           rclone copyto --log-level INFO --s3-no-check-bucket \
             "$ISO" "R2:testing/dakota-live-latest.iso"
 
-          echo "==> Done. Public URL:"
+          echo "==> Uploading checksum as ${{ steps.checksum.outputs.name }} ..."
+          rclone copyto --log-level INFO --s3-no-check-bucket \
+            "${{ steps.checksum.outputs.path }}" \
+            "R2:testing/${{ steps.checksum.outputs.name }}"
+
+          echo "==> Updating dakota-live-latest.iso-CHECKSUM ..."
+          rclone copyto --log-level INFO --s3-no-check-bucket \
+            "${{ steps.checksum.outputs.latest_path }}" \
+            "R2:testing/dakota-live-latest.iso-CHECKSUM"
+
+          echo "==> Done. Public URLs:"
           echo "    https://projectbluefin.dev/dakota-live-latest.iso"
+          echo "    https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM"
 
       - name: Boot verification (UEFI + serial)
         timeout-minutes: 10
@@ -140,13 +167,13 @@ jobs:
             sleep 2
           done
 
-          echo "==> Waiting up to 5 minutes for GDM to start..."
+          echo "==> Waiting up to 5 minutes for live environment to be ready..."
           for i in $(seq 1 60); do
-            if sudo grep -q "Started gdm.service" /tmp/serial.log 2>/dev/null; then
-              echo "==> GDM started after $((i * 5))s"
+            if sudo grep -q "DAKOTA_LIVE_READY" /tmp/serial.log 2>/dev/null; then
+              echo "==> Live environment ready after $((i * 5))s"
               break
             fi
-            [ "$i" -eq 60 ] && echo "WARNING: GDM not seen in serial log after 5m" || true
+            [ "$i" -eq 60 ] && echo "WARNING: DAKOTA_LIVE_READY not seen in serial log after 5m" || true
             sleep 5
           done
 
@@ -162,9 +189,9 @@ jobs:
 
           echo "quit" | sudo socat - UNIX-CONNECT:/tmp/qemu-monitor.sock || true
 
-          # Fail the job if GDM never started
-          sudo grep -q "Started gdm.service" /tmp/serial.log || \
-            { echo "ERROR: GDM did not start"; sudo tail -50 /tmp/serial.log; exit 1; }
+          # Fail the job if the live environment never reached the ready state
+          sudo grep -q "DAKOTA_LIVE_READY" /tmp/serial.log || \
+            { echo "ERROR: Live environment did not reach ready state"; sudo tail -50 /tmp/serial.log; exit 1; }
 
       - name: Upload ISO as artifact
         uses: actions/upload-artifact@v4
@@ -172,6 +199,15 @@ jobs:
           name: ${{ steps.iso.outputs.dated }}
           path: output/dakota-live.iso
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload SHA256 checksum as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checksum-${{ steps.iso.outputs.dated }}
+          path: ${{ steps.checksum.outputs.path }}
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Upload boot screenshot as artifact
