@@ -83,14 +83,14 @@ jobs:
 
           echo "==> Uploading as $DATED ..."
           rclone copyto --log-level INFO --checksum --s3-no-check-bucket \
-            "$ISO" "R2:testing/dakota/${DATED}"
+            "$ISO" "R2:testing/${DATED}"
 
           echo "==> Updating dakota-live-latest.iso ..."
           rclone copyto --log-level INFO --s3-no-check-bucket \
-            "$ISO" "R2:testing/dakota/dakota-live-latest.iso"
+            "$ISO" "R2:testing/dakota-live-latest.iso"
 
           echo "==> Done. Public URL:"
-          echo "    https://download.tunaos.org/dakota/dakota-live-latest.iso"
+          echo "    https://projectbluefin.dev/dakota-live-latest.iso"
 
       - name: Boot verification (UEFI + serial)
         timeout-minutes: 10
