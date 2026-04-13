@@ -59,6 +59,11 @@ jobs:
         run: |
           sudo just installer_channel=dev output_dir=output iso-sd-boot dakota
 
+      - name: Fix output directory ownership
+        # sudo just creates output/ as root; subsequent steps run as the runner
+        # user and cannot write into it without this ownership transfer.
+        run: sudo chown -R "$USER:$(id -gn)" output/
+
       - name: Compute ISO name
         id: iso
         run: |
