@@ -8,8 +8,8 @@ on:
       - 'justfile'
       - '.github/workflows/build-iso.yml'
   schedule:
-    # Rebuild weekly on Monday at 03:00 UTC to pick up Dakota image updates
-    - cron: '0 3 * * 1'
+    # Rebuild daily at 03:00 UTC to pick up Dakota image updates
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       skip_upload:
