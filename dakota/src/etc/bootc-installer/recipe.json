@@ -8,7 +8,7 @@
     "welcome": {
       "image": "resource:///org/bootcinstaller/Installer/images/dakota.png",
       "title": "Installing Dakota",
-      "description": "This will take a few minutes. Dakota is a GNOME OS-based workstation powered by composefs and systemd-boot."
+      "description": "This will take a few minutes..."
     },
     "completed": {
       "resource": "/org/bootcinstaller/Installer/assets/complete.svg",
