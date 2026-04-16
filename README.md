@@ -1,8 +1,8 @@
 # Dakota Live ISO
 
-[![Build and Publish](https://github.com/tuna-os/dakota-iso/actions/workflows/build-iso.yml/badge.svg)](https://github.com/tuna-os/dakota-iso/actions/workflows/build-iso.yml)
+[![Build and Publish](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml/badge.svg)](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml)
 
-**[⬇ Download Latest ISO](https://download.tunaos.org/dakota/dakota-live-latest.iso)**
+**[⬇ Download Latest ISO](https://projectbluefin.dev/dakota-live-latest.iso)**
 
 Builds a bootable UEFI live ISO from the [Dakota](https://github.com/projectbluefin/dakota) image — a GNOME OS-based workstation using composefs and systemd-boot. The live environment boots straight to GDM with a full GNOME session and launches the Dakota installer automatically.
 

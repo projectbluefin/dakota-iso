@@ -5,7 +5,7 @@
     {
       "name": "Dakota",
       "imgref": "ghcr.io/projectbluefin/dakota:latest",
-      "desc": "The next generation Linux workstation, designed for reliability, performance, and sustainability.",
+      "desc": "Project Bluefin Prototype",
       "icon": "resource:///org/bootcinstaller/Installer/images/dakota.png",
       "bootloader": "systemd",
       "filesystem": "btrfs",

@@ -40,8 +40,6 @@ if [[ "${DEBUG:-0}" == "1" ]]; then
 
     # Grant passwordless sudo via sudoers drop-in (usermod -aG wheel doesn't
     # persist reliably through the squashfs overlay at runtime).
-    echo "liveuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/liveuser
-    chmod 440 /etc/sudoers.d/liveuser
 
     # Enable sshd: the Dakota/Bluefin preset marks sshd disabled, so a plain
     # wants symlink gets overridden at first boot.  A preset file in
@@ -241,6 +239,11 @@ done
 # Symlink 512×512 to pixmaps for compatibility
 install -Dm644 "$SCRIPT_DIR/icons/hicolor/512x512/apps/dakota.png" /usr/share/pixmaps/dakota.png
 gtk-update-icon-cache /usr/share/icons/hicolor/
+
+# ── Installer tour images ─────────────────────────────────────────────────────
+# The tuna-installer Flatpak has --filesystem=host so absolute paths are visible.
+mkdir -p /usr/share/bootc-installer/images
+install -Dm644 "$SCRIPT_DIR/images/dakotaraptor.png" /usr/share/bootc-installer/images/dakotaraptor.png
 
 # ── Installer configuration ───────────────────────────────────────────────────
 # The bootc-installer reads both overrides from /etc/bootc-installer/:
