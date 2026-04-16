@@ -280,74 +280,11 @@ DTEOF
 # The Flatpak does not export its policy file or fisherman to the host, so both
 # are set up manually here.
 
-# fisherman wrapper — installer calls /usr/local/bin/fisherman via pkexec.
-# Current fisherman leaves the auto-partitioned composefs/systemd-boot root as a
-# generic Linux filesystem GPT type, but the installed Dakota boot entry relies
-# on GPT auto-discovery of the architecture-specific root partition. Retag the
-# root partition after a successful install so the installed system boots.
+# fisherman symlink — installer calls /usr/local/bin/fisherman via pkexec
 INSTALLER_APP_DIR=$(find /var/lib/flatpak/app/${INSTALLER_APP_ID} -name fisherman -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)
 if [ -n "$INSTALLER_APP_DIR" ]; then
     mkdir -p /usr/local/bin
-    ln -sf "${INSTALLER_APP_DIR}/fisherman" /usr/local/bin/fisherman.real
-    cat > /usr/local/bin/fisherman << 'FISHERMANEOF'
-#!/bin/bash
-set -euo pipefail
-
-ROOT_TYPE_GUID_X86_64="4f68bce3-e8cd-4db1-96e7-fbcaf984b709"
-
-should_retag_root=0
-disk=""
-
-if [[ $# -ge 1 ]]; then
-    case "$1" in
-        help|images|validate|version|-h|--help)
-            ;;
-        *)
-            if [[ -f "$1" ]]; then
-                mapfile -t recipe_meta < <(python3 - "$1" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding='utf-8') as f:
-    recipe = json.load(f)
-
-encryption = (recipe.get("encryption") or {}).get("type") or "none"
-should_retag = (
-    bool(recipe.get("composeFsBackend")) and
-    recipe.get("bootloader") == "systemd" and
-    encryption == "none" and
-    not recipe.get("customMounts")
-)
-
-print("1" if should_retag else "0")
-print(recipe.get("disk") or "")
-PY
-)
-                should_retag_root="${recipe_meta[0]:-0}"
-                disk="${recipe_meta[1]:-}"
-            fi
-            ;;
-    esac
-fi
-
-/usr/local/bin/fisherman.real "$@"
-
-if [[ "$should_retag_root" == "1" ]]; then
-    if [[ -z "$disk" ]]; then
-        echo "fisherman wrapper: missing disk for root partition retag" >&2
-        exit 1
-    fi
-
-    root_partnum="$(lsblk -nrpo PARTN,PARTLABEL "$disk" | awk '$2=="root" {print $1; exit}')"
-    if [[ -z "$root_partnum" ]]; then
-        echo "fisherman wrapper: could not find root partition on $disk" >&2
-        exit 1
-    fi
-
-    sfdisk --part-type "$disk" "$root_partnum" "$ROOT_TYPE_GUID_X86_64" >/dev/null
-fi
-FISHERMANEOF
-    chmod +x /usr/local/bin/fisherman
+    ln -sf "${INSTALLER_APP_DIR}/fisherman" /usr/local/bin/fisherman
 fi
 
 # Policy file: write it directly so we're not dependent on Flatpak search.
