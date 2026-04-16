@@ -1,6 +1,6 @@
 # Dakota Live ISO
 
-[![Build and Publish](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml/badge.svg)](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml)
+[![Build and Publish](https://github.com/tuna-os/dakota-iso/actions/workflows/build-iso.yml/badge.svg)](https://github.com/tuna-os/dakota-iso/actions/workflows/build-iso.yml)
 
 **[⬇ Download Latest ISO](https://download.tunaos.org/dakota/dakota-live-latest.iso)**
 
@@ -40,7 +40,7 @@ By default, output goes to `./output/`. If `/tmp` is a small tmpfs on your machi
 
 ```bash
 # Clone the repo
-git clone https://github.com/projectbluefin/dakota-iso
+git clone https://github.com/tuna-os/dakota-iso
 cd dakota-iso
 
 # Full build — live env container + ISO assembly
