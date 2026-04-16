@@ -182,3 +182,4 @@ just output_dir=/var/data/iso-output iso-sd-boot dakota
 Warning: Failed to install org.freedesktop.Platform.openh264
 ```
 This is harmless — `openh264` requires user namespaces which aren't available inside Podman builds. The ISO functions correctly without it.
+
