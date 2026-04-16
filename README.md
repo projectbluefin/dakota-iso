@@ -1,6 +1,6 @@
 # Dakota Live ISO
 
-[![Build and Publish](https://github.com/tuna-os/dakota-iso/actions/workflows/build-iso.yml/badge.svg)](https://github.com/tuna-os/dakota-iso/actions/workflows/build-iso.yml)
+[![Build and Publish](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml/badge.svg)](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml)
 
 **[⬇ Download Latest ISO](https://download.tunaos.org/dakota/dakota-live-latest.iso)**
 
@@ -40,7 +40,7 @@ By default, output goes to `./output/`. If `/tmp` is a small tmpfs on your machi
 
 ```bash
 # Clone the repo
-git clone https://github.com/tuna-os/dakota-iso
+git clone https://github.com/projectbluefin/dakota-iso
 cd dakota-iso
 
 # Full build — live env container + ISO assembly
@@ -182,4 +182,3 @@ just output_dir=/var/data/iso-output iso-sd-boot dakota
 Warning: Failed to install org.freedesktop.Platform.openh264
 ```
 This is harmless — `openh264` requires user namespaces which aren't available inside Podman builds. The ISO functions correctly without it.
-
