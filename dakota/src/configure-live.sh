@@ -369,11 +369,11 @@ runroot = "/run/containers/storage"
 graphroot = "/var/lib/containers/storage"
 STOREOF
 
-# ── Skopeo / Podman / bootc wrappers for offline install ─────────────────────
-# fisherman uses the embedded Dakota image from containers-storage when
-# installing from the live ISO.
+# ── Skopeo / Podman wrappers for offline install ─────────────────────────────
+# fisherman (the tuna-installer backend) calls skopeo to export the embedded
+# VFS image to OCI, then podman to run `bootc install to-filesystem`.
 #
-# Three problems on a live ISO:
+# Two problems on a live ISO:
 #   1. fisherman passes `containers-storage:containers-storage:IMAGE` (doubled
 #      prefix) — upstream bug in fisherman's bootc.go; the wrapper strips it.
 #   2. The live rootfs overlay is tiny (~1.6 GiB).  Both skopeo temp files
@@ -383,13 +383,8 @@ STOREOF
 #      fisherman at this point) via bind mounts and an overlayfs on
 #      /var/lib/containers/storage.  The @scratch subvolume is mounted as a
 #      mount point on the target, which bootc's "empty rootfs" check allows.
-#   3. Newer fisherman direct live-ISO installs call `bootc install
-#      to-filesystem --composefs-backend --source-imgref oci:/var/tmp/oci-cache`
-#      but do not populate that OCI layout first.  The bootc wrapper exports the
-#      embedded containers-storage image into /var/tmp/oci-cache on demand.
 
 # Back up real binaries
-cp /usr/bin/bootc /usr/bin/bootc.real
 cp /usr/bin/skopeo /usr/bin/skopeo.real
 cp /usr/bin/podman /usr/bin/podman.real
 
@@ -436,85 +431,3 @@ cat > /usr/bin/podman << 'PODMEOF'
 exec /usr/bin/podman.real "$@"
 PODMEOF
 chmod +x /usr/bin/podman
-
-cat > /usr/bin/bootc << 'BOOTCEOF'
-#!/bin/bash
-set -euo pipefail
-
-ensure_composefs_oci_cache() {
-    local args=("$@")
-    local source_imgref="" target_imgref="" source_ref=""
-    local needs_composefs=0
-
-    [[ ${#args[@]} -ge 2 && "${args[0]}" == "install" ]] || return 0
-    case "${args[1]}" in
-        to-filesystem|to-disk) ;;
-        *) return 0 ;;
-    esac
-
-    for ((i = 0; i < ${#args[@]}; i++)); do
-        case "${args[$i]}" in
-            --composefs-backend)
-                needs_composefs=1
-                ;;
-            --source-imgref)
-                if (( i + 1 < ${#args[@]} )); then
-                    source_imgref="${args[$((i + 1))]}"
-                fi
-                ;;
-            --source-imgref=*)
-                source_imgref="${args[$i]#--source-imgref=}"
-                ;;
-            --target-imgref)
-                if (( i + 1 < ${#args[@]} )); then
-                    target_imgref="${args[$((i + 1))]}"
-                fi
-                ;;
-            --target-imgref=*)
-                target_imgref="${args[$i]#--target-imgref=}"
-                ;;
-        esac
-    done
-
-    [[ $needs_composefs -eq 1 ]] || return 0
-    [[ "$source_imgref" == "oci:/var/tmp/oci-cache" ]] || return 0
-    [[ ! -e /var/tmp/oci-cache/index.json ]] || return 0
-
-    source_ref="$target_imgref"
-    if [[ -z "$source_ref" && -f /etc/bootc-installer/recipe.json ]]; then
-        source_ref="$(python3 - <<'PY'
-import json
-
-with open('/etc/bootc-installer/recipe.json', encoding='utf-8') as f:
-    recipe = json.load(f)
-
-print(recipe.get('local_imgref') or recipe.get('imgref') or '')
-PY
-)"
-    fi
-
-    if [[ -z "$source_ref" ]]; then
-        echo "bootc wrapper: could not determine source image for composefs install" >&2
-        return 1
-    fi
-
-    if [[ "$source_ref" == *"://"* ]]; then
-        source_ref="${source_ref#*://}"
-    fi
-    if [[ "$source_ref" != containers-storage:* ]]; then
-        local prefix="${source_ref%%:*}"
-        if [[ "$source_ref" == *:* && "$prefix" != */* && "$prefix" != *.* ]]; then
-            source_ref="${source_ref#*:}"
-        fi
-        source_ref="containers-storage:${source_ref}"
-    fi
-
-    rm -rf /var/tmp/oci-cache
-    mkdir -p /var/tmp/oci-cache
-    /usr/bin/skopeo copy "$source_ref" oci:/var/tmp/oci-cache
-}
-
-ensure_composefs_oci_cache "$@"
-exec /usr/bin/bootc.real "$@"
-BOOTCEOF
-chmod +x /usr/bin/bootc
