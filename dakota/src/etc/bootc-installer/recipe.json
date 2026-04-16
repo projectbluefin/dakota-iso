@@ -28,7 +28,7 @@
     "completed": {
       "image": "/run/host/usr/share/bootc-installer/images/dakotaraptor.png",
       "title": "Become Legend",
-      "description": "You've taken the first step into the future ... stick together."
+      "description": "When this is done reboot into Bluefin. Welcome to the new world!"
     }
   },
   "steps": {
