@@ -7,28 +7,28 @@
   "tour": {
     "welcome": {
       "image": "/run/host/usr/share/bootc-installer/images/dakotaraptor.png",
-      "title": "Welcome to Bluefin",
-      "description": "A fast, reliable desktop that updates itself without breaking"
+      "title": "Welcome to Dakota",
+      "description": "This is an Alpha of the all new Bluefin. Thanks for volunteering to help!"
     },
     "features": {
       "image": "/run/host/usr/share/bootc-installer/images/dakotaraptor.png",
-      "title": "Built on GNOME OS",
-      "description": "Atomic updates, composefs, and systemd-boot — reliability by default"
+      "title": "What's the plan?",
+      "description": "Test apps, commands and workflows. File issues. We fix them. Rinse and repeat."
     },
     "community": {
       "image": "/run/host/usr/share/bootc-installer/images/dakotaraptor.png",
-      "title": "Join the Community",
-      "description": "Documentation, guides, and support at projectbluefin.io"
+      "title": "Where are the docs?",
+      "description": "Documentation at docs.projectbluefin.io. Test Bluefin's features."
     },
     "developer": {
       "image": "/run/host/usr/share/bootc-installer/images/dakotaraptor.png",
-      "title": "Built for Developers",
-      "description": "Homebrew, dev containers, and a curated set of tools ready on first boot"
+      "title": "Updates",
+      "description": "Updates will come daily. If something is broken, file an issue. "
     },
     "completed": {
       "image": "/run/host/usr/share/bootc-installer/images/dakotaraptor.png",
-      "title": "Installation Complete",
-      "description": "Installation complete. Reboot to start the first time setup. Welcome!"
+      "title": "Become Legend",
+      "description": "You've taken the first step into the future ... stick together."
     }
   },
   "steps": {
