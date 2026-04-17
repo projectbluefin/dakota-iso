@@ -399,10 +399,15 @@ for target in /mnt/fisherman-target /var/mnt/fisherman-target; do
     if mountpoint -q "$target" 2>/dev/null; then
         SCRATCH="$target/@scratch"
         if [ ! -d "$SCRATCH" ]; then
-            btrfs subvolume create "$SCRATCH"
+            btrfs subvolume create "$SCRATCH" 2>/dev/null || mkdir -p "$SCRATCH"
         fi
-        DEV=$(findmnt -n -o SOURCE "$target" | head -1)
-        mount -o subvol=@scratch "$DEV" "$SCRATCH"
+        if ! mountpoint -q "$SCRATCH" 2>/dev/null; then
+            DEV=$(findmnt -n -o SOURCE "$target" | head -1)
+            # Mount as a btrfs subvolume if one was created; fall back to a
+            # bind-mount so bootc's mountpoint check still passes on non-btrfs.
+            mount -o subvol=@scratch "$DEV" "$SCRATCH" 2>/dev/null || \
+                mount --bind "$SCRATCH" "$SCRATCH"
+        fi
 
         mkdir -p "$SCRATCH/var-tmp"
         mount --bind "$SCRATCH/var-tmp" /var/tmp

@@ -115,11 +115,12 @@ iso-sd-boot target:
         CS_STAGING='${CS_STAGING}'
         SQUASHFS_ROOT='${SQUASHFS_ROOT}'
         SQUASHFS_STORAGE=\"\${CS_STAGING}/var/lib/containers/storage\"
-        LIVE_RUNROOT=\"\$(mktemp -d '${OUTPUT_DIR}'/live-runroot-XXXXXX)\"
+        # Storage conf for skopeo running inside the installer container.
+        # Paths are container-relative: /vfs-storage is the bind-mounted SQUASHFS_STORAGE.
         STORAGE_CONF=\"\$(mktemp '${OUTPUT_DIR}'/live-storage-XXXXXX.conf)\"
         mkdir -p \"\${SQUASHFS_STORAGE}\"
-        printf '[storage]\ndriver = \"vfs\"\nrunroot = \"%s\"\ngraphroot = \"%s\"\n' \
-            \"\${LIVE_RUNROOT}\" \"\${SQUASHFS_STORAGE}\" > \"\${STORAGE_CONF}\"
+        printf '[storage]\ndriver = \"vfs\"\nrunroot = \"/tmp/cs-runroot\"\ngraphroot = \"/vfs-storage\"\n' \
+            > \"\${STORAGE_CONF}\"
 
         echo 'Exporting Dakota OCI image to archive...'
         skopeo copy \
@@ -127,13 +128,21 @@ iso-sd-boot target:
             oci-archive:\${PAYLOAD_OCI}:ghcr.io/projectbluefin/dakota:latest
 
         echo 'Importing Dakota OCI image into squashfs containers-storage...'
-        CONTAINERS_STORAGE_CONF=\"\${STORAGE_CONF}\" \
-        skopeo copy \
-            oci-archive:\${PAYLOAD_OCI}:ghcr.io/projectbluefin/dakota:latest \
-            containers-storage:ghcr.io/projectbluefin/dakota:latest
+        # Run skopeo from inside the installer image so the VFS tar-split metadata is
+        # written in a format the live ISO can read.  The build host links a newer
+        # containers/storage that emits a binary tar-split format; the installer image
+        # carries the same containers/storage version as the live ISO and writes the
+        # JSON-based format it expects.
+        podman run --rm \
+            --user 0 \
+            --security-opt label=disable \
+            -v \"\${PAYLOAD_OCI}:/payload.oci.tar:ro\" \
+            -v \"\${SQUASHFS_STORAGE}:/vfs-storage\" \
+            -v \"\${STORAGE_CONF}:/tmp/st.conf:ro\" \
+            localhost/{{target}}-installer \
+            sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:ghcr.io/projectbluefin/dakota:latest containers-storage:ghcr.io/projectbluefin/dakota:latest'
 
         rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
-        rm -rf \"\${LIVE_RUNROOT}\"
 
         # mksquashfs adds each source directory as a named subdirectory — it does
         # NOT union-merge multiple sources into root. To get the VFS storage at
