@@ -2,10 +2,7 @@
 
 [![Build and Publish](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml/badge.svg)](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml)
 
-| Architecture | Download |
-|---|---|
-| x86_64 (amd64) | **[⬇ dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso)** · [checksum](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) |
-| aarch64 (arm64) | **[⬇ dakota-live-aarch64-latest.iso](https://projectbluefin.dev/dakota-live-aarch64-latest.iso)** · [checksum](https://projectbluefin.dev/dakota-live-aarch64-latest.iso-CHECKSUM) |
+**[⬇ Download Latest ISO (amd64)](https://projectbluefin.dev/dakota-live-latest.iso)** · [checksum](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM)
 
 Builds a bootable UEFI live ISO from the [Dakota](https://github.com/projectbluefin/dakota) image — a GNOME OS-based workstation using composefs and systemd-boot. The live environment boots straight to GDM with a full GNOME session and launches the Dakota installer automatically.
 
@@ -30,9 +27,7 @@ At boot, `dmsquash-live` mounts the squashfs and creates an overlayfs so the liv
 | `podman` | Rootless works; needs `--cap-add sys_admin` for the live env build |
 | `just` | Task runner — `cargo install just` or distro package |
 | KVM + `qemu-system-x86_64` | For local boot testing on amd64 only |
-| KVM + `qemu-system-aarch64` | For local boot testing on aarch64 only |
 | OVMF firmware | `edk2-ovmf` (Fedora/RHEL) or `ovmf` (Debian/Ubuntu) — amd64 |
-| AAVMF firmware | `edk2-aarch64` (Fedora/RHEL) or `qemu-efi-aarch64` (Debian/Ubuntu) — aarch64 |
 
 **Disk space:** The build needs ~22 GB free:
 - ~12 GB for the rootfs tarball (Flatpak-heavy)
