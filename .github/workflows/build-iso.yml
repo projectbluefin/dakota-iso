@@ -22,6 +22,7 @@ jobs:
   build-and-publish:
     name: Build Dakota Live ISO (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.continue_on_error == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -30,10 +31,14 @@ jobs:
             runner: ubuntu-24.04
             iso_suffix: ""
             latest_base: dakota-live-latest
+            continue_on_error: false
           - arch: aarch64
             runner: ubuntu-24.04-arm
             iso_suffix: "-aarch64"
             latest_base: dakota-live-aarch64-latest
+            # Base image is amd64-only until projectbluefin/dakota publishes a multi-arch manifest.
+            # Allow this leg to fail without blocking the overall workflow or the amd64 upload.
+            continue_on_error: true
     permissions:
       contents: read
       packages: read
@@ -259,7 +264,7 @@ jobs:
 
       - name: Upload SHA256 checksum as artifact
         uses: actions/upload-artifact@v4
-        if: always()
+        if: steps.checksum.outputs.path != ''
         with:
           name: checksum-${{ steps.iso.outputs.dated }}
           path: ${{ steps.checksum.outputs.path }}

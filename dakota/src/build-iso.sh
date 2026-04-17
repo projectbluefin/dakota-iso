@@ -96,14 +96,15 @@ EOF
 #   rd.live.image               enable dmsquash-live mode
 #   rd.live.overlay.overlayfs=1 use overlayfs (not device mapper) for the rw layer
 #   enforcing=0                 disable SELinux enforcement (GNOME OS ships it)
-#   console=ttyAMA0,115200n8    serial output on arm64 (PL011/QEMU virt) — validation target
 #   console=ttyS0,115200n8      serial output on amd64 (16550/QEMU q35) — validation target
+#   console=ttyAMA0,115200n8    serial output on arm64 (PL011/QEMU virt) — validation target; listed
+#                                last so it wins /dev/console on hardware where both UARTs exist
 #   Both consoles listed: Linux silently ignores the one that doesn't exist on the running arch.
 cat > "${ESP_STAGING}/loader/entries/dakota-live.conf" << EOF
 title   Dakota Live
 linux   /images/pxeboot/vmlinuz
 initrd  /images/pxeboot/initrd.img
-options root=live:CDLABEL=${LABEL} rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 quiet console=ttyAMA0,115200n8 console=ttyS0,115200n8
+options root=live:CDLABEL=${LABEL} rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 quiet console=ttyS0,115200n8 console=ttyAMA0,115200n8
 EOF
 
 # ── Create the FAT ESP image ──────────────────────────────────────────────────
