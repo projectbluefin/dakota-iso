@@ -4,6 +4,8 @@
   "distro_logo": "resource:///org/bootcinstaller/Installer/images/dakota.png",
   "imgref": "ghcr.io/projectbluefin/dakota:latest",
   "local_imgref": "containers-storage:ghcr.io/projectbluefin/dakota:latest",
+  "bootloader": "systemd",
+  "composeFsBackend": true,
   "tour": {
     "welcome": {
       "image": "/run/host/usr/share/bootc-installer/images/dakotaraptor.png",
