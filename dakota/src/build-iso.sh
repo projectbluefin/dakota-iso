@@ -8,7 +8,7 @@
 #
 # Boot architecture (no GRUB2, no shim):
 #   El Torito EFI entry → EFI/efi.img (FAT ESP image containing):
-#     EFI/BOOT/BOOTX64.EFI     systemd-bootx64.efi from Dakota
+#     EFI/BOOT/BOOTX64.EFI or BOOTAA64.EFI  systemd-boot EFI binary from Dakota (arch-detected)
 #     loader/loader.conf        systemd-boot configuration
 #     loader/entries/dakota-live.conf   boot entry (kernel + initrd + cmdline)
 #     images/pxeboot/vmlinuz    Dakota kernel
@@ -49,13 +49,30 @@ echo ">>> Kernel: ${kernel}"
 
 VMLINUZ="${BOOT_DIR}/usr/lib/modules/${kernel}/vmlinuz"
 INITRD="${BOOT_DIR}/usr/lib/modules/${kernel}/initramfs.img"
-BOOTX64="${BOOT_DIR}/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
 
-for f in "${VMLINUZ}" "${INITRD}" "${BOOTX64}"; do
+# Detect EFI binary: arm64 ships systemd-bootaa64.efi → BOOTAA64.EFI
+#                   amd64 ships systemd-bootx64.efi  → BOOTX64.EFI
+BOOT_EFI_SRC=""
+BOOT_EFI_DEST=""
+for _candidate in \
+    "systemd-bootaa64.efi:EFI/BOOT/BOOTAA64.EFI" \
+    "systemd-bootx64.efi:EFI/BOOT/BOOTX64.EFI"; do
+    _src="${BOOT_DIR}/usr/lib/systemd/boot/efi/${_candidate%%:*}"
+    _dest="${_candidate##*:}"
+    if [[ -f "${_src}" ]]; then
+        BOOT_EFI_SRC="${_src}"
+        BOOT_EFI_DEST="${_dest}"
+        break
+    fi
+done
+[[ -n "${BOOT_EFI_SRC}" ]] || { echo "ERROR: no systemd-boot EFI binary found in boot-files tar"; exit 1; }
+
+for f in "${VMLINUZ}" "${INITRD}" "${BOOT_EFI_SRC}"; do
     [[ -f "${f}" ]] || { echo "ERROR: missing ${f}"; exit 1; }
 done
 echo ">>> Kernel:   $(du -sh "${VMLINUZ}"  | cut -f1)"
 echo ">>> Initramfs: $(du -sh "${INITRD}"   | cut -f1)"
+echo ">>> EFI:      ${BOOT_EFI_SRC} → ${BOOT_EFI_DEST}"
 
 # ── Assemble the ESP staging directory ──────────────────────────────────────
 # systemd-boot reads loader entries and kernel/initramfs exclusively from the
@@ -65,7 +82,7 @@ mkdir -p \
     "${ESP_STAGING}/loader/entries" \
     "${ESP_STAGING}/images/pxeboot"
 
-cp "${BOOTX64}" "${ESP_STAGING}/EFI/BOOT/BOOTX64.EFI"
+cp "${BOOT_EFI_SRC}" "${ESP_STAGING}/${BOOT_EFI_DEST}"
 cp "${VMLINUZ}" "${ESP_STAGING}/images/pxeboot/vmlinuz"
 cp "${INITRD}"  "${ESP_STAGING}/images/pxeboot/initrd.img"
 
@@ -79,12 +96,14 @@ EOF
 #   rd.live.image               enable dmsquash-live mode
 #   rd.live.overlay.overlayfs=1 use overlayfs (not device mapper) for the rw layer
 #   enforcing=0                 disable SELinux enforcement (GNOME OS ships it)
-#   console=ttyS0,115200n8      serial output — validation target
+#   console=ttyAMA0,115200n8    serial output on arm64 (PL011/QEMU virt) — validation target
+#   console=ttyS0,115200n8      serial output on amd64 (16550/QEMU q35) — validation target
+#   Both consoles listed: Linux silently ignores the one that doesn't exist on the running arch.
 cat > "${ESP_STAGING}/loader/entries/dakota-live.conf" << EOF
 title   Dakota Live
 linux   /images/pxeboot/vmlinuz
 initrd  /images/pxeboot/initrd.img
-options root=live:CDLABEL=${LABEL} rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 quiet console=ttyS0,115200n8
+options root=live:CDLABEL=${LABEL} rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 quiet console=ttyAMA0,115200n8 console=ttyS0,115200n8
 EOF
 
 # ── Create the FAT ESP image ──────────────────────────────────────────────────
@@ -111,7 +130,7 @@ mmd -i "${ESP_IMG}" \
     ::/images \
     ::/images/pxeboot
 
-mcopy -i "${ESP_IMG}" "${ESP_STAGING}/EFI/BOOT/BOOTX64.EFI"            ::/EFI/BOOT/BOOTX64.EFI
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/${BOOT_EFI_DEST}"            ::/"${BOOT_EFI_DEST}"
 mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/loader.conf"               ::/loader/loader.conf
 mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/entries/dakota-live.conf"  ::/loader/entries/dakota-live.conf
 mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/vmlinuz"           ::/images/pxeboot/vmlinuz
