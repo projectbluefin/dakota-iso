@@ -20,8 +20,20 @@ on:
 
 jobs:
   build-and-publish:
-    name: Build Dakota Live ISO
-    runs-on: ubuntu-24.04
+    name: Build Dakota Live ISO (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            iso_suffix: ""
+            latest_base: dakota-live-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            iso_suffix: "-aarch64"
+            latest_base: dakota-live-aarch64-latest
     permissions:
       contents: read
       packages: read
@@ -69,7 +81,7 @@ jobs:
         run: |
           DATE=$(date -u +%Y%m%d)
           SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          echo "dated=dakota-live-${DATE}-${SHA}.iso" >> "$GITHUB_OUTPUT"
+          echo "dated=dakota-live${{ matrix.iso_suffix }}-${DATE}-${SHA}.iso" >> "$GITHUB_OUTPUT"
           echo "path=output/dakota-live.iso" >> "$GITHUB_OUTPUT"
 
       - name: Generate SHA256 checksum
@@ -78,12 +90,12 @@ jobs:
           ISO="${{ steps.iso.outputs.path }}"
           DATED="${{ steps.iso.outputs.dated }}"
           CHECKSUM_PATH="output/${DATED}-CHECKSUM"
-          LATEST_CHECKSUM_PATH="output/dakota-live-latest.iso-CHECKSUM"
+          LATEST_CHECKSUM_PATH="output/${{ matrix.latest_base }}.iso-CHECKSUM"
           # Full sha256sum format (hash + filename) so users can run: sha256sum -c
           # Two manifests: one with the dated filename, one with the "latest" alias.
           # They share the same hash but different recorded filenames so both work.
           sha256sum "$ISO" | sed "s|output/dakota-live.iso|${DATED}|" | tee "$CHECKSUM_PATH"
-          sha256sum "$ISO" | sed "s|output/dakota-live.iso|dakota-live-latest.iso|" > "$LATEST_CHECKSUM_PATH"
+          sha256sum "$ISO" | sed "s|output/dakota-live.iso|${{ matrix.latest_base }}.iso|" > "$LATEST_CHECKSUM_PATH"
           echo "path=${CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
           echo "name=${DATED}-CHECKSUM" >> "$GITHUB_OUTPUT"
           echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
@@ -101,66 +113,105 @@ jobs:
           ISO="${{ steps.iso.outputs.path }}"
           DATED="${{ steps.iso.outputs.dated }}"
           BUCKET="${{ secrets.R2_BUCKET }}"
+          LATEST="${{ matrix.latest_base }}.iso"
 
           echo "==> Uploading as $DATED ..."
           rclone copyto --log-level INFO --checksum --s3-no-check-bucket \
             "$ISO" "R2:testing/${DATED}"
 
-          echo "==> Updating dakota-live-latest.iso ..."
+          echo "==> Updating ${LATEST} ..."
           rclone copyto --log-level INFO --s3-no-check-bucket \
-            "$ISO" "R2:testing/dakota-live-latest.iso"
+            "$ISO" "R2:testing/${LATEST}"
 
           echo "==> Uploading checksum as ${{ steps.checksum.outputs.name }} ..."
           rclone copyto --log-level INFO --s3-no-check-bucket \
             "${{ steps.checksum.outputs.path }}" \
             "R2:testing/${{ steps.checksum.outputs.name }}"
 
-          echo "==> Updating dakota-live-latest.iso-CHECKSUM ..."
+          echo "==> Updating ${LATEST}-CHECKSUM ..."
           rclone copyto --log-level INFO --s3-no-check-bucket \
             "${{ steps.checksum.outputs.latest_path }}" \
-            "R2:testing/dakota-live-latest.iso-CHECKSUM"
+            "R2:testing/${LATEST}-CHECKSUM"
 
           echo "==> Done. Public URLs:"
-          echo "    https://projectbluefin.dev/dakota-live-latest.iso"
-          echo "    https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM"
+          echo "    https://projectbluefin.dev/${LATEST}"
+          echo "    https://projectbluefin.dev/${LATEST}-CHECKSUM"
 
       - name: Boot verification (UEFI + serial)
         timeout-minutes: 10
         run: |
-          sudo apt-get install -y qemu-system-x86 ovmf socat imagemagick -qq
-
+          ARCH="${{ matrix.arch }}"
           ISO="${{ steps.iso.outputs.path }}"
-          echo "==> Booting $ISO ..."
 
-          OVMF_CODE=""
-          for f in /usr/share/OVMF/OVMF_CODE_4M.fd \
-                   /usr/share/OVMF/OVMF_CODE.fd \
-                   /usr/share/edk2/ovmf/OVMF_CODE.fd; do
-            [ -f "$f" ] && OVMF_CODE="$f" && break
-          done
-          OVMF_VARS=""
-          for f in /usr/share/OVMF/OVMF_VARS_4M.fd \
-                   /usr/share/OVMF/OVMF_VARS.fd \
-                   /usr/share/edk2/ovmf/OVMF_VARS.fd; do
-            if [ -f "$f" ]; then
-              cp "$f" /tmp/OVMF_VARS.fd
-              OVMF_VARS="/tmp/OVMF_VARS.fd"
-              break
-            fi
-          done
-
-          PFLASH=()
-          if [ -n "$OVMF_CODE" ] && [ -n "$OVMF_VARS" ]; then
-            echo "==> UEFI firmware: $OVMF_CODE"
-            PFLASH+=(-drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE")
-            PFLASH+=(-drive "if=pflash,format=raw,file=$OVMF_VARS")
+          if [[ "$ARCH" == "aarch64" ]]; then
+            sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 socat imagemagick -qq
+          else
+            sudo apt-get install -y qemu-system-x86 ovmf socat imagemagick -qq
           fi
 
-          sudo qemu-system-x86_64 \
-            -machine type=q35,accel=kvm \
+          echo "==> Booting $ISO ($ARCH)..."
+
+          # Locate UEFI firmware (paths vary by Ubuntu release and arch)
+          EFI_CODE=""; EFI_VARS=""
+          if [[ "$ARCH" == "aarch64" ]]; then
+            for f in /usr/share/AAVMF/AAVMF_CODE.fd \
+                     /usr/share/qemu-efi-aarch64/QEMU_EFI.fd; do
+              [ -f "$f" ] && EFI_CODE="$f" && break
+            done
+            for f in /usr/share/AAVMF/AAVMF_VARS.fd \
+                     /usr/share/qemu-efi-aarch64/QEMU_VARS.fd; do
+              if [ -f "$f" ]; then
+                cp "$f" /tmp/EFI_VARS.fd
+                EFI_VARS="/tmp/EFI_VARS.fd"
+                break
+              fi
+            done
+          else
+            for f in /usr/share/OVMF/OVMF_CODE_4M.fd \
+                     /usr/share/OVMF/OVMF_CODE.fd \
+                     /usr/share/edk2/ovmf/OVMF_CODE.fd; do
+              [ -f "$f" ] && EFI_CODE="$f" && break
+            done
+            for f in /usr/share/OVMF/OVMF_VARS_4M.fd \
+                     /usr/share/OVMF/OVMF_VARS.fd \
+                     /usr/share/edk2/ovmf/OVMF_VARS.fd; do
+              if [ -f "$f" ]; then
+                cp "$f" /tmp/EFI_VARS.fd
+                EFI_VARS="/tmp/EFI_VARS.fd"
+                break
+              fi
+            done
+          fi
+
+          PFLASH=()
+          if [ -n "$EFI_CODE" ] && [ -n "$EFI_VARS" ]; then
+            echo "==> UEFI firmware: $EFI_CODE"
+            PFLASH+=(-drive "if=pflash,format=raw,readonly=on,file=$EFI_CODE")
+            PFLASH+=(-drive "if=pflash,format=raw,file=$EFI_VARS")
+          fi
+
+          # aarch64: virt machine + virtio-scsi CD-ROM (no IDE/ATAPI); serial → ttyAMA0 (PL011)
+          # amd64:   q35 machine + ATAPI CD-ROM;                        serial → ttyS0 (16550)
+          # Both attach the ISO as optical media so UEFI firmware reads the El Torito EFI entry.
+          if [[ "$ARCH" == "aarch64" ]]; then
+            QEMU_BIN="qemu-system-aarch64"
+            MACHINE="virt,accel=kvm:tcg"
+            ISO_ARGS=(
+              -drive "if=none,id=live-disk,file=$ISO,media=cdrom,format=raw,readonly=on"
+              -device virtio-scsi-pci,id=scsi
+              -device scsi-cd,drive=live-disk
+            )
+          else
+            QEMU_BIN="qemu-system-x86_64"
+            MACHINE="type=q35,accel=kvm"
+            ISO_ARGS=(-cdrom "$ISO" -boot d)
+          fi
+
+          sudo "$QEMU_BIN" \
+            -machine "$MACHINE" \
             -cpu host -m 4G -smp 2 \
-            -cdrom "$ISO" -boot d \
             "${PFLASH[@]}" \
+            "${ISO_ARGS[@]}" \
             -monitor unix:/tmp/qemu-monitor.sock,server,nowait \
             -serial file:/tmp/serial.log \
             -display none \
@@ -219,6 +270,6 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: boot-screenshot
+          name: boot-screenshot-${{ matrix.arch }}
           path: screenshot.png
           if-no-files-found: warn
