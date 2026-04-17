@@ -134,9 +134,7 @@ iso-sd-boot target:
         # carries the same containers/storage version as the live ISO and writes the
         # JSON-based format it expects.
         podman run --rm \
-            --user 0 \
-            --security-opt label=disable \
-            --cap-add SYS_ADMIN \
+            --privileged \
             -v \"\${PAYLOAD_OCI}:/payload.oci.tar:ro\" \
             -v \"\${SQUASHFS_STORAGE}:/vfs-storage\" \
             -v \"\${STORAGE_CONF}:/tmp/st.conf:ro\" \
