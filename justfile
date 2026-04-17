@@ -136,6 +136,7 @@ iso-sd-boot target:
         podman run --rm \
             --user 0 \
             --security-opt label=disable \
+            --cap-add SYS_ADMIN \
             -v \"\${PAYLOAD_OCI}:/payload.oci.tar:ro\" \
             -v \"\${SQUASHFS_STORAGE}:/vfs-storage\" \
             -v \"\${STORAGE_CONF}:/tmp/st.conf:ro\" \
