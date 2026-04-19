@@ -193,6 +193,47 @@ iso-sd-boot target:
 iso target:
     {{image-builder}} build --bootc-ref localhost/{{target}}-installer --bootc-default-fs ext4 `just _payload_ref_flag {{target}}` bootc-generic-iso
 
+# Run chunkah content-based layer splitting against a source image and push to a destination.
+#
+# Pulls the source image, runs chunkah to produce a zstd:chunked OCI archive,
+# loads the result into podman, and pushes it to the destination ref.
+#
+# Usage:
+#   just chunkify ghcr.io/projectbluefin/dakota:latest 192.168.122.1:5000/dakota:chunked
+#   just chunkify ghcr.io/projectbluefin/dakota:latest ghcr.io/projectbluefin/dakota:chunked
+chunkify src dst:
+    #!/usr/bin/bash
+    set -euo pipefail
+
+    echo "==> Pulling source image: {{src}}"
+    podman pull {{src}}
+
+    echo "==> Running chunkah on {{src}}..."
+    # Use /var (not /tmp) — the OCI archive can exceed the tmpfs size for large images
+    CHUNK_OUT=$(mktemp -d --tmpdir=/var/tmp)
+    trap 'rm -rf "${CHUNK_OUT}"' EXIT
+
+    podman run --rm \
+        --security-opt label=disable \
+        --entrypoint="" \
+        -v "${CHUNK_OUT}:/run/out:Z" \
+        --mount "type=image,source={{src}},target=/chunkah" \
+        ghcr.io/tuna-os/chunkah:latest \
+        sh -c 'chunkah build > /run/out/out.ociarchive'
+
+    echo "==> Loading rechunked archive..."
+    LOADED_ID=$(podman load --input "${CHUNK_OUT}/out.ociarchive" | awk '/Loaded image/{print $NF}')
+    if [[ -z "${LOADED_ID}" ]]; then
+        echo "ERROR: podman load produced no image ID; the OCI archive may be corrupt or disk full" >&2
+        exit 1
+    fi
+
+    echo "==> Tagging and pushing to {{dst}}..."
+    podman tag "${LOADED_ID}" "{{dst}}"
+    podman push --tls-verify=false "{{dst}}"
+
+    echo "==> Done: {{dst}}"
+
 # We need some patches that are not yet available upstream, so let's build a custom version.
 build-image-builder:
     #!/bin/bash
