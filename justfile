@@ -853,21 +853,5 @@ luks-unlock-qemu target:
     # Show key screenshots inline for terminals that support it (Kitty, iTerm2, etc.)
     for label in "Plymouth prompt" "Final boot"; do
         key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
-        ppm="/tmp/luks-screenshot-${key}.ppm"
-        [[ -f "$ppm" ]] || continue
-        echo ""
-        echo "── ${label} screendump ──────────────────"
-        if command -v kitty &>/dev/null 2>&1; then
-            kitty +kitten icat --align left "$ppm" 2>/dev/null || true
-        elif [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
-            python3 -c "
-import base64, sys
-data = open('$ppm','rb').read()
-b64 = base64.b64encode(data).decode()
-print(f'\033]1337;File=inline=1;width=80;preserveAspectRatio=1:{b64}\a', end='', flush=True)
-" 2>/dev/null || true
-        else
-            echo "(set TERM_PROGRAM=iTerm.app or use Kitty terminal to view inline)"
-            echo "Screenshot saved: $ppm"
-        fi
+        bash "{{target}}/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
     done
