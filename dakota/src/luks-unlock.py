@@ -313,12 +313,14 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 flush=True,
             )
 
-        # Success: screen changed (passphrase accepted) and has now stabilised
-        # again at non-zero brightness (GNOME Initial Setup / GDM rendered).
-        if screen_changed and md5 == prev_hash and brightness > CONTENT_THRESHOLD:
+        # Success: GNOME/GDM renders a grey login screen — distinctly brighter
+        # than Plymouth (~1) or emergency shell (~1-2).  Require brightness > 15
+        # to distinguish a real graphical boot from a dark console/emergency shell.
+        GNOME_THRESHOLD = 15
+        if screen_changed and md5 == prev_hash and brightness > GNOME_THRESHOLD:
             print(
                 f"[luks-unlock] RESULT: boot succeeded"
-                f" (display stable after LUKS unlock, brightness={brightness:.2f})",
+                f" (GNOME/GDM detected, brightness={brightness:.2f})",
                 flush=True,
             )
             # Save the final screendump for CI diagnostics
@@ -328,6 +330,22 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
             except OSError:
                 pass
             sys.exit(0)
+
+        # If screen re-stabilised but is still dark → likely emergency shell
+        # (issue #270).  Serial log check above may miss it without ttyS0, so
+        # also catch it here via brightness.
+        if screen_changed and md5 == prev_hash and brightness < GNOME_THRESHOLD:
+            print(
+                f"[luks-unlock] RESULT: emergency shell suspected"
+                f" (display stable but dark after unlock, brightness={brightness:.2f})",
+                flush=True,
+            )
+            try:
+                import shutil
+                shutil.copy2(snap, "/tmp/luks-screenshot-final.ppm")
+            except OSError:
+                pass
+            sys.exit(2)
 
         prev_hash = md5
         time.sleep(5)

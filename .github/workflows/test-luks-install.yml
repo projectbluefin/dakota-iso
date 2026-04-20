@@ -204,6 +204,11 @@ jobs:
 
       - name: Upload serial logs
         if: always()
+        run: |
+          sudo chmod a+r /tmp/dakota-qemu-*.log 2>/dev/null || true
+
+      - name: Upload serial logs artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: luks-e2e-serial-logs
