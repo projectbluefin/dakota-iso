@@ -356,10 +356,10 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
         if result == "gdm":
             print(
                 "[luks-unlock] GDM started (serial log confirmed)"
-                " — waiting 10s for login screen to render...",
+                " — waiting 30s for GNOME initial-setup to launch...",
                 flush=True,
             )
-            time.sleep(10)
+            time.sleep(30)
             brightness, md5 = qemu_screendump(monitor_sock, snap)
             print(
                 f"[luks-unlock] RESULT: boot succeeded"
