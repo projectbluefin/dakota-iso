@@ -806,7 +806,7 @@ luks-install-qemu target:
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
     echo "Uploaded recipe — running fisherman (takes several minutes)..."
     $SSH 'sudo /usr/local/bin/fisherman /tmp/luks-recipe.json'
-    echo "Patching BLS entries to enable serial console (console=ttyS0)..."
+    echo "Patching BLS entries to enable dual serial+VT console..."
     $SSH 'sudo bash -c "
         set -euo pipefail
         TMP=$(mktemp -d)
@@ -815,8 +815,8 @@ luks-install-qemu target:
         COUNT=0
         for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
             [[ -f \"\$entry\" ]] || continue
-            if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=ttyS0\" \"\$entry\"; then
-                sed -i \"s|^options .*|& console=ttyS0|\" \"\$entry\"
+            if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
+                sed -i \"s|^options .*|& console=tty0 console=ttyS0|\" \"\$entry\"
                 COUNT=\$((COUNT+1))
                 echo \"  patched: \$(basename \$entry)\"
             fi

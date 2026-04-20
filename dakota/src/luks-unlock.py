@@ -156,11 +156,11 @@ def qemu_send_passphrase(sock: str, passphrase: str):
 
 
 def qemu_check_serial(serial_log: str) -> str:
-    """Return 'gdm', 'emergency', or '' if no marker yet.
+    """Return 'plymouth', 'gdm', 'emergency', or '' if no marker yet.
 
     Checks for systemd unit messages that appear on the serial console when the
-    installed system has console=ttyS0 in its kernel cmdline (set by debug=1
-    ISO builds).  Falls back gracefully to '' when serial output is absent.
+    installed system has console=ttyS0 in its kernel cmdline.
+    Falls back gracefully to '' when serial output is absent.
     """
     try:
         content = open(serial_log).read()
@@ -173,6 +173,11 @@ def qemu_check_serial(serial_log: str) -> str:
     #   "Started GNOME Display Manager."
     if "Started gdm.service" in content or "Started GNOME Display Manager" in content:
         return "gdm"
+    # Plymouth passphrase prompt on serial (when console=ttyS0 is active).
+    # With console=tty0 console=ttyS0, Plymouth still reads input from tty0
+    # so sendkey still works — we just detect via serial instead of framebuffer.
+    if "Please enter passphrase for disk" in content:
+        return "plymouth"
     return ""
 
 
@@ -250,6 +255,25 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
     prev_hash = ""
 
     while time.time() < deadline:
+        # Primary path: detect Plymouth passphrase prompt via serial log.
+        # With console=tty0 console=ttyS0 in the BLS entry, Plymouth writes
+        # the prompt to serial.  Input still comes from tty0, so sendkey works.
+        serial_result = qemu_check_serial(serial_log)
+        if serial_result == "plymouth":
+            print("[luks-unlock] Plymouth passphrase prompt detected via serial", flush=True)
+            brightness, md5 = qemu_screendump(monitor_sock, snap)
+            try:
+                import shutil
+                shutil.copy2(snap, "/tmp/luks-screenshot-plymouth.ppm")
+            except OSError:
+                pass
+            print(f"[luks-unlock] Waiting {PLYMOUTH_WAIT}s for Plymouth to settle...", flush=True)
+            time.sleep(PLYMOUTH_WAIT)
+            print("[luks-unlock] Sending passphrase via QEMU monitor sendkey...", flush=True)
+            qemu_send_passphrase(monitor_sock, passphrase)
+            print("[luks-unlock] Passphrase sent — watching for boot...", flush=True)
+            break
+
         brightness, md5 = qemu_screendump(monitor_sock, snap)
         print(f"[luks-unlock] screendump brightness={brightness:.2f} hash={md5[:8]}", flush=True)
 
@@ -271,7 +295,7 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 stable_count = 0
             prev_hash = md5
 
-        # Plymouth passphrase prompt: non-zero content that has stopped changing
+        # Fallback: detect Plymouth via framebuffer stability (no serial console)
         if had_content and stable_count >= STABLE_POLLS:
             print(
                 f"[luks-unlock] Plymouth prompt stable"
