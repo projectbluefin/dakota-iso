@@ -351,6 +351,9 @@ dev target:
 boot-iso-serial target:
     #!/usr/bin/bash
     set -euo pipefail
+    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+               /usr/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=$(ls \
         {{output_dir}}/{{target}}-live.iso \
         output/bootiso/install.iso \
@@ -389,7 +392,7 @@ boot-iso-serial target:
 
     echo "Booting ${ISO} via UEFI — serial console below (Ctrl-A X to quit)"
     echo "SSH available on localhost:2222 (user: liveuser, password: live) if built with debug=1"
-    sudo /usr/libexec/qemu-kvm \
+    sudo "$QEMU" \
         -machine q35 \
         -m 4096 \
         -accel kvm \
@@ -705,6 +708,9 @@ luks-test-qemu target:
 luks-boot-qemu-live target:
     #!/usr/bin/bash
     set -euo pipefail
+    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+               /usr/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=$(ls \
         {{output_dir}}/{{target}}-live.iso \
         output/bootiso/install.iso \
@@ -730,7 +736,7 @@ luks-boot-qemu-live target:
     sudo rm -f "{{luks-qemu-monitor-live}}" "{{luks-qemu-serial-live}}"
 
     echo "Booting live ISO: $ISO"
-    sudo /usr/libexec/qemu-kvm \
+    sudo "$QEMU" \
         -machine q35 -cpu host -m 8192 -smp 4 -accel kvm \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
@@ -763,6 +769,11 @@ luks-boot-qemu-live target:
         sleep 5
     done
 
+    # Save a live boot screendump for CI diagnostics / PR comment
+    sleep 2
+    sudo socat - "UNIX-CONNECT:{{luks-qemu-monitor-live}}" \
+        <<< "screendump /tmp/luks-screenshot-live.ppm" 2>/dev/null || true
+
 # Run fisherman LUKS install via SSH into the live QEMU VM.
 # Reuses the same SSH logic as luks-install; install disk is /dev/vda in QEMU.
 luks-install-qemu target:
@@ -790,6 +801,9 @@ luks-install-qemu target:
 luks-boot-qemu-installed target:
     #!/usr/bin/bash
     set -euo pipefail
+    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+               /usr/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     OVMF_CODE=""; OVMF_VARS=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
               /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
@@ -804,7 +818,7 @@ luks-boot-qemu-installed target:
     sudo rm -f "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-installed}}"
 
     echo "Booting installed disk: {{luks-qemu-disk}}"
-    sudo /usr/libexec/qemu-kvm \
+    sudo "$QEMU" \
         -machine q35 -cpu host -m 8192 -smp 4 -accel kvm \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
@@ -835,3 +849,25 @@ luks-unlock-qemu target:
         "{{luks-qemu-monitor-installed}}" \
         "$PASSPHRASE" \
         "{{luks-qemu-serial-installed}}"
+
+    # Show key screenshots inline for terminals that support it (Kitty, iTerm2, etc.)
+    for label in "Plymouth prompt" "Final boot"; do
+        key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+        ppm="/tmp/luks-screenshot-${key}.ppm"
+        [[ -f "$ppm" ]] || continue
+        echo ""
+        echo "── ${label} screendump ──────────────────"
+        if command -v kitty &>/dev/null 2>&1; then
+            kitty +kitten icat --align left "$ppm" 2>/dev/null || true
+        elif [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
+            python3 -c "
+import base64, sys
+data = open('$ppm','rb').read()
+b64 = base64.b64encode(data).decode()
+print(f'\033]1337;File=inline=1;width=80;preserveAspectRatio=1:{b64}\a', end='', flush=True)
+" 2>/dev/null || true
+        else
+            echo "(set TERM_PROGRAM=iTerm.app or use Kitty terminal to view inline)"
+            echo "Screenshot saved: $ppm"
+        fi
+    done

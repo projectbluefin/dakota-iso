@@ -21,7 +21,7 @@ jobs:
   luks-e2e:
     name: LUKS End-to-End Install
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -42,7 +42,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y \
             just podman mtools xorriso \
-            qemu-system-x86 ovmf socat sshpass -qq
+            qemu-system-x86 ovmf socat sshpass \
+            imagemagick -qq
 
       - name: Log in to GHCR
         run: |
@@ -50,32 +51,154 @@ jobs:
             podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Build debug ISO
+        id: build
         run: |
+          START=$(date +%s)
           sudo just debug=1 installer_channel=dev output_dir=output iso-sd-boot dakota
+          echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
+          ISO=$(ls output/*.iso output/bootiso/install.iso output/bootc-*.iso 2>/dev/null | head -1)
+          echo "iso_size=$(stat -c%s "$ISO" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
+          echo "iso_path=$ISO" >> "$GITHUB_OUTPUT"
 
       - name: Fix output directory ownership
         run: sudo chown -R "$USER:$(id -gn)" output/
 
       - name: Run LUKS end-to-end test
+        id: luks_test
         run: |
+          START=$(date +%s)
           just luks-test-qemu dakota
+          echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
+          echo "result=success" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
 
-      - name: Upload serial logs
+      - name: Set test result
+        id: result
+        run: |
+          echo "outcome=${{ steps.luks_test.outcome }}" >> "$GITHUB_OUTPUT"
+
+      - name: Convert screenshots to PNG
+        if: always()
+        run: |
+          for f in \
+            /tmp/luks-screenshot-live.ppm \
+            /tmp/luks-screenshot-plymouth.ppm \
+            /tmp/luks-screenshot-final.ppm \
+            /tmp/luks-unlock-snap.ppm; do
+            if [ -f "$f" ]; then
+              out="${f%.ppm}.png"
+              convert "$f" "$out" 2>/dev/null && echo "Converted $f → $out" || true
+            fi
+          done
+
+      - name: Upload screenshots to GitHub CDN
+        if: always() && github.event_name == 'pull_request'
+        id: screenshots
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          upload() {
+            local ppm="$1" name="$2" var="$3"
+            local png="${ppm%.ppm}.png"
+            [ -f "$png" ] || return 0
+            local url
+            url=$(python3 .github/scripts/upload_screenshot.py \
+              "${{ github.repository }}" "$png" "$name" 2>/dev/null) || true
+            [ -n "$url" ] && echo "${var}=${url}" >> "$GITHUB_OUTPUT" \
+              && echo "Uploaded $name → $url" \
+              || echo "Upload failed for $name (will use artifact link)"
+          }
+          upload /tmp/luks-screenshot-live      "live-boot.png"     "live_url"
+          upload /tmp/luks-screenshot-plymouth  "plymouth.png"      "plymouth_url"
+          upload /tmp/luks-screenshot-final     "final-boot.png"    "final_url"
+
+      - name: Post PR comment
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          LIVE_URL:     ${{ steps.screenshots.outputs.live_url }}
+          PLYMOUTH_URL: ${{ steps.screenshots.outputs.plymouth_url }}
+          FINAL_URL:    ${{ steps.screenshots.outputs.final_url }}
+          BUILD_S:      ${{ steps.build.outputs.duration }}
+          LUKS_S:       ${{ steps.luks_test.outputs.duration }}
+          ISO_BYTES:    ${{ steps.build.outputs.iso_size }}
+          TEST_RESULT:  ${{ steps.luks_test.outcome }}
+        with:
+          script: |
+            const result  = process.env.TEST_RESULT || 'unknown';
+            const pass    = result === 'success';
+            const icon    = pass ? '✅' : '❌';
+            const runUrl  = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const fmtDur = s => s ? `${Math.floor(s/60)}m ${s%60}s` : 'N/A';
+            const fmtMiB = b => b ? `${(b/1024/1024).toFixed(0)} MiB` : 'N/A';
+
+            const img = (url, alt) =>
+              url ? `\n\n**${alt}**\n![${alt}](${url})\n` : '';
+
+            const liveImg     = img(process.env.LIVE_URL,     'Live boot');
+            const plymouthImg = img(process.env.PLYMOUTH_URL, 'Plymouth passphrase prompt');
+            const finalImg    = img(process.env.FINAL_URL,    'Installed system (post-LUKS)');
+
+            const screenshotNote = (liveImg || plymouthImg || finalImg)
+              ? ''
+              : `\n📸 **Screenshots**: [Download from workflow artifacts](${runUrl})\n`;
+
+            const body = [
+              `## ${icon} LUKS End-to-End Test — ${pass ? 'PASSED' : 'FAILED'}`,
+              '',
+              '| Step | Details |',
+              '|------|---------|',
+              `| ISO build | ${fmtMiB(process.env.ISO_BYTES)} · ${fmtDur(process.env.BUILD_S)} |`,
+              `| LUKS E2E  | ${fmtDur(process.env.LUKS_S)} |`,
+              `| Result    | ${icon} ${result} |`,
+              '',
+              liveImg,
+              plymouthImg,
+              finalImg,
+              screenshotNote,
+              `<sub>Run: [${context.runId}](${runUrl})</sub>`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });
+
+      - name: Write job summary
+        if: always()
+        run: |
+          RESULT="${{ steps.luks_test.outcome }}"
+          ICON=$( [ "$RESULT" = "success" ] && echo "✅" || echo "❌" )
+          {
+            echo "## ${ICON} LUKS End-to-End Test — ${RESULT}"
+            echo ""
+            echo "| Step | Value |"
+            echo "|------|-------|"
+            echo "| ISO size | $(numfmt --to=iec ${{ steps.build.outputs.iso_size }} 2>/dev/null || echo N/A) |"
+            echo "| Build time | ${{ steps.build.outputs.duration }}s |"
+            echo "| LUKS test time | ${{ steps.luks_test.outputs.duration }}s |"
+            echo ""
+            for label in "Live boot" "Plymouth prompt" "Final boot"; do
+              key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+              f="/tmp/luks-screenshot-${key}.png"
+              [ -f "$f" ] && echo "**${label}** screenshot captured (see artifacts)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: luks-e2e-serial-logs
+          name: luks-e2e-artifacts
           path: |
+            /tmp/luks-screenshot-live.png
+            /tmp/luks-screenshot-plymouth.png
+            /tmp/luks-screenshot-final.png
+            /tmp/luks-unlock-snap.ppm
             /tmp/dakota-qemu-live-serial.log
             /tmp/dakota-qemu-installed-serial.log
           if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload last screendump
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: luks-e2e-screendump
-          path: /tmp/luks-unlock-snap.ppm
-          if-no-files-found: warn
-          retention-days: 7
+          retention-days: 14

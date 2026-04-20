@@ -270,6 +270,12 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 f" (brightness={brightness:.2f}, {stable_count} identical polls)",
                 flush=True,
             )
+            # Save a copy of the Plymouth screendump for CI diagnostics
+            try:
+                import shutil
+                shutil.copy2(snap, "/tmp/luks-screenshot-plymouth.ppm")
+            except OSError:
+                pass
             print(f"[luks-unlock] Waiting {PLYMOUTH_WAIT}s for Plymouth to settle...", flush=True)
             time.sleep(PLYMOUTH_WAIT)
             print("[luks-unlock] Sending passphrase via QEMU monitor sendkey...", flush=True)
@@ -315,6 +321,12 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 f" (display stable after LUKS unlock, brightness={brightness:.2f})",
                 flush=True,
             )
+            # Save the final screendump for CI diagnostics
+            try:
+                import shutil
+                shutil.copy2(snap, "/tmp/luks-screenshot-final.ppm")
+            except OSError:
+                pass
             sys.exit(0)
 
         prev_hash = md5
