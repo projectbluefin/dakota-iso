@@ -313,10 +313,11 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 flush=True,
             )
 
-        # Success: GNOME/GDM renders a grey login screen — distinctly brighter
-        # than Plymouth (~1) or emergency shell (~1-2).  Require brightness > 15
-        # to distinguish a real graphical boot from a dark console/emergency shell.
-        GNOME_THRESHOLD = 15
+        # Success: GNOME initial-setup / GDM renders a colourful screen — brighter
+        # than Plymouth passphrase prompt (~1.4) or emergency shell (~1.0).
+        # With QEMU -display none, GNOME renders at ~2.4; emergency shell at ~1.0.
+        # Use 1.8 as the midpoint threshold.
+        GNOME_THRESHOLD = 1.8
         if screen_changed and md5 == prev_hash and brightness > GNOME_THRESHOLD:
             print(
                 f"[luks-unlock] RESULT: boot succeeded"
