@@ -80,6 +80,8 @@ jobs:
       - name: Convert screenshots to PNG
         if: always()
         run: |
+          # Make root-owned PPMs readable before converting/uploading
+          sudo chmod a+r /tmp/luks-screenshot-*.ppm /tmp/luks-unlock-snap.ppm 2>/dev/null || true
           for f in \
             /tmp/luks-screenshot-live.ppm \
             /tmp/luks-screenshot-plymouth.ppm \
@@ -184,7 +186,7 @@ jobs:
             for label in "Live boot" "Plymouth prompt" "Final boot"; do
               key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
               f="/tmp/luks-screenshot-${key}.png"
-              [ -f "$f" ] && echo "**${label}** screenshot captured (see artifacts)"
+              [ -f "$f" ] && echo "**${label}** screenshot captured (see artifacts)" || true
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -197,7 +199,6 @@ jobs:
             /tmp/luks-screenshot-live.png
             /tmp/luks-screenshot-plymouth.png
             /tmp/luks-screenshot-final.png
-            /tmp/luks-unlock-snap.ppm
             /tmp/dakota-qemu-live-serial.log
             /tmp/dakota-qemu-installed-serial.log
           if-no-files-found: warn
