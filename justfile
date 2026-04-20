@@ -691,6 +691,20 @@ luks-qemu-serial-installed := "/tmp/dakota-qemu-installed-serial.log"
 # SSH port for QEMU SLIRP forwarding
 luks-qemu-ssh-port := "2222"
 
+# Reproduce the full CI LUKS end-to-end run locally: build the ISO then test.
+# Mirrors exactly what .github/workflows/test-luks-install.yml does.
+# Usage: just debug=1 installer_channel=dev luks-ci dakota
+#        just debug=1 installer_channel=stable luks-ci dakota
+luks-ci target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    echo "=== Step 1/2: Building ISO (debug={{debug}}, installer_channel={{installer_channel}}) ==="
+    just debug={{debug}} installer_channel={{installer_channel}} output_dir={{output_dir}} iso-sd-boot {{target}}
+    echo "=== Step 2/2: LUKS end-to-end test ==="
+    sudo rm -f "{{luks-qemu-disk}}" "{{luks-qemu-monitor-live}}" "{{luks-qemu-monitor-installed}}" \
+               "{{luks-qemu-serial-live}}" "{{luks-qemu-serial-installed}}"
+    just luks-test-qemu {{target}}
+
 # Run the full LUKS end-to-end test in QEMU (CI entry point).
 # Builds nothing — expects the ISO to already exist in {{output_dir}}.
 luks-test-qemu target:
