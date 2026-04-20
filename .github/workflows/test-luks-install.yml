@@ -42,12 +42,12 @@ jobs:
             echo "ci-screenshots branch already exists"
           else
             echo "Creating ci-screenshots branch..."
-            CONTENT=$(printf '# CI Screenshots\n\nBoot screenshots committed by CI for inline PR comment embedding.\n' | base64 -w0)
-            gh api --method PUT "/repos/${REPO}/contents/README.md" \
-              -f "message=Initialize ci-screenshots branch" \
-              -f "content=${CONTENT}" \
-              -f "branch=ci-screenshots" > /dev/null
-            echo "ci-screenshots branch created"
+            DEFAULT=$(gh api "/repos/${REPO}" --jq '.default_branch')
+            SHA=$(gh api "/repos/${REPO}/git/refs/heads/${DEFAULT}" --jq '.object.sha')
+            gh api --method POST "/repos/${REPO}/git/refs" \
+              -f "ref=refs/heads/ci-screenshots" \
+              -f "sha=${SHA}"
+            echo "ci-screenshots branch created from ${DEFAULT}"
           fi
 
       - name: Free disk space
