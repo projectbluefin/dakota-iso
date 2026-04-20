@@ -40,18 +40,15 @@ jobs:
         run: |
           if gh api "/repos/${REPO}/git/refs/heads/ci-screenshots" &>/dev/null; then
             echo "ci-screenshots branch already exists"
-            exit 0
+          else
+            echo "Creating ci-screenshots branch..."
+            CONTENT=$(printf '# CI Screenshots\n\nBoot screenshots committed by CI for inline PR comment embedding.\n' | base64 -w0)
+            gh api --method PUT "/repos/${REPO}/contents/README.md" \
+              -f "message=Initialize ci-screenshots branch" \
+              -f "content=${CONTENT}" \
+              -f "branch=ci-screenshots" > /dev/null
+            echo "ci-screenshots branch created"
           fi
-          echo "Creating orphan ci-screenshots branch..."
-          TREE_SHA=$(printf '{"tree":[{"path":"README.md","mode":"100644","type":"blob","content":"# CI Screenshots\n\nScreenshots committed here by CI so they can be embedded in PR comments via raw.githubusercontent.com.\n"}]}' | \
-            gh api --method POST "/repos/${REPO}/git/trees" --input - --jq '.sha')
-          COMMIT_SHA=$(gh api --method POST "/repos/${REPO}/git/commits" \
-            -f "message=Initialize ci-screenshots branch" \
-            -f "tree=${TREE_SHA}" --jq '.sha')
-          gh api --method POST "/repos/${REPO}/git/refs" \
-            -f "ref=refs/heads/ci-screenshots" \
-            -f "sha=${COMMIT_SHA}"
-          echo "ci-screenshots branch created"
 
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
