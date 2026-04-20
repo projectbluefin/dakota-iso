@@ -6,6 +6,10 @@ name: LUKS Install End-to-End Test
 #   just debug=1 installer_channel=dev iso-sd-boot dakota
 #   just luks-test-qemu dakota
 #
+# Runs two parallel legs:
+#   dev    — continuous-dev Flatpak (catches regressions before stable)
+#   stable — continuous Flatpak    (verifies what users actually download)
+#
 # Reproduces: projectbluefin/dakota#270
 
 on:
@@ -25,9 +29,13 @@ permissions:
 
 jobs:
   luks-e2e:
-    name: LUKS End-to-End Install
+    name: LUKS E2E (${{ matrix.installer_channel }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        installer_channel: [dev, stable]
 
     steps:
       - name: Checkout
@@ -77,7 +85,7 @@ jobs:
         id: build
         run: |
           START=$(date +%s)
-          sudo just debug=1 installer_channel=dev output_dir=output iso-sd-boot dakota
+          sudo just debug=1 installer_channel=${{ matrix.installer_channel }} output_dir=output iso-sd-boot dakota
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
           ISO=$(ls output/*.iso output/bootiso/install.iso output/bootc-*.iso 2>/dev/null | head -1)
           echo "iso_size=$(stat -c%s "$ISO" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
@@ -111,7 +119,7 @@ jobs:
             convert "$src_ppm" "$png" 2>/dev/null || return 0
             [[ -f "$png" ]] || return 0
 
-            local path_in_repo="luks-e2e/${RUN_ID}/${label}.png"
+            local path_in_repo="luks-e2e/${RUN_ID}/${{ matrix.installer_channel }}/${label}.png"
             local existing_sha
             existing_sha=$(gh api "/repos/${REPO}/contents/${path_in_repo}?ref=ci-screenshots" \
               --jq '.sha' 2>/dev/null || echo "")
@@ -146,16 +154,18 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         env:
-          LIVE_URL:     ${{ steps.screenshots.outputs.live_url }}
-          PLYMOUTH_URL: ${{ steps.screenshots.outputs.plymouth_url }}
-          FINAL_URL:    ${{ steps.screenshots.outputs.final_url }}
-          BUILD_S:      ${{ steps.build.outputs.duration }}
-          LUKS_S:       ${{ steps.luks_test.outputs.duration }}
-          ISO_BYTES:    ${{ steps.build.outputs.iso_size }}
-          TEST_RESULT:  ${{ steps.luks_test.outcome }}
+          LIVE_URL:          ${{ steps.screenshots.outputs.live_url }}
+          PLYMOUTH_URL:      ${{ steps.screenshots.outputs.plymouth_url }}
+          FINAL_URL:         ${{ steps.screenshots.outputs.final_url }}
+          BUILD_S:           ${{ steps.build.outputs.duration }}
+          LUKS_S:            ${{ steps.luks_test.outputs.duration }}
+          ISO_BYTES:         ${{ steps.build.outputs.iso_size }}
+          TEST_RESULT:       ${{ steps.luks_test.outcome }}
+          INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
         with:
           script: |
             const result  = process.env.TEST_RESULT || 'unknown';
+            const channel = process.env.INSTALLER_CHANNEL || 'unknown';
             const pass    = result === 'success';
             const icon    = pass ? '✅' : '❌';
             const runUrl  = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
@@ -166,7 +176,7 @@ jobs:
             const img = (url, alt) => url ? `**${alt}**\n![${alt}](${url})\n` : '';
 
             const body = [
-              `## ${icon} LUKS End-to-End Test — ${pass ? 'PASSED' : 'FAILED'}`,
+              `## ${icon} LUKS End-to-End Test (${channel}) — ${pass ? 'PASSED' : 'FAILED'}`,
               '',
               '| Step | Details |',
               '|------|---------|',
@@ -191,9 +201,10 @@ jobs:
         if: always()
         run: |
           RESULT="${{ steps.luks_test.outcome }}"
+          CHANNEL="${{ matrix.installer_channel }}"
           ICON=$( [ "$RESULT" = "success" ] && echo "✅" || echo "❌" )
           {
-            echo "## ${ICON} LUKS End-to-End Test — ${RESULT}"
+            echo "## ${ICON} LUKS End-to-End Test (${CHANNEL}) — ${RESULT}"
             echo ""
             echo "| Step | Value |"
             echo "|------|-------|"
@@ -211,7 +222,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: luks-e2e-serial-logs
+          name: luks-e2e-serial-logs-${{ matrix.installer_channel }}
           path: |
             /tmp/dakota-qemu-live-serial.log
             /tmp/dakota-qemu-installed-serial.log
