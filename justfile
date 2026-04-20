@@ -792,6 +792,23 @@ luks-install-qemu target:
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
     echo "Uploaded recipe — running fisherman (takes several minutes)..."
     $SSH 'sudo /usr/local/bin/fisherman /tmp/luks-recipe.json'
+    echo "Patching BLS entries to enable serial console (console=ttyS0)..."
+    $SSH 'sudo bash -c "
+        set -euo pipefail
+        TMP=$(mktemp -d)
+        trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
+        mount /dev/vda1 \$TMP
+        COUNT=0
+        for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
+            [[ -f \"\$entry\" ]] || continue
+            if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=ttyS0\" \"\$entry\"; then
+                sed -i \"s|^options .*|& console=ttyS0|\" \"\$entry\"
+                COUNT=\$((COUNT+1))
+                echo \"  patched: \$(basename \$entry)\"
+            fi
+        done
+        echo \"BLS patch: \$COUNT entries updated\"
+    "'
     echo "Install complete. Shutting down live QEMU..."
     echo "system_powerdown" | sudo socat - "UNIX-CONNECT:{{luks-qemu-monitor-live}}" 2>/dev/null || true
     sleep 5

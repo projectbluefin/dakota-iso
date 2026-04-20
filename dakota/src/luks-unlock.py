@@ -349,11 +349,11 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
         # Fallback: no serial console (console=ttyS0 absent).  Use framebuffer
         # brightness to distinguish GDM (~2.4) from emergency shell (~1.0).
         # Only trigger once the screen has re-stabilised after the initial
-        # post-passphrase animation, and require a longer stability window
-        # (GNOME_STABLE_POLLS consecutive identical frames) to avoid capturing
-        # an early boot splash that briefly pauses.
+        # post-passphrase animation.  GDM re-renders continuously (cursor
+        # blink, animations), so we cannot require many consecutive identical
+        # frames — 1 stable poll is sufficient to confirm the screen settled.
         GNOME_THRESHOLD    = 1.8
-        GNOME_STABLE_POLLS = 5   # 25 s of stability at 5 s poll interval
+        GNOME_STABLE_POLLS = 1   # 1 stable poll is enough; GDM keeps rendering
         if md5 == prev_hash:
             gnome_stable_count += 1
         else:
