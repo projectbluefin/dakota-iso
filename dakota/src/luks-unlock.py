@@ -162,21 +162,24 @@ def qemu_check_serial(serial_log: str) -> str:
     installed system has console=ttyS0 in its kernel cmdline.
     Falls back gracefully to '' when serial output is absent.
     """
+    import re
     try:
-        content = open(serial_log).read()
+        raw = open(serial_log).read()
     except OSError:
         return ""
+    # Strip ANSI escape codes and collapse whitespace so that systemd status
+    # lines like "  OK  ] Started \n<ESC>gdm.service\n<ESC>- GNOME Display…"
+    # become searchable as a single string.
+    content = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', raw)
+    content_flat = ' '.join(content.split())
     if "emergency mode" in content or "emergency shell" in content:
         return "emergency"
-    # Both forms appear in systemd journal on ttyS0:
-    #   "Started gdm.service - GNOME Display Manager."
-    #   "Started GNOME Display Manager."
-    if "Started gdm.service" in content or "Started GNOME Display Manager" in content:
+    # systemd serial output (ANSI-stripped, whitespace-collapsed):
+    #   "OK ] Started gdm.service - GNOME Display Manager."
+    if "Started gdm.service" in content_flat or "Started GNOME Display Manager" in content_flat:
         return "gdm"
-    # Plymouth passphrase prompt on serial (when console=ttyS0 is active).
-    # With console=tty0 console=ttyS0, Plymouth still reads input from tty0
-    # so sendkey still works — we just detect via serial instead of framebuffer.
-    if "Please enter passphrase for disk" in content:
+    # Plymouth passphrase prompt — no ANSI codes, plain text on serial.
+    if "Please enter passphrase for disk" in raw:
         return "plymouth"
     return ""
 
