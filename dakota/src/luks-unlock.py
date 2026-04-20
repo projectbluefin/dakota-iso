@@ -176,6 +176,8 @@ def qemu_check_serial(serial_log: str) -> str:
         return "emergency"
     # systemd serial output (ANSI-stripped, whitespace-collapsed):
     #   "OK ] Started gdm.service - GNOME Display Manager."
+    if "Started gnome-initial-setup" in content_flat:
+        return "gnome-initial-setup"
     if "Started gdm.service" in content_flat or "Started GNOME Display Manager" in content_flat:
         return "gdm"
     # Plymouth passphrase prompt — no ANSI codes, plain text on serial.
@@ -349,14 +351,16 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 flush=True,
             )
 
-        # Primary success path: serial log confirms GDM started.  This is
-        # reliable when the installed system has console=ttyS0 (set by debug=1
-        # ISO builds).  Wait a few extra seconds for GDM to finish rendering
-        # before taking the screenshot.
-        if result == "gdm":
+        # Primary success path: serial log confirms gnome-initial-setup or GDM.
+        # gnome-initial-setup fires after GDM — screenshot taken immediately.
+        # If only GDM is seen, wait 30s as a fallback in case g-i-s is slow.
+        if result == "gnome-initial-setup":
+            print("[luks-unlock] gnome-initial-setup started (serial confirmed) — taking screenshot", flush=True)
+            brightness, md5 = qemu_screendump(monitor_sock, snap)
+            print(f"[luks-unlock] RESULT: boot succeeded (g-i-s confirmed via serial, brightness={brightness:.2f})", flush=True)
+        elif result == "gdm":
             print(
-                "[luks-unlock] GDM started (serial log confirmed)"
-                " — waiting 30s for GNOME initial-setup to launch...",
+                "[luks-unlock] GDM started — waiting 30s for gnome-initial-setup...",
                 flush=True,
             )
             time.sleep(30)
@@ -366,6 +370,7 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 f" (GDM confirmed via serial, brightness={brightness:.2f})",
                 flush=True,
             )
+        if result in ("gnome-initial-setup", "gdm"):
             try:
                 import shutil
                 shutil.copy2(snap, "/tmp/luks-screenshot-final.ppm")
