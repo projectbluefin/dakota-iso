@@ -691,11 +691,11 @@ luks-qemu-serial-installed := "/tmp/dakota-qemu-installed-serial.log"
 # SSH port for QEMU SLIRP forwarding
 luks-qemu-ssh-port := "2222"
 
-# Reproduce the full CI LUKS end-to-end run locally: build the ISO then test.
-# Mirrors exactly what .github/workflows/test-luks-install.yml does.
-# Usage: just debug=1 installer_channel=dev luks-ci dakota
-#        just debug=1 installer_channel=stable luks-ci dakota
-luks-ci target:
+# Full end-to-end test: build the ISO then run the LUKS install + boot test.
+# This is the primary integration test — mirrors .github/workflows/test-luks-install.yml.
+# Usage: just debug=1 installer_channel=dev    e2e dakota
+#        just debug=1 installer_channel=stable e2e dakota
+e2e target:
     #!/usr/bin/bash
     set -euo pipefail
     echo "=== Step 1/2: Building ISO (debug={{debug}}, installer_channel={{installer_channel}}) ==="
