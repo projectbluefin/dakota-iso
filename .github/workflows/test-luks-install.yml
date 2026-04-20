@@ -1,0 +1,81 @@
+name: LUKS Install End-to-End Test
+
+# Test a full LUKS-encrypted installation via fisherman and verify the
+# installed system can unlock and boot.  Mirrors the local just recipes:
+#
+#   just debug=1 installer_channel=dev iso-sd-boot dakota
+#   just luks-test-qemu dakota
+#
+# Reproduces: projectbluefin/dakota#270
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    # Run weekly on Monday 04:00 UTC
+    - cron: '0 4 * * 1'
+
+jobs:
+  luks-e2e:
+    name: LUKS End-to-End Install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        with:
+          tool-cache: true
+
+      - name: Mount BTRFS for podman storage
+        env:
+          BTRFS_LOOPBACK_FREE: "0.95"
+        run: bash .github/scripts/mount_btrfs.sh
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            just podman mtools xorriso \
+            qemu-system-x86 ovmf socat sshpass -qq
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            podman login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build debug ISO
+        run: |
+          sudo just debug=1 installer_channel=dev output_dir=output iso-sd-boot dakota
+
+      - name: Fix output directory ownership
+        run: sudo chown -R "$USER:$(id -gn)" output/
+
+      - name: Run LUKS end-to-end test
+        run: |
+          just luks-test-qemu dakota
+
+      - name: Upload serial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luks-e2e-serial-logs
+          path: |
+            /tmp/dakota-qemu-live-serial.log
+            /tmp/dakota-qemu-installed-serial.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload last screendump
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luks-e2e-screendump
+          path: /tmp/luks-unlock-snap.ppm
+          if-no-files-found: warn
+          retention-days: 7
