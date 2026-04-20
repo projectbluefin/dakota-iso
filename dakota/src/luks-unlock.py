@@ -33,7 +33,7 @@ import time
 POLL_INTERVAL = 3        # seconds between screenshot polls
 PLYMOUTH_WAIT = 10       # seconds to wait after display goes blank before sending keys
 PROMPT_DEADLINE = 300    # seconds to wait for Plymouth to take over
-BOOT_DEADLINE = 180      # seconds to wait for successful boot after passphrase
+BOOT_DEADLINE = 300      # seconds to wait for successful boot after passphrase
 
 
 # ── Libvirt helpers ───────────────────────────────────────────────────────────
@@ -156,15 +156,23 @@ def qemu_send_passphrase(sock: str, passphrase: str):
 
 
 def qemu_check_serial(serial_log: str) -> str:
-    """Return 'success', 'emergency', or '' if no marker yet."""
+    """Return 'gdm', 'emergency', or '' if no marker yet.
+
+    Checks for systemd unit messages that appear on the serial console when the
+    installed system has console=ttyS0 in its kernel cmdline (set by debug=1
+    ISO builds).  Falls back gracefully to '' when serial output is absent.
+    """
     try:
         content = open(serial_log).read()
     except OSError:
         return ""
     if "emergency mode" in content or "emergency shell" in content:
         return "emergency"
-    if "Started GNOME Display Manager" in content or "Reached target" in content:
-        return "success"
+    # Both forms appear in systemd journal on ttyS0:
+    #   "Started gdm.service - GNOME Display Manager."
+    #   "Started GNOME Display Manager."
+    if "Started gdm.service" in content or "Started GNOME Display Manager" in content:
+        return "gdm"
     return ""
 
 
@@ -294,6 +302,7 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
     deadline = time.time() + BOOT_DEADLINE
     passphrase_hash = prev_hash  # Plymouth hash at time of passphrase send
     screen_changed = False
+    gnome_stable_count = 0
 
     while time.time() < deadline:
         result = qemu_check_serial(serial_log)
@@ -313,18 +322,23 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 flush=True,
             )
 
-        # Success: GNOME initial-setup / GDM renders a colourful screen — brighter
-        # than Plymouth passphrase prompt (~1.4) or emergency shell (~1.0).
-        # With QEMU -display none, GNOME renders at ~2.4; emergency shell at ~1.0.
-        # Use 1.8 as the midpoint threshold.
-        GNOME_THRESHOLD = 1.8
-        if screen_changed and md5 == prev_hash and brightness > GNOME_THRESHOLD:
+        # Primary success path: serial log confirms GDM started.  This is
+        # reliable when the installed system has console=ttyS0 (set by debug=1
+        # ISO builds).  Wait a few extra seconds for GDM to finish rendering
+        # before taking the screenshot.
+        if result == "gdm":
             print(
-                f"[luks-unlock] RESULT: boot succeeded"
-                f" (GNOME/GDM detected, brightness={brightness:.2f})",
+                "[luks-unlock] GDM started (serial log confirmed)"
+                " — waiting 10s for login screen to render...",
                 flush=True,
             )
-            # Save the final screendump for CI diagnostics
+            time.sleep(10)
+            brightness, md5 = qemu_screendump(monitor_sock, snap)
+            print(
+                f"[luks-unlock] RESULT: boot succeeded"
+                f" (GDM confirmed via serial, brightness={brightness:.2f})",
+                flush=True,
+            )
             try:
                 import shutil
                 shutil.copy2(snap, "/tmp/luks-screenshot-final.ppm")
@@ -332,21 +346,39 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 pass
             sys.exit(0)
 
-        # If screen re-stabilised but is still dark → likely emergency shell
-        # (issue #270).  Serial log check above may miss it without ttyS0, so
-        # also catch it here via brightness.
-        if screen_changed and md5 == prev_hash and brightness < GNOME_THRESHOLD:
-            print(
-                f"[luks-unlock] RESULT: emergency shell suspected"
-                f" (display stable but dark after unlock, brightness={brightness:.2f})",
-                flush=True,
-            )
+        # Fallback: no serial console (console=ttyS0 absent).  Use framebuffer
+        # brightness to distinguish GDM (~2.4) from emergency shell (~1.0).
+        # Only trigger once the screen has re-stabilised after the initial
+        # post-passphrase animation, and require a longer stability window
+        # (GNOME_STABLE_POLLS consecutive identical frames) to avoid capturing
+        # an early boot splash that briefly pauses.
+        GNOME_THRESHOLD    = 1.8
+        GNOME_STABLE_POLLS = 5   # 25 s of stability at 5 s poll interval
+        if md5 == prev_hash:
+            gnome_stable_count += 1
+        else:
+            gnome_stable_count = 0
+
+        if screen_changed and gnome_stable_count >= GNOME_STABLE_POLLS:
+            if brightness > GNOME_THRESHOLD:
+                print(
+                    f"[luks-unlock] RESULT: boot succeeded"
+                    f" (framebuffer stable {gnome_stable_count} polls,"
+                    f" brightness={brightness:.2f})",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[luks-unlock] RESULT: emergency shell suspected"
+                    f" (framebuffer stable but dark, brightness={brightness:.2f})",
+                    flush=True,
+                )
             try:
                 import shutil
                 shutil.copy2(snap, "/tmp/luks-screenshot-final.ppm")
             except OSError:
                 pass
-            sys.exit(2)
+            sys.exit(0 if brightness > GNOME_THRESHOLD else 2)
 
         prev_hash = md5
         time.sleep(5)
