@@ -17,6 +17,12 @@ on:
     # Run weekly on Monday 04:00 UTC
     - cron: '0 4 * * 1'
 
+permissions:
+  issues: write
+  pull-requests: write
+  contents: write
+  actions: read
+
 jobs:
   luks-e2e:
     name: LUKS End-to-End Install
@@ -26,6 +32,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Ensure screenshots branch exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if gh api "/repos/${REPO}/git/refs/heads/ci-screenshots" &>/dev/null; then
+            echo "ci-screenshots branch already exists"
+            exit 0
+          fi
+          echo "Creating orphan ci-screenshots branch..."
+          TREE_SHA=$(printf '{"tree":[{"path":"README.md","mode":"100644","type":"blob","content":"# CI Screenshots\n\nScreenshots committed here by CI so they can be embedded in PR comments via raw.githubusercontent.com.\n"}]}' | \
+            gh api --method POST "/repos/${REPO}/git/trees" --input - --jq '.sha')
+          COMMIT_SHA=$(gh api --method POST "/repos/${REPO}/git/commits" \
+            -f "message=Initialize ci-screenshots branch" \
+            -f "tree=${TREE_SHA}" --jq '.sha')
+          gh api --method POST "/repos/${REPO}/git/refs" \
+            -f "ref=refs/heads/ci-screenshots" \
+            -f "sha=${COMMIT_SHA}"
+          echo "ci-screenshots branch created"
 
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
@@ -58,7 +84,6 @@ jobs:
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
           ISO=$(ls output/*.iso output/bootiso/install.iso output/bootc-*.iso 2>/dev/null | head -1)
           echo "iso_size=$(stat -c%s "$ISO" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
-          echo "iso_path=$ISO" >> "$GITHUB_OUTPUT"
 
       - name: Fix output directory ownership
         run: sudo chown -R "$USER:$(id -gn)" output/
@@ -69,50 +94,56 @@ jobs:
           START=$(date +%s)
           just luks-test-qemu dakota
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
-          echo "result=success" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
-      - name: Set test result
-        id: result
-        run: |
-          echo "outcome=${{ steps.luks_test.outcome }}" >> "$GITHUB_OUTPUT"
-
-      - name: Convert screenshots to PNG
+      - name: Convert and publish screenshots
         if: always()
-        run: |
-          # Make root-owned PPMs readable before converting/uploading
-          sudo chmod a+r /tmp/luks-screenshot-*.ppm /tmp/luks-unlock-snap.ppm 2>/dev/null || true
-          for f in \
-            /tmp/luks-screenshot-live.ppm \
-            /tmp/luks-screenshot-plymouth.ppm \
-            /tmp/luks-screenshot-final.ppm \
-            /tmp/luks-unlock-snap.ppm; do
-            if [ -f "$f" ]; then
-              out="${f%.ppm}.png"
-              convert "$f" "$out" 2>/dev/null && echo "Converted $f → $out" || true
-            fi
-          done
-
-      - name: Upload screenshots to GitHub CDN
-        if: always() && github.event_name == 'pull_request'
         id: screenshots
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          upload() {
-            local ppm="$1" name="$2" var="$3"
-            local png="${ppm%.ppm}.png"
-            [ -f "$png" ] || return 0
-            local url
-            url=$(python3 .github/scripts/upload_screenshot.py \
-              "${{ github.repository }}" "$png" "$name" 2>/dev/null) || true
-            [ -n "$url" ] && echo "${var}=${url}" >> "$GITHUB_OUTPUT" \
-              && echo "Uploaded $name → $url" \
-              || echo "Upload failed for $name (will use artifact link)"
+          # Make root-owned PPMs readable
+          sudo chmod a+r /tmp/luks-screenshot-*.ppm /tmp/luks-unlock-snap.ppm 2>/dev/null || true
+
+          commit_png() {
+            local src_ppm="$1" label="$2" out_var="$3"
+            local png="/tmp/${label}.png"
+
+            convert "$src_ppm" "$png" 2>/dev/null || return 0
+            [[ -f "$png" ]] || return 0
+
+            local path_in_repo="luks-e2e/${RUN_ID}/${label}.png"
+            local existing_sha
+            existing_sha=$(gh api "/repos/${REPO}/contents/${path_in_repo}?ref=ci-screenshots" \
+              --jq '.sha' 2>/dev/null || echo "")
+
+            local b64_file
+            b64_file=$(mktemp)
+            base64 -w0 "$png" > "$b64_file"
+
+            jq -n \
+              --arg msg "LUKS E2E screenshot: ${label} (run ${RUN_ID})" \
+              --rawfile content "$b64_file" \
+              --arg branch "ci-screenshots" \
+              --arg sha "$existing_sha" \
+              'if $sha != "" then
+                {message: $msg, content: ($content | rtrimstr("\n")), branch: $branch, sha: $sha}
+              else
+                {message: $msg, content: ($content | rtrimstr("\n")), branch: $branch}
+              end' | \
+              gh api --method PUT "/repos/${REPO}/contents/${path_in_repo}" --input - > /dev/null
+
+            rm "$b64_file"
+            local url="https://raw.githubusercontent.com/${REPO}/ci-screenshots/${path_in_repo}"
+            echo "${out_var}=${url}" >> "$GITHUB_OUTPUT"
+            echo "Published ${label} → ${url}"
           }
-          upload /tmp/luks-screenshot-live      "live-boot.png"     "live_url"
-          upload /tmp/luks-screenshot-plymouth  "plymouth.png"      "plymouth_url"
-          upload /tmp/luks-screenshot-final     "final-boot.png"    "final_url"
+
+          commit_png /tmp/luks-screenshot-live.ppm      "live-boot"     "live_url"
+          commit_png /tmp/luks-screenshot-plymouth.ppm  "plymouth"      "plymouth_url"
+          commit_png /tmp/luks-screenshot-final.ppm     "final-boot"    "final_url"
 
       - name: Post PR comment
         if: always() && github.event_name == 'pull_request'
@@ -135,16 +166,7 @@ jobs:
             const fmtDur = s => s ? `${Math.floor(s/60)}m ${s%60}s` : 'N/A';
             const fmtMiB = b => b ? `${(b/1024/1024).toFixed(0)} MiB` : 'N/A';
 
-            const img = (url, alt) =>
-              url ? `\n\n**${alt}**\n![${alt}](${url})\n` : '';
-
-            const liveImg     = img(process.env.LIVE_URL,     'Live boot');
-            const plymouthImg = img(process.env.PLYMOUTH_URL, 'Plymouth passphrase prompt');
-            const finalImg    = img(process.env.FINAL_URL,    'Installed system (post-LUKS)');
-
-            const screenshotNote = (liveImg || plymouthImg || finalImg)
-              ? ''
-              : `\n📸 **Screenshots**: [Download from workflow artifacts](${runUrl})\n`;
+            const img = (url, alt) => url ? `**${alt}**\n![${alt}](${url})\n` : '';
 
             const body = [
               `## ${icon} LUKS End-to-End Test — ${pass ? 'PASSED' : 'FAILED'}`,
@@ -155,11 +177,10 @@ jobs:
               `| LUKS E2E  | ${fmtDur(process.env.LUKS_S)} |`,
               `| Result    | ${icon} ${result} |`,
               '',
-              liveImg,
-              plymouthImg,
-              finalImg,
-              screenshotNote,
-              `<sub>Run: [${context.runId}](${runUrl})</sub>`,
+              img(process.env.LIVE_URL,     'Live boot'),
+              img(process.env.PLYMOUTH_URL, 'Plymouth passphrase prompt'),
+              img(process.env.FINAL_URL,    'Installed system (post-LUKS unlock)'),
+              `<sub>[Workflow run](${runUrl})</sub>`,
             ].join('\n');
 
             await github.rest.issues.createComment({
@@ -182,23 +203,14 @@ jobs:
             echo "| ISO size | $(numfmt --to=iec ${{ steps.build.outputs.iso_size }} 2>/dev/null || echo N/A) |"
             echo "| Build time | ${{ steps.build.outputs.duration }}s |"
             echo "| LUKS test time | ${{ steps.luks_test.outputs.duration }}s |"
-            echo ""
-            for label in "Live boot" "Plymouth prompt" "Final boot"; do
-              key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
-              f="/tmp/luks-screenshot-${key}.png"
-              [ -f "$f" ] && echo "**${label}** screenshot captured (see artifacts)" || true
-            done
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload artifacts
+      - name: Upload serial logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: luks-e2e-artifacts
+          name: luks-e2e-serial-logs
           path: |
-            /tmp/luks-screenshot-live.png
-            /tmp/luks-screenshot-plymouth.png
-            /tmp/luks-screenshot-final.png
             /tmp/dakota-qemu-live-serial.log
             /tmp/dakota-qemu-installed-serial.log
           if-no-files-found: warn
