@@ -15,6 +15,10 @@ debug := "0"
 # Example: just installer_channel=dev iso-sd-boot dakota
 installer_channel := "stable"
 
+# LUKS passphrase used by luks-install for reproducing issue #270.
+# Example: just luks-passphrase=MySecret luks-install dakota
+luks-passphrase := "testpassphrase"
+
 # Squashfs compression preset:
 #   fast    (default) — zstd level 3,  128K blocks — quick local builds/CI
 #   release           — zstd level 15, 1M blocks   — ~20% smaller, ~5× slower
@@ -193,6 +197,47 @@ iso-sd-boot target:
 iso target:
     {{image-builder}} build --bootc-ref localhost/{{target}}-installer --bootc-default-fs ext4 `just _payload_ref_flag {{target}}` bootc-generic-iso
 
+# Run chunkah content-based layer splitting against a source image and push to a destination.
+#
+# Pulls the source image, runs chunkah to produce a zstd:chunked OCI archive,
+# loads the result into podman, and pushes it to the destination ref.
+#
+# Usage:
+#   just chunkify ghcr.io/projectbluefin/dakota:latest 192.168.122.1:5000/dakota:chunked
+#   just chunkify ghcr.io/projectbluefin/dakota:latest ghcr.io/projectbluefin/dakota:chunked
+chunkify src dst:
+    #!/usr/bin/bash
+    set -euo pipefail
+
+    echo "==> Pulling source image: {{src}}"
+    podman pull {{src}}
+
+    echo "==> Running chunkah on {{src}}..."
+    # Use /var (not /tmp) — the OCI archive can exceed the tmpfs size for large images
+    CHUNK_OUT=$(mktemp -d --tmpdir=/var/tmp)
+    trap 'rm -rf "${CHUNK_OUT}"' EXIT
+
+    podman run --rm \
+        --security-opt label=disable \
+        --entrypoint="" \
+        -v "${CHUNK_OUT}:/run/out:Z" \
+        --mount "type=image,source={{src}},target=/chunkah" \
+        ghcr.io/tuna-os/chunkah:latest \
+        sh -c 'chunkah build > /run/out/out.ociarchive'
+
+    echo "==> Loading rechunked archive..."
+    LOADED_ID=$(podman load --input "${CHUNK_OUT}/out.ociarchive" | awk '/Loaded image/{print $NF}')
+    if [[ -z "${LOADED_ID}" ]]; then
+        echo "ERROR: podman load produced no image ID; the OCI archive may be corrupt or disk full" >&2
+        exit 1
+    fi
+
+    echo "==> Tagging and pushing to {{dst}}..."
+    podman tag "${LOADED_ID}" "{{dst}}"
+    podman push --tls-verify=false "{{dst}}"
+
+    echo "==> Done: {{dst}}"
+
 # We need some patches that are not yet available upstream, so let's build a custom version.
 build-image-builder:
     #!/bin/bash
@@ -306,6 +351,9 @@ dev target:
 boot-iso-serial target:
     #!/usr/bin/bash
     set -euo pipefail
+    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+               /usr/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=$(ls \
         {{output_dir}}/{{target}}-live.iso \
         output/bootiso/install.iso \
@@ -344,7 +392,7 @@ boot-iso-serial target:
 
     echo "Booting ${ISO} via UEFI — serial console below (Ctrl-A X to quit)"
     echo "SSH available on localhost:2222 (user: liveuser, password: live) if built with debug=1"
-    sudo /usr/libexec/qemu-kvm \
+    sudo "$QEMU" \
         -machine q35 \
         -m 4096 \
         -accel kvm \
@@ -468,3 +516,373 @@ boot-libvirt-debug target:
     echo "VNC: $(sudo virsh domdisplay ${VM_NAME} 2>/dev/null || echo 'unavailable')"
     echo "Serial: sudo virsh console ${VM_NAME}"
     echo "Cleanup: sudo virsh destroy ${VM_NAME} && sudo virsh undefine ${VM_NAME} --nvram"
+
+# Reproduce issue #270: install Dakota with LUKS encryption via fisherman into
+# the running dakota-debug libvirt VM, then eject the ISO and reboot.
+#
+# Prerequisites:
+#   1. Build a debug ISO:  just debug=1 installer_channel=dev iso-sd-boot dakota
+#   2. Boot the VM:        just debug=1 boot-libvirt-debug dakota
+#      (wait for "SSH ready" output, then Ctrl-C or let it return)
+#
+# After install this recipe ejects the ISO and issues a reboot so the VM boots
+# into the freshly installed system.  Observe the boot with: just luks-boot dakota
+#
+# The LUKS passphrase defaults to "testpassphrase"; override with:
+#   just luks-passphrase=MySecret luks-install dakota
+luks-install target:
+    #!/usr/bin/bash
+    set -euo pipefail
+
+    VM_NAME="dakota-debug"
+    PASSPHRASE="{{luks-passphrase}}"
+    DISK="/dev/sda"
+    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o IdentitiesOnly=yes -o PreferredAuthentications=password"
+    SSH="sshpass -p live ssh $SSH_OPTS"
+    SCP="sshpass -p live scp $SSH_OPTS"
+
+    # ── Resolve guest IP from DHCP leases ────────────────────────────────────
+    MAC=$(sudo virsh domiflist "$VM_NAME" 2>/dev/null | awk '/network/{print $5; exit}')
+    if [[ -z "$MAC" ]]; then
+        echo "ERROR: VM '${VM_NAME}' is not running."
+        echo "Start it first: just debug=1 boot-libvirt-debug {{target}}"
+        exit 1
+    fi
+
+    GUEST_IP=""
+    echo "Looking up DHCP lease for ${VM_NAME} (${MAC})..."
+    for i in $(seq 1 20); do
+        GUEST_IP=$(sudo virsh net-dhcp-leases default 2>/dev/null \
+            | awk -v mac="$MAC" '$3 == mac {split($5, a, "/"); print a[1]}' \
+            | head -1)
+        [[ -n "$GUEST_IP" ]] && break
+        sleep 3
+    done
+    if [[ -z "$GUEST_IP" ]]; then
+        echo "ERROR: no DHCP lease found — is the VM fully booted?"
+        echo "Check: sudo virsh net-dhcp-leases default"
+        exit 1
+    fi
+    echo "Guest IP: ${GUEST_IP}"
+
+    # ── Wait for SSH ──────────────────────────────────────────────────────────
+    echo "Waiting for SSH..."
+    for i in $(seq 1 30); do
+        $SSH liveuser@"$GUEST_IP" true 2>/dev/null && break
+        sleep 3
+    done
+    $SSH liveuser@"$GUEST_IP" true || { echo "ERROR: SSH timed out"; exit 1; }
+
+    # ── Upload fisherman recipe ───────────────────────────────────────────────
+    # Use containers-storage so fisherman uses the OCI image already embedded in
+    # the squashfs (no network pull needed; matches what the GUI installer does).
+    # Write to a local temp file first to avoid $() heredoc syntax that confuses
+    # just's parser (it sees the closing ) at column 0 as a delimiter).
+    RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
+    trap "rm -f '${RECIPE_TMP}'" EXIT
+    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:ghcr.io/projectbluefin/dakota:latest",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+        "${DISK}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+    $SCP "${RECIPE_TMP}" liveuser@"$GUEST_IP":/tmp/luks-recipe.json
+    echo "Uploaded recipe to /tmp/luks-recipe.json"
+
+    # ── Run fisherman ─────────────────────────────────────────────────────────
+    # fisherman is symlinked at /usr/local/bin/fisherman by configure-live.sh.
+    # Run as root (liveuser has NOPASSWD sudo) so fisherman can partition disks.
+    echo "Running fisherman install (this takes several minutes)..."
+    $SSH liveuser@"$GUEST_IP" 'sudo /usr/local/bin/fisherman /tmp/luks-recipe.json'
+    echo "Install finished."
+
+    # ── Eject ISO and reboot ──────────────────────────────────────────────────
+    echo "Ejecting install ISO..."
+    CDROM_DEV=$(sudo virsh domblklist "$VM_NAME" \
+        | awk 'NR>2 && ($2 ~ /\.iso$/ || $2 == "-") {print $1; exit}')
+    if [[ -n "$CDROM_DEV" ]]; then
+        sudo virsh change-media "$VM_NAME" "$CDROM_DEV" --eject --force 2>/dev/null || true
+        echo "ISO ejected from ${CDROM_DEV}."
+    else
+        echo "Warning: could not identify CD-ROM device; eject skipped."
+    fi
+
+    echo "Rebooting VM into installed system..."
+    sudo virsh reboot "$VM_NAME" || $SSH liveuser@"$GUEST_IP" 'sudo reboot' || true
+
+    echo ""
+    echo "========================================"
+    echo " VM is rebooting into the installed system."
+    echo " Unlock LUKS: just luks-unlock {{target}}"
+    echo " Watch boot:  just luks-boot {{target}}"
+    echo " Reproduces:  projectbluefin/dakota#270"
+    echo "========================================"
+
+# Automate LUKS passphrase entry on the dakota-debug VM serial console.
+#
+# Uses a Python PTY to connect to the VM's serial console, waits for the
+# cryptsetup passphrase prompt, sends the passphrase, then watches the boot
+# for success or the #270 emergency shell.
+#
+# Run after: just luks-install dakota
+# Passphrase defaults to {{luks-passphrase}}; override with luks-passphrase=X
+luks-unlock target:
+    #!/usr/bin/bash
+    VM_NAME="dakota-debug"
+    PASSPHRASE="{{luks-passphrase}}"
+    if ! sudo virsh domstate "$VM_NAME" 2>/dev/null | grep -q running; then
+        echo "ERROR: VM '${VM_NAME}' is not running."
+        echo "Run: just luks-install {{target}}"
+        exit 1
+    fi
+    MAC=$(sudo virsh domiflist "$VM_NAME" 2>/dev/null | awk '/network/{print $5; exit}')
+    if [[ -z "$MAC" ]]; then
+        echo "ERROR: VM '${VM_NAME}' is not running."
+        exit 1
+    fi
+    echo "Waiting for Plymouth passphrase prompt (VM MAC: ${MAC})..."
+    echo "Passphrase: ${PASSPHRASE}"
+    sudo python3 "{{target}}/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
+
+# Connect to the serial console of the dakota-debug VM to watch boot after
+# luks-install.  At the LUKS passphrase prompt type the passphrase (default:
+# "testpassphrase"), then watch for the systemd emergency shell (issue #270).
+#
+# Detach: Ctrl-]
+# Cleanup after testing:
+#   sudo virsh destroy dakota-debug && sudo virsh undefine dakota-debug --nvram
+luks-boot target:
+    #!/usr/bin/bash
+    VM_NAME="dakota-debug"
+    if ! sudo virsh domstate "$VM_NAME" 2>/dev/null | grep -q running; then
+        echo "ERROR: VM '${VM_NAME}' is not running."
+        echo "Run: just luks-install {{target}}"
+        exit 1
+    fi
+    echo "Connecting to serial console (detach: Ctrl-])"
+    echo "At the LUKS passphrase prompt type: {{luks-passphrase}}"
+    echo "Reproducing: projectbluefin/dakota#270"
+    echo "  Expected:  ~90s hang → systemd emergency shell"
+    echo ""
+    sudo virsh console "$VM_NAME"
+
+# ── QEMU-native LUKS test (used by CI; mirrors the libvirt recipes) ───────────
+#
+# These recipes run the same end-to-end LUKS test as the libvirt workflow but
+# use QEMU directly so they work in GitHub Actions (no libvirt available).
+#
+# Full CI test sequence:
+#   just debug=1 installer_channel=dev iso-sd-boot dakota
+#   just luks-test-qemu dakota
+#
+# Or step-by-step:
+#   just luks-boot-qemu-live dakota   # boot live ISO in QEMU (daemonized)
+#   just luks-install-qemu dakota     # SSH fisherman install (uses luks-install internals)
+#   just luks-boot-qemu-installed dakota  # reboot QEMU into installed disk
+#   just luks-unlock-qemu dakota      # send passphrase via QEMU monitor
+
+# QEMU install disk path (override with: just luks-qemu-disk=/path/to/disk.qcow2 ...)
+luks-qemu-disk := "/var/tmp/dakota-luks-install.qcow2"
+
+# QEMU monitor socket paths
+luks-qemu-monitor-live := "/tmp/dakota-qemu-live.sock"
+luks-qemu-monitor-installed := "/tmp/dakota-qemu-installed.sock"
+
+# Serial log paths
+luks-qemu-serial-live := "/tmp/dakota-qemu-live-serial.log"
+luks-qemu-serial-installed := "/tmp/dakota-qemu-installed-serial.log"
+
+# SSH port for QEMU SLIRP forwarding
+luks-qemu-ssh-port := "2222"
+
+# Full end-to-end test: build the ISO then run the LUKS install + boot test.
+# This is the primary integration test — mirrors .github/workflows/test-luks-install.yml.
+# Usage: just debug=1 installer_channel=dev    e2e dakota
+#        just debug=1 installer_channel=stable e2e dakota
+e2e target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    echo "=== Step 1/2: Building ISO (debug={{debug}}, installer_channel={{installer_channel}}) ==="
+    just debug={{debug}} installer_channel={{installer_channel}} output_dir={{output_dir}} iso-sd-boot {{target}}
+    echo "=== Step 2/2: LUKS end-to-end test ==="
+    sudo rm -f "{{luks-qemu-disk}}" "{{luks-qemu-monitor-live}}" "{{luks-qemu-monitor-installed}}" \
+               "{{luks-qemu-serial-live}}" "{{luks-qemu-serial-installed}}"
+    just luks-test-qemu {{target}}
+
+# Run the full LUKS end-to-end test in QEMU (CI entry point).
+# Builds nothing — expects the ISO to already exist in {{output_dir}}.
+luks-test-qemu target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    just luks-qemu-disk={{luks-qemu-disk}} luks-boot-qemu-live {{target}}
+    just luks-qemu-ssh-port={{luks-qemu-ssh-port}} luks-install-qemu {{target}}
+    just luks-qemu-disk={{luks-qemu-disk}} luks-boot-qemu-installed {{target}}
+    just luks-qemu-monitor-installed={{luks-qemu-monitor-installed}} \
+         luks-qemu-serial-installed={{luks-qemu-serial-installed}} \
+         luks-unlock-qemu {{target}}
+
+# Boot the live ISO in QEMU (daemonized) with a blank install disk attached.
+# Creates the install disk if it doesn't exist.
+luks-boot-qemu-live target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+               /usr/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
+    ISO=$(ls \
+        {{output_dir}}/{{target}}-live.iso \
+        output/bootiso/install.iso \
+        output/bootc-{{target}}*.iso \
+        2>/dev/null | head -1 || true)
+    if [[ -z "$ISO" ]]; then
+        echo "No ISO found — run: just debug=1 iso-sd-boot {{target}}" >&2
+        exit 1
+    fi
+
+    OVMF_CODE=""; OVMF_VARS=""
+    for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
+              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
+        [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
+    done
+    for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
+              /usr/share/edk2/ovmf/OVMF_VARS.fd; do
+        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-qemu-live-vars.fd; OVMF_VARS=/var/tmp/dakota-qemu-live-vars.fd; break; fi
+    done
+    [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
+
+    [[ -f "{{luks-qemu-disk}}" ]] || qemu-img create -f qcow2 "{{luks-qemu-disk}}" 64G
+    sudo rm -f "{{luks-qemu-monitor-live}}" "{{luks-qemu-serial-live}}"
+
+    echo "Booting live ISO: $ISO"
+    sudo "$QEMU" \
+        -machine q35 -cpu host -m 8192 -smp 4 -accel kvm \
+        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
+        -drive "if=none,id=iso,file=${ISO},media=cdrom,readonly=on,format=raw" \
+        -device virtio-scsi-pci,id=scsi \
+        -device scsi-cd,drive=iso \
+        -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
+        -device virtio-blk-pci,drive=disk \
+        -netdev "user,id=net0,hostfwd=tcp::{{luks-qemu-ssh-port}}-:22" \
+        -device virtio-net-pci,netdev=net0 \
+        -monitor "unix:{{luks-qemu-monitor-live}},server,nowait" \
+        -serial "file:{{luks-qemu-serial-live}}" \
+        -display none \
+        -daemonize
+    echo "Live QEMU started (monitor: {{luks-qemu-monitor-live}})"
+
+    echo "Waiting for live environment SSH on port {{luks-qemu-ssh-port}}..."
+    for i in $(seq 1 60); do
+        if sudo grep -q "DAKOTA_LIVE_READY" "{{luks-qemu-serial-live}}" 2>/dev/null; then
+            echo "Live environment ready (serial marker seen)"
+            break
+        fi
+        [[ "$i" -eq 60 ]] && { echo "ERROR: live env not ready after 5m"; sudo tail -30 "{{luks-qemu-serial-live}}" || true; exit 1; }
+        sleep 5
+    done
+    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
+    for i in $(seq 1 30); do
+        sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} true 2>/dev/null && { echo "SSH ready"; break; }
+        [[ "$i" -eq 30 ]] && { echo "ERROR: SSH timed out"; exit 1; }
+        sleep 5
+    done
+
+    # Save a live boot screendump for CI diagnostics / PR comment
+    sleep 2
+    sudo socat - "UNIX-CONNECT:{{luks-qemu-monitor-live}}" \
+        <<< "screendump /tmp/luks-screenshot-live.ppm" 2>/dev/null || true
+
+# Run fisherman LUKS install via SSH into the live QEMU VM.
+# Reuses the same SSH logic as luks-install; install disk is /dev/vda in QEMU.
+luks-install-qemu target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    PASSPHRASE="{{luks-passphrase}}"
+    DISK="/dev/vda"
+    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
+    SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}}"
+    SCP="sshpass -p live scp $SSH_OPTS -P {{luks-qemu-ssh-port}}"
+
+    RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
+    trap "rm -f '${RECIPE_TMP}'" EXIT
+    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:ghcr.io/projectbluefin/dakota:latest",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+        "${DISK}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+    $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
+    echo "Uploaded recipe — running fisherman (takes several minutes)..."
+    $SSH 'sudo /usr/local/bin/fisherman /tmp/luks-recipe.json'
+    echo "Patching BLS entries to enable dual serial+VT console..."
+    $SSH 'sudo bash -c "
+        set -euo pipefail
+        TMP=$(mktemp -d)
+        trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
+        mount /dev/vda1 \$TMP
+        COUNT=0
+        for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
+            [[ -f \"\$entry\" ]] || continue
+            if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
+                sed -i \"s|^options .*|& console=tty0 console=ttyS0|\" \"\$entry\"
+                COUNT=\$((COUNT+1))
+                echo \"  patched: \$(basename \$entry)\"
+            fi
+        done
+        echo \"BLS patch: \$COUNT entries updated\"
+    "'
+    echo "Install complete. Shutting down live QEMU..."
+    echo "system_powerdown" | sudo socat - "UNIX-CONNECT:{{luks-qemu-monitor-live}}" 2>/dev/null || true
+    sleep 5
+    echo "quit" | sudo socat - "UNIX-CONNECT:{{luks-qemu-monitor-live}}" 2>/dev/null || true
+
+# Boot the installed disk in QEMU (no ISO). Called after luks-install-qemu.
+luks-boot-qemu-installed target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+               /usr/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
+    OVMF_CODE=""; OVMF_VARS=""
+    for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
+              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
+        [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
+    done
+    for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
+              /usr/share/edk2/ovmf/OVMF_VARS.fd; do
+        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-qemu-installed-vars.fd; OVMF_VARS=/var/tmp/dakota-qemu-installed-vars.fd; break; fi
+    done
+    [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
+
+    sudo rm -f "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-installed}}"
+
+    echo "Booting installed disk: {{luks-qemu-disk}}"
+    sudo "$QEMU" \
+        -machine q35 -cpu host -m 8192 -smp 4 -accel kvm \
+        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+        -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
+        -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
+        -device virtio-blk-pci,drive=disk \
+        -netdev user,id=net0 \
+        -device virtio-net-pci,netdev=net0 \
+        -monitor "unix:{{luks-qemu-monitor-installed}},server,nowait" \
+        -serial "file:{{luks-qemu-serial-installed}}" \
+        -display none \
+        -daemonize
+    echo "Installed QEMU started (monitor: {{luks-qemu-monitor-installed}})"
+
+    for i in $(seq 1 15); do
+        [[ -S "{{luks-qemu-monitor-installed}}" ]] && break
+        sleep 2
+    done
+
+# Send LUKS passphrase to installed QEMU VM via monitor screendump + sendkey.
+# Polls screendump size to detect Plymouth takeover, then injects keystrokes.
+luks-unlock-qemu target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    PASSPHRASE="{{luks-passphrase}}"
+    echo "Unlocking LUKS on installed QEMU VM..."
+    echo "Passphrase: ${PASSPHRASE}"
+    sudo python3 "{{target}}/src/luks-unlock.py" qemu \
+        "{{luks-qemu-monitor-installed}}" \
+        "$PASSPHRASE" \
+        "{{luks-qemu-serial-installed}}"
+
+    # Show key screenshots inline for terminals that support it (Kitty, iTerm2, etc.)
+    for label in "Plymouth prompt" "Final boot"; do
+        key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+        bash "{{target}}/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
+    done

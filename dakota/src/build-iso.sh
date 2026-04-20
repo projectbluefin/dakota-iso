@@ -8,12 +8,13 @@
 #
 # Boot architecture (no GRUB2, no shim):
 #   El Torito EFI entry → EFI/efi.img (FAT ESP image containing):
-#     EFI/BOOT/BOOTX64.EFI or BOOTAA64.EFI  systemd-boot EFI binary from Dakota (arch-detected)
+#     EFI/BOOT/BOOTX64.EFI or BOOTAA64.EFI  systemd-boot EFI binary (arch-detected)
 #     loader/loader.conf        systemd-boot configuration
 #     loader/entries/dakota-live.conf   boot entry (kernel + initrd + cmdline)
 #     images/pxeboot/vmlinuz    Dakota kernel
 #     images/pxeboot/initrd.img dmsquash-live initramfs
 #   ISO9660 root:
+#     EFI/BOOT/BOOTX64.EFI      EFI fallback path (same binary) for Proxmox OVMF / Ventoy
 #     EFI/efi.img               (also referenced by El Torito)
 #     LiveOS/squashfs.img       squashfs of the full Dakota live rootfs
 #
@@ -137,6 +138,16 @@ mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/entries/dakota-live.conf"  ::/loade
 mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/vmlinuz"           ::/images/pxeboot/vmlinuz
 mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/initrd.img"        ::/images/pxeboot/initrd.img
 
+# ── EFI fallback path on the ISO9660 root ────────────────────────────────────
+# UEFI firmware that does not use El Torito (e.g. Proxmox OVMF, some bare-metal
+# boards, Ventoy UEFI chainloading) scans the ISO9660 root for the removable
+# media fallback: EFI/BOOT/BOOTX64.EFI (amd64) or EFI/BOOT/BOOTAA64.EFI (arm64).
+# Placing the systemd-boot binary here makes the ISO bootable on those platforms
+# without touching the El Torito path used by libvirt/QEMU and standard OVMF.
+mkdir -p "${ISO_ROOT}/EFI/BOOT"
+cp "${BOOT_EFI_SRC}" "${ISO_ROOT}/${BOOT_EFI_DEST}"
+echo ">>> EFI fallback: ${BOOT_EFI_DEST} added to ISO root"
+
 # ── Place the pre-built squashfs ─────────────────────────────────────────────
 echo ">>> Copying squashfs..."
 cp "${SQUASHFS_SRC}" "${ISO_ROOT}/LiveOS/squashfs.img"
@@ -148,7 +159,8 @@ echo ">>> Assembling ISO..."
 # ~1.7 GiB media cap (which affects -outdev on blank files) and the El Torito
 # catalog structure issues from -as mkisofs -eltorito-alt-boot (which creates
 # an alternate section without a primary entry, confusing some UEFI firmware).
-# -boot_image any platform_id=0xef creates a proper EFI primary boot section.
+# platform_id=0xef must be set before efi_path= so xorriso records the correct
+# platform in the El Torito validation entry (0xef = EFI, not 0x00 = BIOS).
 rm -f "${OUTPUT_ISO}"
 touch "${OUTPUT_ISO}"
 xorriso \
@@ -157,8 +169,8 @@ xorriso \
     -rockridge on \
     -joliet on \
     -map "${ISO_ROOT}" / \
-    -boot_image any efi_path=EFI/efi.img \
     -boot_image any platform_id=0xef \
+    -boot_image any efi_path=EFI/efi.img \
     -commit
 
 implantisomd5 "${OUTPUT_ISO}" 2>/dev/null || true
