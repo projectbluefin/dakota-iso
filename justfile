@@ -144,7 +144,7 @@ iso-sd-boot target:
             MNT_AVAIL=\$(df --output=avail -B1 /mnt | tail -1 | tr -d ' ')
             if [ "\$MNT_AVAIL" -gt 53687091200 ]; then
                 CS_STAGING="/mnt/cs-staging"
-                echo "Using /mnt for CS_STAGING (\$(( MNT_AVAIL / 1024 / 1024 / 1024 ))GB free)"
+                echo "Using /mnt for CS_STAGING"
             fi
         fi
         SQUASHFS_STORAGE=\"\${CS_STAGING}/var/lib/containers/storage\"
