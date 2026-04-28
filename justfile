@@ -165,6 +165,9 @@ iso-sd-boot target:
         echo 'Importing Dakota OCI image into squashfs containers-storage...'
         echo '=== Disk space before VFS import ==='
         df -h /
+        # Background disk monitor to track VFS import space consumption
+        (while true; do echo "$(date +%T) $(df --output=avail / | tail -1)" >> \${OUTPUT_DIR}/disk-monitor.log; sleep 10; done) &
+        DISK_MONITOR_PID=$!
         # Run skopeo from inside the installer image so the VFS tar-split metadata is
         # written in a format the live ISO can read.  The build host links a newer
         # containers/storage that emits a binary tar-split format; the installer image
@@ -177,6 +180,9 @@ iso-sd-boot target:
             -v \"\${STORAGE_CONF}:/tmp/st.conf:ro\" \
             localhost/{{target}}-installer \
             sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:ghcr.io/projectbluefin/dakota:latest containers-storage:ghcr.io/projectbluefin/dakota:latest'
+
+        kill $DISK_MONITOR_PID 2>/dev/null || true
+        cat \${OUTPUT_DIR}/disk-monitor.log 2>/dev/null || true
 
         rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
 
