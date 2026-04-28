@@ -91,9 +91,12 @@ iso-sd-boot target:
     df -h /
     podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
 
-    # Clean up dangling/intermediate build images to free space for squashfs assembly
+    # Aggressively free space: remove intermediate build images and base images
+    # that are no longer needed.  The final image (localhost/{{target}}-installer)
+    # is kept; everything else is disposable.
+    podman rmi debian:sid 2>/dev/null || true
     podman image prune -f 2>/dev/null || true
-    echo "=== Disk space after prune ==="
+    echo "=== Disk space after intermediate cleanup ==="
     df -h /
 
     mkdir -p {{output_dir}}
@@ -152,6 +155,12 @@ iso-sd-boot target:
         echo '=== Disk space after OCI export ==='
         df -h /
         ls -lh \${PAYLOAD_OCI} 2>/dev/null || true
+
+        # Remove base image from podman storage — no longer needed after OCI export.
+        # The OCI archive has all the data; the base image just takes up space.
+        podman rmi ghcr.io/projectbluefin/dakota:latest 2>/dev/null || true
+        echo '=== Disk space after removing base image ==='
+        df -h /
 
         echo 'Importing Dakota OCI image into squashfs containers-storage...'
         # Run skopeo from inside the installer image so the VFS tar-split metadata is

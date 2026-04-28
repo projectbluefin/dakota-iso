@@ -55,25 +55,6 @@ jobs:
           echo "=== Podman images ==="
           podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" 2>/dev/null || true
 
-      - name: Configure podman for BTRFS storage
-        run: |
-          # Podman is pre-installed on the runner with overlay driver on /dev/root (50GB).
-          # mount_btrfs.sh mounts a 70GB BTRFS loopback at /var/lib/containers.
-          # Redirect podman storage to BTRFS by clearing old storage.
-          if mountpoint -q /mnt && mountpoint -q /var/lib/containers; then
-            echo "BTRFS mounted at /var/lib/containers, redirecting podman storage there"
-            # Remove old overlay storage metadata on root fs
-            sudo rm -rf /var/lib/containers/storage
-            # Write storage config (keeps overlay driver, redirects graphroot to BTRFS)
-            printf '[storage]\ndriver = "overlay"\ngraphroot = "/var/lib/containers/storage"\nrunroot = "/run/containers/storage"\n' > /etc/containers/storage.conf
-            echo "Podman storage config updated"
-          else
-            echo "BTRFS not mounted, using default storage"
-          fi
-          echo "Driver: $(sudo podman info --format '{{.Store.GraphDriverName}}')"
-          echo "GraphRoot: $(sudo podman info --format '{{.Store.GraphRoot}}')"
-          df -h $(sudo podman info --format '{{.Store.GraphRoot}}')
-
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
