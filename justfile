@@ -83,6 +83,16 @@ iso-sd-boot target:
 
     echo "=== Disk space before container build ==="
     df -h /
+    # VFS import decompresses all layers (~100GB for current image).
+    # Total build needs ~120GB (18GB container build + 3GB OCI export + 100GB VFS import).
+    # Check early to fail fast with a clear message.
+    AVAILABLE_KB=$(df --output=avail -B1024 / | tail -1 | tr -d ' ')
+    REQUIRED_KB=$((120 * 1024 * 1024))  # 120GB in KB
+    if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
+        echo "ERROR: Need ~120GB free for ISO build, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
+        echo "Hint: use a runner with /mnt secondary mount, or 200GB+ root disk" >&2
+        exit 1
+    fi
     podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
 
     just debug={{debug}} installer_channel={{installer_channel}} container {{target}}
@@ -125,16 +135,6 @@ iso-sd-boot target:
     trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; _ns_rm '${CS_STAGING}' '${SQUASHFS_ROOT}' 2>/dev/null || true" EXIT
     echo "=== Disk space before squashfs assembly ==="
     df -h /
-    # VFS import decompresses all layers (~100GB for current image).
-    # Total build needs ~121GB (18GB container build + 3GB OCI export + 100GB VFS import).
-    # Ensure we have enough free space before starting.
-    AVAILABLE_KB=$(df --output=avail -B1024 "$(dirname "${CS_STAGING}")" | tail -1 | tr -d ' ')
-    REQUIRED_KB=$((120 * 1024 * 1024))  # 120GB in KB
-    if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
-        echo "ERROR: Need ~120GB free for ISO build, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
-        echo "Hint: use a runner with /mnt secondary mount, or 200GB+ root disk" >&2
-        exit 1
-    fi
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
     _ns "
         set -euo pipefail
