@@ -45,6 +45,29 @@ CI uses `sudo just installer_channel=dev output_dir=output iso-sd-boot dakota`
 (runs as root). The justfile detects root via `id -u` and skips `podman unshare`,
 running commands directly instead — so the same justfile works for both cases.
 
+### ⚠️ CI disk space requirement (~120GB free)
+
+The VFS import decompresses all OCI layers (~100GB for current image). Combined
+with the container build (~18GB) and OCI export (~3GB), the build needs ~120GB
+of free disk space.
+
+Standard GitHub runners have 72-145GB `/dev/root` (highly variable). After
+`free-disk-space` cleanup, they have ~50-120GB free — insufficient for the VFS
+import.
+
+**Current state**: The justfile has a disk check at the start of `iso-sd-boot`
+that fails fast with a clear error if <120GB is available.
+
+**Options to fix**:
+1. **Self-hosted runner** with 200GB+ disk (most reliable)
+2. **Optimize the image** to use fewer/smaller layers (reduces VFS size)
+3. **Split build into stages** (OCI export in one workflow, VFS + squashfs in
+   another with larger runner)
+4. **Use `/mnt` secondary mount** when available (CS_STAGING_OVERRIDE=/mnt/cs-staging)
+   — only works on runners with separate `/mnt` partition
+5. **Alternative storage driver** — avoid VFS import entirely (requires boot
+   process changes)
+
 ### Boot the ISO locally
 
 ```bash
