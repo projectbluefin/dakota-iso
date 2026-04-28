@@ -126,12 +126,13 @@ iso-sd-boot target:
     echo "=== Disk space before squashfs assembly ==="
     df -h /
     # VFS import decompresses all layers (~100GB for current image).
+    # Total build needs ~121GB (18GB container build + 3GB OCI export + 100GB VFS import).
     # Ensure we have enough free space before starting.
     AVAILABLE_KB=$(df --output=avail -B1024 "$(dirname "${CS_STAGING}")" | tail -1 | tr -d ' ')
-    REQUIRED_KB=$((110 * 1024 * 1024))  # 110GB in KB
+    REQUIRED_KB=$((120 * 1024 * 1024))  # 120GB in KB
     if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
-        echo "ERROR: Need ~110GB free for VFS import, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
-        echo "Hint: use a runner with /mnt mount or 200GB+ root disk" >&2
+        echo "ERROR: Need ~120GB free for ISO build, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
+        echo "Hint: use a runner with /mnt secondary mount, or 200GB+ root disk" >&2
         exit 1
     fi
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
