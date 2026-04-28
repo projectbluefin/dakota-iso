@@ -119,7 +119,7 @@ iso-sd-boot target:
     # -processors 4 caps memory usage — default (all CPUs) OOMs on this machine.
     SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
     BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
-    CS_STAGING="${OUTPUT_DIR}/{{target}}-cs-staging"
+    CS_STAGING="${CS_STAGING_OVERRIDE:-${OUTPUT_DIR}/{{target}}-cs-staging}"
     SQUASHFS_ROOT="${OUTPUT_DIR}/{{target}}-sfs-root"
     # CS_STAGING and SQUASHFS_ROOT contain sub-uid owned files; must be removed inside the namespace.
     trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; _ns_rm '${CS_STAGING}' '${SQUASHFS_ROOT}' 2>/dev/null || true" EXIT
@@ -138,15 +138,6 @@ iso-sd-boot target:
         PAYLOAD_OCI='${OUTPUT_DIR}/{{target}}-payload.oci.tar'
         CS_STAGING='${CS_STAGING}'
         SQUASHFS_ROOT='${SQUASHFS_ROOT}'
-        # Use /mnt for staging if it is a separate mount with enough space
-        # (VFS import needs ~43GB and root filesystem is often short)
-        if mountpoint -q /mnt 2>/dev/null; then
-            MNT_AVAIL=\$(df --output=avail -B1 /mnt | tail -1 | tr -d ' ')
-            if [ "\$MNT_AVAIL" -gt 53687091200 ]; then
-                CS_STAGING="/mnt/cs-staging"
-                echo "Using /mnt for CS_STAGING"
-            fi
-        fi
         SQUASHFS_STORAGE=\"\${CS_STAGING}/var/lib/containers/storage\"
         # Storage conf for skopeo running inside the installer container.
         # Paths are container-relative: /vfs-storage is the bind-mounted SQUASHFS_STORAGE.

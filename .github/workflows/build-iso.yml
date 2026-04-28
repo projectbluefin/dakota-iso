@@ -69,6 +69,8 @@ jobs:
             # Write config pointing to /mnt
             sudo bash -c 'printf "[storage]\\ndriver = \"overlay\"\\ngraphroot = \"/mnt/containers/storage\"\\nrunroot = \"/run/containers/storage\"\\n" > /etc/containers/storage.conf'
             echo "Podman storage redirected to /mnt"
+          # Also redirect CS_STAGING to /mnt (VFS import needs ~43GB)
+          echo "CS_STAGING_OVERRIDE=/mnt/cs-staging" >> $GITHUB_ENV
           else
             echo "/mnt not available, using default storage"
           fi
