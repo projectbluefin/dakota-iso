@@ -125,6 +125,15 @@ iso-sd-boot target:
     trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; _ns_rm '${CS_STAGING}' '${SQUASHFS_ROOT}' 2>/dev/null || true" EXIT
     echo "=== Disk space before squashfs assembly ==="
     df -h /
+    # VFS import decompresses all layers (~100GB for current image).
+    # Ensure we have enough free space before starting.
+    AVAILABLE_KB=$(df --output=avail -B1024 "$(dirname "${CS_STAGING}")" | tail -1 | tr -d ' ')
+    REQUIRED_KB=$((110 * 1024 * 1024))  # 110GB in KB
+    if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
+        echo "ERROR: Need ~110GB free for VFS import, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
+        echo "Hint: use a runner with /mnt mount or 200GB+ root disk" >&2
+        exit 1
+    fi
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
     _ns "
         set -euo pipefail
