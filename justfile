@@ -91,11 +91,10 @@ iso-sd-boot target:
     df -h /
     podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
 
-    # Aggressively free space: remove ALL unused images (not just dangling).
-    # The only image we need is localhost/{{target}}-installer; everything else
-    # (base images, intermediate stages) is disposable.
-    podman image prune -a -f --filter "dangling=false" 2>/dev/null || true
-    podman image prune -f
+    # Aggressively free space: remove dangling images and known disposable images.
+    # The only image we need is localhost/{{target}}-installer.
+    podman rmi debian:sid 2>/dev/null || true
+    podman image prune -f 2>/dev/null || true
     echo "=== Disk space after intermediate cleanup ==="
     df -h /
 
