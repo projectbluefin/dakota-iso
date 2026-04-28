@@ -94,8 +94,8 @@ iso-sd-boot target:
     # Aggressively free space: remove intermediate build images and base images
     # that are no longer needed.  The final image (localhost/{{target}}-installer)
     # is kept; everything else is disposable.
-    podman rmi debian:sid 2>/dev/null || true
-    podman image prune -f 2>/dev/null || true
+    podman rmi debian:sid || true
+    podman image prune -f
     echo "=== Disk space after intermediate cleanup ==="
     df -h /
 
@@ -158,7 +158,7 @@ iso-sd-boot target:
 
         # Remove base image from podman storage — no longer needed after OCI export.
         # The OCI archive has all the data; the base image just takes up space.
-        podman rmi ghcr.io/projectbluefin/dakota:latest 2>/dev/null || true
+        podman rmi ghcr.io/projectbluefin/dakota:latest || true
         echo '=== Disk space after removing base image ==='
         df -h /
 
