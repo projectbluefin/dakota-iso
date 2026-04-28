@@ -45,6 +45,16 @@ jobs:
           BTRFS_LOOPBACK_FREE: "0.95"
         run: bash .github/scripts/mount_btrfs.sh
 
+      - name: Disk space after cleanup
+        run: |
+          echo "=== Disk space after free-disk-space ==="
+          df -h /
+          df -h /mnt 2>/dev/null || echo "/mnt not a separate mount"
+          echo "=== Podman info ==="
+          podman info --format '{{.Store.GraphStatus}}' 2>/dev/null || true
+          echo "=== Podman images ==="
+          podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" 2>/dev/null || true
+
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
@@ -57,7 +67,31 @@ jobs:
 
       - name: Build Live ISO
         run: |
+          echo "=== Disk space before build ==="
+          df -h /
           sudo just installer_channel=dev output_dir=output iso-sd-boot dakota
+
+      - name: Disk space after build
+        run: |
+          echo "=== Disk space after ISO build ==="
+          df -h /
+          echo "=== Podman images ==="
+          sudo podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
+          echo "=== Podman system df ==="
+          sudo podman system df -v 2>/dev/null || sudo podman system df
+          echo "=== Output directory ==="
+          du -sh output/* 2>/dev/null || true
+
+      - name: Clean up podman images
+        run: |
+          echo "=== Removing podman images to free space ==="
+          sudo podman rmi localhost/dakota-installer 2>/dev/null || true
+          sudo podman rmi ghcr.io/projectbluefin/dakota:latest 2>/dev/null || true
+          sudo podman rmi debian:sid 2>/dev/null || true
+          sudo podman system prune -af --volumes 2>/dev/null || true
+          echo "=== Disk space after cleanup ==="
+          df -h /
+          sudo podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" 2>/dev/null || true
 
       - name: Fix output directory ownership
         # sudo just creates output/ as root; subsequent steps run as the runner

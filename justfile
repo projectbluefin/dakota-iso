@@ -81,7 +81,21 @@ iso-sd-boot target:
     #!/usr/bin/bash
     set -euo pipefail
 
+    echo "=== Disk space before container build ==="
+    df -h /
+    podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
+
     just debug={{debug}} installer_channel={{installer_channel}} container {{target}}
+
+    echo "=== Disk space after container build ==="
+    df -h /
+    podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
+
+    # Clean up dangling/intermediate build images to free space for squashfs assembly
+    podman image prune -f 2>/dev/null || true
+    echo "=== Disk space after prune ==="
+    df -h /
+
     mkdir -p {{output_dir}}
     OUTPUT_DIR=$(realpath "{{output_dir}}")
 
@@ -107,9 +121,13 @@ iso-sd-boot target:
     SQUASHFS_ROOT="${OUTPUT_DIR}/{{target}}-sfs-root"
     # CS_STAGING and SQUASHFS_ROOT contain sub-uid owned files; must be removed inside the namespace.
     trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; _ns_rm '${CS_STAGING}' '${SQUASHFS_ROOT}' 2>/dev/null || true" EXIT
+    echo "=== Disk space before squashfs assembly ==="
+    df -h /
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
     _ns "
         set -euo pipefail
+        echo '=== Disk space inside _ns block ==='
+        df -h /
         MOUNT=\$(podman image mount localhost/{{target}}-installer)
         PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH
 
@@ -131,6 +149,10 @@ iso-sd-boot target:
             containers-storage:ghcr.io/projectbluefin/dakota:latest \
             oci-archive:\${PAYLOAD_OCI}:ghcr.io/projectbluefin/dakota:latest
 
+        echo '=== Disk space after OCI export ==='
+        df -h /
+        ls -lh \${PAYLOAD_OCI} 2>/dev/null || true
+
         echo 'Importing Dakota OCI image into squashfs containers-storage...'
         # Run skopeo from inside the installer image so the VFS tar-split metadata is
         # written in a format the live ISO can read.  The build host links a newer
@@ -146,6 +168,10 @@ iso-sd-boot target:
             sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:ghcr.io/projectbluefin/dakota:latest containers-storage:ghcr.io/projectbluefin/dakota:latest'
 
         rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
+
+        echo '=== Disk space after VFS import ==='
+        df -h /
+        du -sh \${CS_STAGING} 2>/dev/null || true
 
         # mksquashfs adds each source directory as a named subdirectory — it does
         # NOT union-merge multiple sources into root. To get the VFS storage at
@@ -183,6 +209,10 @@ iso-sd-boot target:
             ./usr/lib/systemd/boot/efi
         podman image umount localhost/{{target}}-installer
     "
+
+    echo "=== Disk space after squashfs, before ISO assembly ==="
+    df -h /
+    du -sh "${SQUASHFS}" "${BOOT_TAR}" 2>/dev/null || true
 
     # Run build-iso.sh directly on the host — no container needed.
     # All required tools (xorriso, mkfs.fat, mtools) are present.
