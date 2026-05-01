@@ -68,7 +68,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            just podman mtools xorriso \
+            just podman buildah mtools xorriso \
             qemu-system-x86 ovmf socat sshpass \
             imagemagick -qq
 

@@ -157,12 +157,15 @@ iso-sd-boot target:
     # Squash payload to single layer BEFORE entering _ns.
     # Chunkified Dakota images have ~120 layers; VFS storage copies the full OS
     # filesystem at each layer (~6GB) = ~720GB total. One squashed layer = ~6GB.
-    # Doing this in the outer recipe (not inside _ns) avoids bash -c quoting issues
-    # and makes errors directly visible in CI logs.
+    # Uses buildah (not podman create/commit) because buildah preserves the
+    # original image config (CMD, ENTRYPOINT, ENV, labels, annotations).
+    # podman create --entrypoint /bin/sh would corrupt the config, causing
+    # fisherman's "podman run ... bootc install" to fail with "cannot execute
+    # binary file" (sh treats the bootc ELF binary as a script).
     echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
-    SQUASH_CTR=$(podman create --entrypoint /bin/sh "${PAYLOAD_IMAGE}")
-    podman commit --squash "${SQUASH_CTR}" localhost/{{target}}-squashed:build
-    podman rm "${SQUASH_CTR}"
+    SQUASH_CTR=$(buildah from --pull-never "${PAYLOAD_IMAGE}")
+    buildah commit --squash "${SQUASH_CTR}" localhost/{{target}}-squashed:build
+    buildah rm "${SQUASH_CTR}"
     podman rmi "${PAYLOAD_IMAGE}" || true
     echo "=== Disk space after squash ==="
     df -h "${OUTPUT_DIR}"
