@@ -206,14 +206,16 @@ systemctl enable var-tmp.mount
 
 # ── Live-ready marker service ─────────────────────────────────────────────────
 # Prints DAKOTA_LIVE_READY to the serial console after display-manager.service
-# starts.  CI boot verification greps for this token instead of the fragile
-# "Started gdm.service" journal line (which uses Description=, not the unit
-# name) and confirms the desktop environment is actually up.
+# starts.  CI boot verification greps for this token to confirm the desktop
+# environment is up, or falls back to SSH connectivity if the marker is absent.
+# WantedBy=multi-user.target (not display-manager.service) to ensure the
+# service is reliably started via the standard boot sequence; After= ordering
+# still guarantees it runs only after GDM/display-manager has started.
 cat > /usr/lib/systemd/system/live-ready.service << 'LREOF'
 [Unit]
 Description=Live environment ready marker
 After=display-manager.service
-Wants=display-manager.service
+Requires=display-manager.service
 
 [Service]
 Type=oneshot
@@ -221,7 +223,7 @@ ExecStart=/bin/echo DAKOTA_LIVE_READY
 StandardOutput=journal+console
 
 [Install]
-WantedBy=display-manager.service
+WantedBy=multi-user.target
 LREOF
 systemctl enable live-ready.service
 
