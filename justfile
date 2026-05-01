@@ -89,17 +89,15 @@ iso-sd-boot target:
 
     echo "=== Disk space before container build ==="
     df -h "${OUTPUT_DIR}"
-    # VFS import decompresses all layers (~100GB for current image).
-    # Total build needs ~100GB (18GB container build + 3GB OCI export + ~80GB VFS import).
-    # Check early to fail fast with a clear message.
-    # We check the output dir's filesystem (not /) because on composefs/ostree
-    # systems df / reports 0 — the writable storage lives under /var.
+    # Preflight space check: warn if the output dir's filesystem looks tight.
+    # This is advisory — CI environments manage space externally (BTRFS loopback,
+    # secondary /mnt mounts) so hard-failing here would be wrong.
+    # We check output dir (not /) because on composefs/ostree systems df / reports 0.
     AVAILABLE_KB=$(df --output=avail -B1024 "${OUTPUT_DIR}" | tail -1 | tr -d ' ')
-    REQUIRED_KB=$((100 * 1024 * 1024))  # 100GB in KB
+    REQUIRED_KB=$((20 * 1024 * 1024))  # 20GB minimum for ISO output
     if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
-        echo "ERROR: Need ~100GB free on $(df --output=target "${OUTPUT_DIR}" | tail -1) for ISO build, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
-        echo "Hint: use a runner with /mnt secondary mount, or 200GB+ root disk" >&2
-        exit 1
+        echo "WARNING: Only $(( AVAILABLE_KB / 1024 / 1024 ))GB free on $(df --output=target "${OUTPUT_DIR}" | tail -1) — ISO output needs ~5GB, full build needs more" >&2
+        echo "Hint: set output_dir= to a path with more space, or use a larger disk" >&2
     fi
     podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
 
