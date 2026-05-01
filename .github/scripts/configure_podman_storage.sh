@@ -12,14 +12,23 @@ sudo podman rmi -a 2>/dev/null || true
 # Clear existing podman storage database to avoid driver mismatch
 # This is safe in CI where we start fresh each run
 echo "Clearing podman storage database..."
-sudo rm -rf /var/lib/containers/storage.lock 2>/dev/null || true
-sudo rm -rf /run/containers/storage.lock 2>/dev/null || true
+if command -v podman &> /dev/null; then
+    sudo podman system reset -f 2>/dev/null || {
+        # Fallback if podman system reset isn't available
+        sudo rm -rf /var/lib/containers/storage.lock 2>/dev/null || true
+        sudo rm -rf /run/containers/storage.lock 2>/dev/null || true
+        echo "Warning: podman system reset not available, tried lock file cleanup as fallback"
+    }
+else
+    echo "Podman not installed, skipping reset"
+fi
 
 # Detect filesystem type at /var/lib/containers (where BTRFS loopback is mounted)
+# Use findmnt to reliably detect filesystem (stat --file-system returns "ext2/ext3" for ext4)
 if [ -d /var/lib/containers ]; then
-    FS_TYPE=$(stat --file-system --format=%T /var/lib/containers 2>/dev/null || echo "unknown")
+    FS_TYPE=$(findmnt -n -o FSTYPE -T /var/lib/containers 2>/dev/null || echo "unknown")
 else
-    FS_TYPE=$(stat --file-system --format=%T /var/lib 2>/dev/null || echo "unknown")
+    FS_TYPE=$(findmnt -n -o FSTYPE -T /var/lib 2>/dev/null || echo "unknown")
 fi
 
 echo "Detected filesystem for /var/lib/containers: $FS_TYPE"
