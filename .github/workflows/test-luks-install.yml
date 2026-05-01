@@ -64,14 +64,9 @@ jobs:
         with:
           tool-cache: true
 
-      # mount /mnt as /var/lib/containers — matches Aurora's pattern
-      - name: Mount BTRFS for podman storage
-        uses: ublue-os/container-storage-action@dc1f4c8f17b672069e921f001132f7cf98a423a6
-        continue-on-error: true
-        with:
-          target-dir: /var/lib/containers
-          mount-opts: compress-force=zstd:2
-          loopback-free: '1'
+      # XFS staging for VFS import — ext4 inodes are exhausted by 120 chunkified layers.
+      - name: Setup XFS staging
+        run: sudo bash .github/scripts/mount_xfs.sh
 
       - name: Install dependencies
         run: |
@@ -89,9 +84,8 @@ jobs:
       - name: Build debug ISO
         id: build
         run: |
-          # CS_STAGING on the BTRFS mount — has ~70GB + reflink support.
+          # CS_STAGING_OVERRIDE is set by mount_xfs.sh via GITHUB_ENV.
           # sudo -E preserves env; $(command -v just) resolves the just path.
-          export CS_STAGING_OVERRIDE="/var/lib/containers/cs-staging"
           START=$(date +%s)
           sudo -E $(command -v just) debug=1 installer_channel=${{ matrix.installer_channel }} output_dir=output iso-sd-boot dakota
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"

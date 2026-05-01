@@ -41,19 +41,16 @@ jobs:
         with:
           tool-cache: true
 
-      # mount /mnt as /var/lib/containers — matches Aurora's pattern
-      - name: Mount BTRFS for podman storage
-        uses: ublue-os/container-storage-action@dc1f4c8f17b672069e921f001132f7cf98a423a6
-        continue-on-error: true
-        with:
-          target-dir: /var/lib/containers
-          mount-opts: compress-force=zstd:2
-          loopback-free: '1'
+      # XFS staging for VFS import — ext4 inodes are exhausted by 120 chunkified layers.
+      # XFS has dynamic inode allocation and handles this without issue.
+      - name: Setup XFS staging
+        run: sudo bash .github/scripts/mount_xfs.sh
 
-      - name: Disk space after cleanup
+      - name: Disk space after setup
         run: |
           echo "=== Disk space after setup ==="
-          df -h / /var/lib/containers /mnt 2>/dev/null || true
+          df -h / /var/dakota-staging /mnt 2>/dev/null || true
+          df -i / /var/dakota-staging 2>/dev/null || true
           echo "=== Podman info ==="
           sudo podman info --format 'Driver: {{.Store.GraphDriverName}}  GraphRoot: {{.Store.GraphRoot}}' 2>/dev/null || true
 
@@ -70,10 +67,9 @@ jobs:
       - name: Build Live ISO
         run: |
           echo "=== Disk space before build ==="
-          df -h / /var/lib/containers 2>/dev/null || true
-          # CS_STAGING on BTRFS mount — has ~70GB + reflink support for layer dedup.
+          df -h / /var/dakota-staging 2>/dev/null || true
+          # CS_STAGING_OVERRIDE is set by mount_xfs.sh via GITHUB_ENV.
           # sudo -E preserves env; $(command -v just) resolves the just path.
-          export CS_STAGING_OVERRIDE="/var/lib/containers/cs-staging"
           sudo -E $(command -v just) installer_channel=dev output_dir=output iso-sd-boot ${{ matrix.target }}
 
       - name: Disk space after build
