@@ -69,9 +69,14 @@ jobs:
         run: |
           echo "=== Disk space before build ==="
           df -h / /var/dakota-staging 2>/dev/null || true
-          # CS_STAGING_OVERRIDE is set by mount_xfs.sh via GITHUB_ENV.
+          # Build entirely on XFS to get reflink-fast cp for the squashfs tree.
+          # CS_STAGING_OVERRIDE and XFS_OUTPUT_DIR are set by mount_xfs.sh via GITHUB_ENV.
           # sudo -E preserves env; $(command -v just) resolves the just path.
-          sudo -E $(command -v just) installer_channel=dev output_dir=output iso-sd-boot ${{ matrix.target }}
+          sudo -E $(command -v just) installer_channel=dev output_dir=/var/dakota-staging/output iso-sd-boot ${{ matrix.target }}
+          # Copy final ISO back to root for artifact/upload steps
+          mkdir -p output
+          sudo cp /var/dakota-staging/output/*.iso output/ 2>/dev/null || true
+          sudo chown -R "$USER:$(id -gn)" output/
 
       - name: Disk space after build
         run: |
@@ -94,9 +99,8 @@ jobs:
           sudo podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" 2>/dev/null || true
 
       - name: Fix output directory ownership
-        # sudo just creates output/ as root; subsequent steps run as the runner
-        # user and cannot write into it without this ownership transfer.
-        run: sudo chown -R "$USER:$(id -gn)" output/
+        # Ownership already handled in the build step; this is a safety net.
+        run: sudo chown -R "$USER:$(id -gn)" output/ 2>/dev/null || true
 
       - name: Compute ISO name
         id: iso

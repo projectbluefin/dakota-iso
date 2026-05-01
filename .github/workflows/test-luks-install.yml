@@ -85,16 +85,21 @@ jobs:
       - name: Build debug ISO
         id: build
         run: |
+          # Build entirely on XFS to get reflink-fast cp for the squashfs tree.
           # CS_STAGING_OVERRIDE is set by mount_xfs.sh via GITHUB_ENV.
           # sudo -E preserves env; $(command -v just) resolves the just path.
           START=$(date +%s)
-          sudo -E $(command -v just) debug=1 installer_channel=${{ matrix.installer_channel }} output_dir=output iso-sd-boot dakota
+          sudo -E $(command -v just) debug=1 installer_channel=${{ matrix.installer_channel }} output_dir=/var/dakota-staging/output iso-sd-boot dakota
+          # Copy final ISO back to root for subsequent steps
+          mkdir -p output
+          sudo cp /var/dakota-staging/output/*.iso output/ 2>/dev/null || true
+          sudo chown -R "$USER:$(id -gn)" output/
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
-          ISO=$(ls output/*.iso output/bootiso/install.iso output/bootc-*.iso 2>/dev/null | head -1)
+          ISO=$(ls output/*.iso 2>/dev/null | head -1)
           echo "iso_size=$(stat -c%s "$ISO" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
 
       - name: Fix output directory ownership
-        run: sudo chown -R "$USER:$(id -gn)" output/
+        run: sudo chown -R "$USER:$(id -gn)" output/ 2>/dev/null || true
 
       - name: Run LUKS end-to-end test
         id: luks_test
