@@ -84,6 +84,7 @@ RUN --mount=type=bind,source=src,target=/src \
 COPY src/ /tmp/src/
 RUN chmod +x /tmp/src/configure-live.sh && /tmp/src/configure-live.sh
 
+ARG BASE_IMAGE
 # Patch installer configs to reference the actual base image for this variant.
 # For the default (BASE_IMAGE=ghcr.io/projectbluefin/dakota:latest) this is a no-op.
 RUN sed -i "s|ghcr.io/projectbluefin/dakota:latest|${BASE_IMAGE}|g" \
