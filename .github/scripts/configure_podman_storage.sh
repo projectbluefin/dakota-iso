@@ -13,27 +13,30 @@ fi
 
 echo "Detected filesystem for /var/lib/containers: $FS_TYPE"
 
-# Choose driver based on filesystem
+# Choose driver based on filesystem (native drivers preferred for COW efficiency)
 case "$FS_TYPE" in
     btrfs)
         DRIVER="btrfs"
-        GRAPHROOT="/var/lib/containers/storage"
         echo "Using btrfs driver (native COW support on BTRFS filesystem)"
+        ;;
+    zfs)
+        DRIVER="zfs"
+        echo "Using zfs driver (native COW support on ZFS filesystem)"
         ;;
     ext4|xfs)
         DRIVER="overlay"
-        GRAPHROOT="/var/lib/containers/storage"
         echo "Using overlay driver (space-efficient on ext4/xfs)"
         ;;
     *)
         DRIVER="vfs"
-        GRAPHROOT="/var/lib/containers/storage"
         echo "Using vfs driver (fallback for $FS_TYPE)"
         ;;
 esac
 
 # Write storage.conf
 echo "Configuring podman storage driver: $DRIVER"
+GRAPHROOT="/var/lib/containers/storage"
+
 sudo bash -c "cat > /etc/containers/storage.conf" << CONF
 [storage]
 driver = "$DRIVER"
@@ -44,4 +47,4 @@ CONF
 # Verify configuration
 echo ""
 echo "=== Podman storage configuration ==="
-sudo podman info | grep -A 5 "storage:"
+sudo podman info | grep -A 5 "storage:" || sudo podman info | head -20
