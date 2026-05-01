@@ -92,10 +92,10 @@ iso-sd-boot target:
         CHECK_PATH=$(dirname "$CHECK_PATH")
     fi
     AVAILABLE_KB=$(df --output=avail -B1024 "$CHECK_PATH" | tail -1 | tr -d ' ')
-    REQUIRED_KB=$((120 * 1024 * 1024))  # 120GB in KB
+    REQUIRED_KB=$((110 * 1024 * 1024))  # 110GB in KB (build needs ~100GB VFS + margin)
     if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
-        echo "ERROR: Need ~120GB free for ISO build, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
-        echo "Hint: use a runner with /mnt secondary mount, or 200GB+ root disk" >&2
+        echo "ERROR: Need ~110GB free for ISO build, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
+        echo "Hint: use a runner with /mnt secondary mount, or 150GB+ root disk" >&2
         exit 1
     fi
     podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
