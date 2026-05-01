@@ -86,7 +86,7 @@ iso-sd-boot target:
     # VFS import decompresses all layers (~100GB for current image).
     # Total build needs ~120GB (18GB container build + 3GB OCI export + 100GB VFS import).
     # Check early to fail fast with a clear message.
-    AVAILABLE_KB=$(df --output=avail -B1024 / | tail -1 | tr -d ' ')
+    AVAILABLE_KB=$(df --output=avail -B1024 "{{output_dir}}" | tail -1 | tr -d ' ')
     REQUIRED_KB=$((120 * 1024 * 1024))  # 120GB in KB
     if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
         echo "ERROR: Need ~120GB free for ISO build, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
