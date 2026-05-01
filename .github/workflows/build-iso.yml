@@ -41,17 +41,11 @@ jobs:
         with:
           tool-cache: true
 
-      # XFS staging for VFS import — ext4 inodes are exhausted by 120 chunkified layers.
-      # XFS has dynamic inode allocation and handles this without issue.
-      # sudo -E preserves GITHUB_ENV so the script can export CS_STAGING_OVERRIDE.
-      - name: Setup XFS staging
-        run: sudo -E bash .github/scripts/mount_xfs.sh
-
-      - name: Disk space after setup
+      - name: Disk space after free
         run: |
-          echo "=== Disk space after setup ==="
-          df -h / /var/dakota-staging /mnt 2>/dev/null || true
-          df -i / /var/dakota-staging 2>/dev/null || true
+          echo "=== Disk space after free-disk-space ==="
+          df -h /
+          df -i /
           echo "=== Podman info ==="
           sudo podman info --format 'Driver: {{.Store.GraphDriverName}}  GraphRoot: {{.Store.GraphRoot}}' 2>/dev/null || true
 
@@ -63,19 +57,20 @@ jobs:
       - name: Log in to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | \
-            podman login ghcr.io -u ${{ github.actor }} --password-stdin
+            sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Build Live ISO
         run: |
           echo "=== Disk space before build ==="
-          df -h / /var/dakota-staging 2>/dev/null || true
-          # Build entirely on XFS to get reflink-fast cp for the squashfs tree.
-          # CS_STAGING_OVERRIDE and XFS_OUTPUT_DIR are set by mount_xfs.sh via GITHUB_ENV.
-          # sudo -E preserves env; $(command -v just) resolves the just path.
-          sudo -E $(command -v just) installer_channel=dev output_dir=/var/dakota-staging/output iso-sd-boot ${{ matrix.target }}
-          # Copy final ISO back to root for artifact/upload steps
+          df -h /
+          # Build on /var/iso-build (large root partition, ~119GB free after free-disk-space).
+          # The squash-to-single-layer approach reduces VFS import from ~720GB to ~6GB,
+          # so no XFS staging is needed. Total peak disk usage: ~40GB.
+          sudo mkdir -p /var/iso-build
+          sudo $(command -v just) installer_channel=dev output_dir=/var/iso-build iso-sd-boot ${{ matrix.target }}
+          # Copy final ISO to workspace for artifact/upload steps
           mkdir -p output
-          sudo cp /var/dakota-staging/output/*.iso output/ 2>/dev/null || true
+          sudo cp /var/iso-build/*.iso output/ 2>/dev/null || true
           sudo chown -R "$USER:$(id -gn)" output/
 
       - name: Disk space after build

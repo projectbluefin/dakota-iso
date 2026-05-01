@@ -154,6 +154,20 @@ iso-sd-boot target:
     echo "=== Disk space after intermediate cleanup ==="
     df -h "${OUTPUT_DIR}"
 
+    # Squash payload to single layer BEFORE entering _ns.
+    # Chunkified Dakota images have ~120 layers; VFS storage copies the full OS
+    # filesystem at each layer (~6GB) = ~720GB total. One squashed layer = ~6GB.
+    # Doing this in the outer recipe (not inside _ns) avoids bash -c quoting issues
+    # and makes errors directly visible in CI logs.
+    echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
+    SQUASH_CTR=$(podman create --entrypoint /bin/sh "${PAYLOAD_IMAGE}")
+    podman commit --squash "${SQUASH_CTR}" localhost/{{target}}-squashed:build
+    podman rm "${SQUASH_CTR}"
+    podman rmi "${PAYLOAD_IMAGE}" || true
+    echo "=== Disk space after squash ==="
+    df -h "${OUTPUT_DIR}"
+    podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
+
     # podman unshare enters the user namespace so rootless podman's sub-uid mapped
     # files are accessible/removable.  When running as root (e.g. CI with sudo),
     # there is no user namespace to enter — run commands directly instead.
@@ -199,24 +213,12 @@ iso-sd-boot target:
         printf '[storage]\ndriver = \"vfs\"\nrunroot = \"/tmp/cs-runroot\"\ngraphroot = \"/vfs-storage\"\n' \
             > \"\${STORAGE_CONF}\"
 
-        echo 'Squashing payload to single layer (avoids VFS layer explosion)...'
-        # Chunkified images have ~120 layers. VFS storage copies the full OS filesystem
-        # at each layer = ~450GB total. Squashing to 1 layer reduces this to ~6GB.
-        # The squashed image preserves all OCI metadata (config, labels, annotations).
-        # Bootc updates will pull fresh layers from GHCR on first upgrade.
-        # bootc images have no CMD/ENTRYPOINT by design — pass a dummy override so
-        # podman create doesn't fail with "no command provided". The container is
-        # never started; we only need it to exist for 'podman commit --squash'.
-        SQUASH_CTR=\$(podman create --entrypoint /bin/sh ${PAYLOAD_IMAGE})
-        podman commit --squash \"\${SQUASH_CTR}\" \"${PAYLOAD_IMAGE}-squashed\"
-        podman rm \"\${SQUASH_CTR}\"
-        podman rmi ${PAYLOAD_IMAGE} || true
-
         echo 'Exporting squashed OCI image to archive...'
+        # localhost/{{target}}-squashed:build was created in the outer recipe.
         skopeo copy \
-            containers-storage:${PAYLOAD_IMAGE}-squashed \
+            containers-storage:localhost/{{target}}-squashed:build \
             oci-archive:\${PAYLOAD_OCI}:${PAYLOAD_IMAGE}
-        podman rmi \"${PAYLOAD_IMAGE}-squashed\" || true
+        podman rmi localhost/{{target}}-squashed:build || true
 
         echo 'Importing Dakota OCI image into squashfs containers-storage...'
         echo '=== Disk space before VFS import ==='

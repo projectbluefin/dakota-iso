@@ -64,11 +64,6 @@ jobs:
         with:
           tool-cache: true
 
-      # XFS staging for VFS import — ext4 inodes are exhausted by 120 chunkified layers.
-      # sudo -E preserves GITHUB_ENV so the script can export CS_STAGING_OVERRIDE.
-      - name: Setup XFS staging
-        run: sudo -E bash .github/scripts/mount_xfs.sh
-
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
@@ -80,19 +75,20 @@ jobs:
       - name: Log in to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | \
-            podman login ghcr.io -u ${{ github.actor }} --password-stdin
+            sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Build debug ISO
         id: build
         run: |
-          # Build entirely on XFS to get reflink-fast cp for the squashfs tree.
-          # CS_STAGING_OVERRIDE is set by mount_xfs.sh via GITHUB_ENV.
-          # sudo -E preserves env; $(command -v just) resolves the just path.
+          # Build on /var/iso-build (large root partition, ~119GB free after free-disk-space).
+          # The squash-to-single-layer approach reduces VFS import from ~720GB to ~6GB,
+          # so no XFS staging is needed.
           START=$(date +%s)
-          sudo -E $(command -v just) debug=1 installer_channel=${{ matrix.installer_channel }} output_dir=/var/dakota-staging/output iso-sd-boot dakota
-          # Copy final ISO back to root for subsequent steps
+          sudo mkdir -p /var/iso-build
+          sudo $(command -v just) debug=1 installer_channel=${{ matrix.installer_channel }} output_dir=/var/iso-build iso-sd-boot dakota
+          # Copy final ISO to workspace for subsequent steps
           mkdir -p output
-          sudo cp /var/dakota-staging/output/*.iso output/ 2>/dev/null || true
+          sudo cp /var/iso-build/*.iso output/ 2>/dev/null || true
           sudo chown -R "$USER:$(id -gn)" output/
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
           ISO=$(ls output/*.iso 2>/dev/null | head -1)
