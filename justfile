@@ -204,7 +204,10 @@ iso-sd-boot target:
         # at each layer = ~450GB total. Squashing to 1 layer reduces this to ~6GB.
         # The squashed image preserves all OCI metadata (config, labels, annotations).
         # Bootc updates will pull fresh layers from GHCR on first upgrade.
-        SQUASH_CTR=\$(podman create ${PAYLOAD_IMAGE})
+        # bootc images have no CMD/ENTRYPOINT by design — pass a dummy override so
+        # podman create doesn't fail with "no command provided". The container is
+        # never started; we only need it to exist for 'podman commit --squash'.
+        SQUASH_CTR=\$(podman create --entrypoint /bin/sh ${PAYLOAD_IMAGE})
         podman commit --squash \"\${SQUASH_CTR}\" \"${PAYLOAD_IMAGE}-squashed\"
         podman rm \"\${SQUASH_CTR}\"
         podman rmi ${PAYLOAD_IMAGE} || true
