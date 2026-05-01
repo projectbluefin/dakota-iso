@@ -64,32 +64,14 @@ jobs:
         with:
           tool-cache: true
 
+      # mount /mnt as /var/lib/containers — matches Aurora's pattern
       - name: Mount BTRFS for podman storage
-        env:
-          BTRFS_LOOPBACK_FREE: "0.95"
-        run: bash .github/scripts/mount_btrfs.sh
-
-      - name: Configure podman storage for extra disk
-        run: |
-          # Redirect podman graphroot to /mnt when it's a separate mount with
-          # extra space.  This gives us ~70GB instead of ~50GB on /dev/root.
-          if mountpoint -q /mnt; then
-            MNT_AVAIL=$(df --output=avail -B1 /mnt | tail -1 | tr -d ' ')
-            echo "/mnt available: $(( MNT_AVAIL / 1024 / 1024 / 1024 )) GB"
-            # Clear any existing podman storage on root fs
-            sudo rm -rf /var/lib/containers/storage
-            # Create storage dir on /mnt
-            sudo mkdir -p /mnt/containers/storage
-            # Write config pointing to /mnt
-            sudo bash -c 'printf "[storage]\ndriver = \"overlay\"\ngraphroot = \"/mnt/containers/storage\"\nrunroot = \"/run/containers/storage\"\n" > /etc/containers/storage.conf'
-            echo "Podman storage redirected to /mnt"
-          # Also redirect CS_STAGING to /mnt (VFS import needs ~43GB)
-          echo "CS_STAGING_OVERRIDE=/mnt/cs-staging" >> $GITHUB_ENV
-          else
-            echo "/mnt not available, using default storage"
-          fi
-          echo "Driver: $(sudo podman info --format '{{.Store.GraphDriverName}}')"
-          echo "GraphRoot: $(sudo podman info --format '{{.Store.GraphRoot}}')"
+        uses: ublue-os/container-storage-action@dc1f4c8f17b672069e921f001132f7cf98a423a6
+        continue-on-error: true
+        with:
+          target-dir: /var/lib/containers
+          mount-opts: compress-force=zstd:2
+          loopback-free: '1'
 
       - name: Install dependencies
         run: |
@@ -107,8 +89,11 @@ jobs:
       - name: Build debug ISO
         id: build
         run: |
+          # CS_STAGING on the BTRFS mount — has ~70GB + reflink support.
+          # sudo -E preserves env; $(command -v just) resolves the just path.
+          export CS_STAGING_OVERRIDE="/var/lib/containers/cs-staging"
           START=$(date +%s)
-          sudo just debug=1 installer_channel=${{ matrix.installer_channel }} output_dir=output iso-sd-boot dakota
+          sudo -E $(command -v just) debug=1 installer_channel=${{ matrix.installer_channel }} output_dir=output iso-sd-boot dakota
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
           ISO=$(ls output/*.iso output/bootiso/install.iso output/bootc-*.iso 2>/dev/null | head -1)
           echo "iso_size=$(stat -c%s "$ISO" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"

@@ -25,6 +25,36 @@ luks-passphrase := "testpassphrase"
 # Example: just compression=release iso-sd-boot dakota
 compression := "fast"
 
+# Create an XFS loopback mount at /mnt for faster VFS import.
+#
+# The chunkified Dakota images (~120 layers) cause VFS import under BTRFS
+# to create ~450 GB of intermediate directories.  XFS handles this workload
+# much faster.  This recipe creates a 45 GB XFS loopback at /mnt.
+#
+# Idempotent: skips if /mnt is already an XFS mount.
+# Must be run as root: sudo just mount-xfs
+mount-xfs:
+    #!/usr/bin/bash
+    set -euo pipefail
+    # Already XFS? Nothing to do.
+    if findmnt -n -o FSTYPE /mnt 2>/dev/null | grep -q '^xfs$'; then
+        echo "/mnt is already XFS — skipping"
+        exit 0
+    fi
+    echo "Creating 45G XFS loopback at /mnt..."
+    IMG="/var/tmp/dakota-xfs-loopback.img"
+    truncate -s 0 "${IMG}"
+    # Disable copy-on-write on BTRFS hosts (harmless no-op on other fs)
+    chattr +C "${IMG}" 2>/dev/null || true
+    fallocate -l 45G "${IMG}"
+    mkfs.xfs -f "${IMG}"
+    mount -o loop "${IMG}" /mnt
+    echo "XFS mounted at /mnt (45G)"
+    echo ""
+    echo "Now run your build with CS_STAGING on /mnt:"
+    echo "  sudo env CS_STAGING_OVERRIDE=/mnt/cs-staging just iso-sd-boot dakota"
+    df -h /mnt
+
 # Build the ISO in the background, detached from the terminal session.
 # Logs are written to {{output_dir}}/build.log and tailed live.
 # Safe to close the terminal — the build will continue running.
@@ -89,8 +119,16 @@ iso-sd-boot target:
 
     echo "=== Disk space before container build ==="
     df -h "${OUTPUT_DIR}"
+
+    # Hint: XFS at /mnt dramatically speeds up VFS import for chunkified images.
+    if ! findmnt -n -o FSTYPE /mnt 2>/dev/null | grep -q '^xfs$'; then
+        echo "Hint: /mnt is not an XFS mount.  For faster VFS import, run:" >&2
+        echo "  sudo just mount-xfs" >&2
+        echo "  sudo env CS_STAGING_OVERRIDE=/mnt/cs-staging just iso-sd-boot {{target}}" >&2
+    fi
+
     # Preflight space check: warn if the output dir's filesystem looks tight.
-    # This is advisory — CI environments manage space externally (BTRFS loopback,
+    # This is advisory — CI environments manage space externally (XFS loopback,
     # secondary /mnt mounts) so hard-failing here would be wrong.
     # We check output dir (not /) because on composefs/ostree systems df / reports 0.
     AVAILABLE_KB=$(df --output=avail -B1024 "${OUTPUT_DIR}" | tail -1 | tr -d ' ')
