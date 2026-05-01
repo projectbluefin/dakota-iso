@@ -871,19 +871,23 @@ luks-boot-qemu-live target:
         -daemonize
     echo "Live QEMU started (monitor: {{luks-qemu-monitor-live}})"
 
-    echo "Waiting for live environment SSH on port {{luks-qemu-ssh-port}}..."
+    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
+    echo "Waiting for live environment on port {{luks-qemu-ssh-port}}..."
+    # Check for DAKOTA_LIVE_READY serial marker OR SSH connectivity.
+    # The serial marker requires live-ready.service to print to journal+console.
+    # On some installer channel builds (e.g. dev) the service starts but never
+    # writes to the serial console; SSH still works because debug-ssh-banner
+    # confirms sshd is up.  Either path means the live env is ready.
     for i in $(seq 1 60); do
         if sudo grep -q "DAKOTA_LIVE_READY" "{{luks-qemu-serial-live}}" 2>/dev/null; then
             echo "Live environment ready (serial marker seen)"
             break
         fi
+        if sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} true 2>/dev/null; then
+            echo "Live environment ready (SSH connected)"
+            break
+        fi
         [[ "$i" -eq 60 ]] && { echo "ERROR: live env not ready after 5m"; sudo tail -30 "{{luks-qemu-serial-live}}" || true; exit 1; }
-        sleep 5
-    done
-    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
-    for i in $(seq 1 30); do
-        sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} true 2>/dev/null && { echo "SSH ready"; break; }
-        [[ "$i" -eq 30 ]] && { echo "ERROR: SSH timed out"; exit 1; }
         sleep 5
     done
 
