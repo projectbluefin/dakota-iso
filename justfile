@@ -52,6 +52,7 @@ _payload_ref_flag target:
     @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
 
 container target:
+    @test -f "{{target}}/payload_ref" || { echo "ERROR: {{target}}/payload_ref not found — create it with the base image reference, e.g.: echo 'ghcr.io/projectbluefin/dakota:latest' > {{target}}/payload_ref"; exit 1; }
     podman build --cap-add sys_admin --security-opt label=disable \
         --layers \
         --build-arg DEBUG={{debug}} \
@@ -81,6 +82,7 @@ iso-builder target:
 iso-sd-boot target:
     #!/usr/bin/bash
     set -euo pipefail
+    PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
 
     mkdir -p {{output_dir}}
     OUTPUT_DIR=$(realpath "{{output_dir}}")
@@ -161,8 +163,8 @@ iso-sd-boot target:
 
         echo 'Exporting Dakota OCI image to archive...'
         skopeo copy \
-            containers-storage:ghcr.io/projectbluefin/dakota:latest \
-            oci-archive:\${PAYLOAD_OCI}:ghcr.io/projectbluefin/dakota:latest
+            containers-storage:${PAYLOAD_IMAGE} \
+            oci-archive:\${PAYLOAD_OCI}:${PAYLOAD_IMAGE}
 
         echo '=== Disk space after OCI export ==='
         df -h /
@@ -170,7 +172,7 @@ iso-sd-boot target:
 
         # Remove base image from podman storage — no longer needed after OCI export.
         # The OCI archive has all the data; the base image just takes up space.
-        podman rmi ghcr.io/projectbluefin/dakota:latest || true
+        podman rmi ${PAYLOAD_IMAGE} || true
         podman image prune -f 2>/dev/null || true
         echo '=== Disk space after removing base image ==='
         df -h /
@@ -189,7 +191,7 @@ iso-sd-boot target:
             -v \"\${SQUASHFS_STORAGE}:/vfs-storage\" \
             -v \"\${STORAGE_CONF}:/tmp/st.conf:ro\" \
             localhost/{{target}}-installer \
-            sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:ghcr.io/projectbluefin/dakota:latest containers-storage:ghcr.io/projectbluefin/dakota:latest'
+            sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:'"${PAYLOAD_IMAGE}"' containers-storage:'"${PAYLOAD_IMAGE}"''
 
 
         rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
@@ -592,6 +594,7 @@ luks-install target:
     VM_NAME="dakota-debug"
     PASSPHRASE="{{luks-passphrase}}"
     DISK="/dev/sda"
+    PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o IdentitiesOnly=yes -o PreferredAuthentications=password"
     SSH="sshpass -p live ssh $SSH_OPTS"
     SCP="sshpass -p live scp $SSH_OPTS"
@@ -635,7 +638,7 @@ luks-install target:
     # just's parser (it sees the closing ) at column 0 as a delimiter).
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:ghcr.io/projectbluefin/dakota:latest",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:'"${PAYLOAD_IMAGE}"'",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
         "${DISK}" "${PASSPHRASE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@"$GUEST_IP":/tmp/luks-recipe.json
     echo "Uploaded recipe to /tmp/luks-recipe.json"
@@ -850,13 +853,14 @@ luks-install-qemu target:
     set -euo pipefail
     PASSPHRASE="{{luks-passphrase}}"
     DISK="/dev/vda"
+    PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
     SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}}"
     SCP="sshpass -p live scp $SSH_OPTS -P {{luks-qemu-ssh-port}}"
 
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:ghcr.io/projectbluefin/dakota:latest",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:'"${PAYLOAD_IMAGE}"'",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
         "${DISK}" "${PASSPHRASE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
     echo "Uploaded recipe — running fisherman (takes several minutes)..."
