@@ -65,8 +65,9 @@ jobs:
           tool-cache: true
 
       # XFS staging for VFS import — ext4 inodes are exhausted by 120 chunkified layers.
+      # sudo -E preserves GITHUB_ENV so the script can export CS_STAGING_OVERRIDE.
       - name: Setup XFS staging
-        run: sudo bash .github/scripts/mount_xfs.sh
+        run: sudo -E bash .github/scripts/mount_xfs.sh
 
       - name: Install dependencies
         run: |
