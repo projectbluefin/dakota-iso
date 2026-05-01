@@ -81,6 +81,11 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Configure podman storage (overlay driver for space efficiency)
+        run: |
+          sudo bash -c 'printf "[storage]\ndriver = \"overlay\"\ngraphroot = \"/var/lib/containers/storage\"\nrunroot = \"/run/containers/storage\"\n" > /etc/containers/storage.conf'
+          sudo podman info
+
       - name: Build debug ISO
         id: build
         run: |
