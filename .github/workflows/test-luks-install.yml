@@ -69,6 +69,28 @@ jobs:
           BTRFS_LOOPBACK_FREE: "0.95"
         run: bash .github/scripts/mount_btrfs.sh
 
+      - name: Configure podman storage for extra disk
+        run: |
+          # Redirect podman graphroot to /mnt when it's a separate mount with
+          # extra space.  This gives us ~70GB instead of ~50GB on /dev/root.
+          if mountpoint -q /mnt; then
+            MNT_AVAIL=$(df --output=avail -B1 /mnt | tail -1 | tr -d ' ')
+            echo "/mnt available: $(( MNT_AVAIL / 1024 / 1024 / 1024 )) GB"
+            # Clear any existing podman storage on root fs
+            sudo rm -rf /var/lib/containers/storage
+            # Create storage dir on /mnt
+            sudo mkdir -p /mnt/containers/storage
+            # Write config pointing to /mnt
+            sudo bash -c 'printf "[storage]\ndriver = \"overlay\"\ngraphroot = \"/mnt/containers/storage\"\nrunroot = \"/run/containers/storage\"\n" > /etc/containers/storage.conf'
+            echo "Podman storage redirected to /mnt"
+          # Also redirect CS_STAGING to /mnt (VFS import needs ~43GB)
+          echo "CS_STAGING_OVERRIDE=/mnt/cs-staging" >> $GITHUB_ENV
+          else
+            echo "/mnt not available, using default storage"
+          fi
+          echo "Driver: $(sudo podman info --format '{{.Store.GraphDriverName}}')"
+          echo "GraphRoot: $(sudo podman info --format '{{.Store.GraphRoot}}')"
+
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
