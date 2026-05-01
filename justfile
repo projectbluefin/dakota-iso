@@ -199,21 +199,21 @@ iso-sd-boot target:
         printf '[storage]\ndriver = \"vfs\"\nrunroot = \"/tmp/cs-runroot\"\ngraphroot = \"/vfs-storage\"\n' \
             > \"\${STORAGE_CONF}\"
 
-        echo 'Exporting Dakota OCI image to archive...'
-        skopeo copy \
-            containers-storage:${PAYLOAD_IMAGE} \
-            oci-archive:\${PAYLOAD_OCI}:${PAYLOAD_IMAGE}
-
-        echo '=== Disk space after OCI export ==='
-        df -h /
-        ls -lh \${PAYLOAD_OCI} 2>/dev/null || true
-
-        # Remove base image from podman storage — no longer needed after OCI export.
-        # The OCI archive has all the data; the base image just takes up space.
+        echo 'Squashing payload to single layer (avoids VFS layer explosion)...'
+        # Chunkified images have ~120 layers. VFS storage copies the full OS filesystem
+        # at each layer = ~450GB total. Squashing to 1 layer reduces this to ~6GB.
+        # The squashed image preserves all OCI metadata (config, labels, annotations).
+        # Bootc updates will pull fresh layers from GHCR on first upgrade.
+        SQUASH_CTR=\$(podman create ${PAYLOAD_IMAGE})
+        podman commit --squash \"\${SQUASH_CTR}\" \"${PAYLOAD_IMAGE}-squashed\"
+        podman rm \"\${SQUASH_CTR}\"
         podman rmi ${PAYLOAD_IMAGE} || true
-        podman image prune -f 2>/dev/null || true
-        echo '=== Disk space after removing base image ==='
-        df -h /
+
+        echo 'Exporting squashed OCI image to archive...'
+        skopeo copy \
+            containers-storage:${PAYLOAD_IMAGE}-squashed \
+            oci-archive:\${PAYLOAD_OCI}:${PAYLOAD_IMAGE}
+        podman rmi \"${PAYLOAD_IMAGE}-squashed\" || true
 
         echo 'Importing Dakota OCI image into squashfs containers-storage...'
         echo '=== Disk space before VFS import ==='
