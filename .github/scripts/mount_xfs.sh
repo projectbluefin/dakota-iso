@@ -67,9 +67,12 @@ else
   # Use 90% of the filesystem holding the loopback image
   local_dir=$(dirname "$LOOPBACK_PATH")
   avail_kb=$(df --output=avail -B1024 "$local_dir" | tail -1 | tr -d ' ')
-  SIZE_GB=$(( avail_kb * 90 / 100 / 1024 / 1024 ))
-  # Cap at 100GB — more than enough for VFS staging
-  [[ "$SIZE_GB" -gt 100 ]] && SIZE_GB=100
+  # Reserve 50GB for runner overhead, podman overlay, and ISO output.
+  # VFS import needs ~45GB per issue #19 testing.
+  RESERVE_GB=50
+  SIZE_GB=$(( avail_kb / 1024 / 1024 - RESERVE_GB ))
+  [[ "$SIZE_GB" -lt 45 ]] && { echo "ERROR: not enough space for XFS staging (need 45GB + ${RESERVE_GB}GB reserve)"; exit 1; }
+  [[ "$SIZE_GB" -gt 75 ]] && SIZE_GB=75  # 75GB ceiling is plenty
 fi
 echo "XFS loopback: ${LOOPBACK_PATH} (${SIZE_GB}GB sparse)"
 
