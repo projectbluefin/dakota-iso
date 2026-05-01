@@ -121,8 +121,10 @@ iso-sd-boot target:
     df -h "${OUTPUT_DIR}"
 
     # Hint: XFS at /mnt dramatically speeds up VFS import for chunkified images.
-    if ! findmnt -n -o FSTYPE /mnt 2>/dev/null | grep -q '^xfs$'; then
-        echo "Hint: /mnt is not an XFS mount.  For faster VFS import, run:" >&2
+    # Skip hint if CS_STAGING_OVERRIDE is already set (e.g., CI with BTRFS).
+    if [[ -z "${CS_STAGING_OVERRIDE:-}" ]] && \
+       ! findmnt -n -o FSTYPE /mnt 2>/dev/null | grep -qE '^(xfs|btrfs)$'; then
+        echo "Hint: /mnt is not an XFS/BTRFS mount.  For faster VFS import, run:" >&2
         echo "  sudo just mount-xfs" >&2
         echo "  sudo env CS_STAGING_OVERRIDE=/mnt/cs-staging just iso-sd-boot {{target}}" >&2
     fi

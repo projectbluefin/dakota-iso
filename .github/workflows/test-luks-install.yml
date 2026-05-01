@@ -238,3 +238,9 @@ jobs:
             /tmp/dakota-qemu-installed-serial.log
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Fail if LUKS test failed
+        if: steps.luks_test.outcome == 'failure'
+        run: |
+          echo "::error::LUKS end-to-end test failed — see serial logs and screenshots above"
+          exit 1
