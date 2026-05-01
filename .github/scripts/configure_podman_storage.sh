@@ -1,8 +1,19 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
 # Configure podman storage driver intelligently based on available filesystem
+# Clears existing podman storage to avoid database mismatch errors
 
 set -eo pipefail
+
+# Stop podman if running
+sudo podman rm -fa 2>/dev/null || true
+sudo podman rmi -a 2>/dev/null || true
+
+# Clear existing podman storage database to avoid driver mismatch
+# This is safe in CI where we start fresh each run
+echo "Clearing podman storage database..."
+sudo rm -rf /var/lib/containers/storage.lock 2>/dev/null || true
+sudo rm -rf /run/containers/storage.lock 2>/dev/null || true
 
 # Detect filesystem type at /var/lib/containers (where BTRFS loopback is mounted)
 if [ -d /var/lib/containers ]; then
@@ -23,7 +34,7 @@ case "$FS_TYPE" in
         DRIVER="zfs"
         echo "Using zfs driver (native COW support on ZFS filesystem)"
         ;;
-    ext4|xfs)
+    ext4|ext3|ext2|xfs)
         DRIVER="overlay"
         echo "Using overlay driver (space-efficient on ext4/xfs)"
         ;;
