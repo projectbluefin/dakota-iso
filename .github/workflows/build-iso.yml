@@ -230,8 +230,12 @@ jobs:
 
           echo "quit" | sudo socat - UNIX-CONNECT:/tmp/qemu-monitor.sock || true
 
-          # Fail the job if the live environment never reached the ready state
-          sudo grep -q "DAKOTA_LIVE_READY" /tmp/serial.log || \
+          # Fail the job if the live environment never reached the ready state.
+          # Accept either the explicit DAKOTA_LIVE_READY token (written directly to
+          # /dev/ttyS0 by live-ready.service) or the systemd completion message from
+          # the same service, which always appears on the console regardless of TTY
+          # routing.
+          sudo grep -qE "DAKOTA_LIVE_READY|Finished live-ready\.service" /tmp/serial.log || \
             { echo "ERROR: Live environment did not reach ready state"; sudo tail -50 /tmp/serial.log; exit 1; }
 
       - name: Upload ISO as artifact
