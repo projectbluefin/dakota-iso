@@ -15,8 +15,12 @@
 # The ISO bootloader is systemd-boot (already in Dakota at
 # /usr/lib/systemd/boot/efi/systemd-bootx64.efi) — no GRUB2 or shim required.
 
+# Base image — override to build nvidia or other variants.
+# Example: podman build --build-arg BASE_IMAGE=ghcr.io/projectbluefin/dakota-nvidia:latest ...
+ARG BASE_IMAGE=ghcr.io/projectbluefin/dakota:latest
+
 # ── Stage 1: Dakota reference (kernel modules source) ────────────────────────
-FROM ghcr.io/projectbluefin/dakota:latest AS dakota-ref
+FROM ${BASE_IMAGE} AS dakota-ref
 
 # ── Stage 2: Debian — builds the dmsquash-live initramfs ─────────────────────
 # Dracut runs natively in Debian against Dakota's kernel modules.
@@ -42,7 +46,8 @@ RUN set -ex; \
     ls -lh /tmp/initramfs.img
 
 # ── Stage 3: Final Dakota live image ─────────────────────────────────────────
-FROM ghcr.io/projectbluefin/dakota:latest
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
 
 # Set to "dev" to pull the tuna-installer dev build (continuous-dev release)
 # instead of the stable continuous build.  Useful for testing PRs on the dev

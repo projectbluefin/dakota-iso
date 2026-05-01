@@ -56,13 +56,14 @@ container target:
         --layers \
         --build-arg DEBUG={{debug}} \
         --build-arg INSTALLER_CHANNEL={{installer_channel}} \
-        -t {{target}}-installer ./{{target}}
+        --build-arg BASE_IMAGE=$(cat {{target}}/payload_ref | tr -d '[:space:]') \
+        -t {{target}}-installer -f ./dakota/Containerfile ./dakota
 
 # Build the Debian-based ISO assembly container for the given target.
 # This container has xorriso, mksquashfs, dosfstools, and mtools.
 iso-builder target:
     podman build --security-opt label=disable -t {{target}}-iso-builder \
-        -f ./{{target}}/Containerfile.builder ./{{target}}
+        -f ./dakota/Containerfile.builder ./dakota
 
 # Build a systemd-boot UEFI live ISO for the given target.
 #
@@ -242,7 +243,7 @@ iso-sd-boot target:
     # just always runs recipes from the justfile directory, so relative path works.
     TMPDIR="${OUTPUT_DIR}" \
     PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" \
-        bash "{{target}}/src/build-iso.sh" "${BOOT_TAR}" "${SQUASHFS}" "${OUTPUT_DIR}/{{target}}-live.iso"
+        bash "dakota/src/build-iso.sh" "${BOOT_TAR}" "${SQUASHFS}" "${OUTPUT_DIR}/{{target}}-live.iso"
 
     echo "ISO ready: ${OUTPUT_DIR}/{{target}}-live.iso"
 
@@ -690,7 +691,7 @@ luks-unlock target:
     fi
     echo "Waiting for Plymouth passphrase prompt (VM MAC: ${MAC})..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "{{target}}/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
+    sudo python3 "dakota/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
 
 # Connect to the serial console of the dakota-debug VM to watch boot after
 # luks-install.  At the LUKS passphrase prompt type the passphrase (default:
@@ -928,7 +929,7 @@ luks-unlock-qemu target:
     PASSPHRASE="{{luks-passphrase}}"
     echo "Unlocking LUKS on installed QEMU VM..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "{{target}}/src/luks-unlock.py" qemu \
+    sudo python3 "dakota/src/luks-unlock.py" qemu \
         "{{luks-qemu-monitor-installed}}" \
         "$PASSPHRASE" \
         "{{luks-qemu-serial-installed}}"
@@ -936,5 +937,5 @@ luks-unlock-qemu target:
     # Show key screenshots inline for terminals that support it (Kitty, iTerm2, etc.)
     for label in "Plymouth prompt" "Final boot"; do
         key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
-        bash "{{target}}/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
+        bash "dakota/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
     done

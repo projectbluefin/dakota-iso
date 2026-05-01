@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'dakota/**'
+      - 'dakota-nvidia/**'
       - 'justfile'
       - '.github/workflows/build-iso.yml'
   schedule:
@@ -20,8 +21,12 @@ on:
 
 jobs:
   build-and-publish:
-    name: Build Dakota Live ISO
+    name: Build ${{ matrix.target }} Live ISO
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [dakota, dakota-nvidia]
     permissions:
       contents: read
       packages: read
@@ -91,7 +96,7 @@ jobs:
         run: |
           echo "=== Disk space before build ==="
           df -h /
-          sudo just installer_channel=dev output_dir=output iso-sd-boot dakota
+          sudo just installer_channel=dev output_dir=output iso-sd-boot ${{ matrix.target }}
 
       - name: Disk space after build
         run: |
@@ -107,9 +112,7 @@ jobs:
       - name: Clean up podman images
         run: |
           echo "=== Removing podman images to free space ==="
-          sudo podman rmi localhost/dakota-installer 2>/dev/null || true
-          sudo podman rmi ghcr.io/projectbluefin/dakota:latest 2>/dev/null || true
-          sudo podman rmi debian:sid 2>/dev/null || true
+          sudo podman rmi localhost/${{ matrix.target }}-installer 2>/dev/null || true
           sudo podman system prune -af --volumes 2>/dev/null || true
           echo "=== Disk space after cleanup ==="
           df -h /
@@ -125,8 +128,8 @@ jobs:
         run: |
           DATE=$(date -u +%Y%m%d)
           SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          echo "dated=dakota-live-${DATE}-${SHA}.iso" >> "$GITHUB_OUTPUT"
-          echo "path=output/dakota-live.iso" >> "$GITHUB_OUTPUT"
+          echo "dated=${{ matrix.target }}-live-${DATE}-${SHA}.iso" >> "$GITHUB_OUTPUT"
+          echo "path=output/${{ matrix.target }}-live.iso" >> "$GITHUB_OUTPUT"
 
       - name: Generate SHA256 checksum
         id: checksum
@@ -134,15 +137,17 @@ jobs:
           ISO="${{ steps.iso.outputs.path }}"
           DATED="${{ steps.iso.outputs.dated }}"
           CHECKSUM_PATH="output/${DATED}-CHECKSUM"
-          LATEST_CHECKSUM_PATH="output/dakota-live-latest.iso-CHECKSUM"
+          LATEST="${{ matrix.target }}-live-latest.iso"
+          LATEST_CHECKSUM_PATH="output/${LATEST}-CHECKSUM"
           # Full sha256sum format (hash + filename) so users can run: sha256sum -c
           # Two manifests: one with the dated filename, one with the "latest" alias.
           # They share the same hash but different recorded filenames so both work.
-          sha256sum "$ISO" | sed "s|output/dakota-live.iso|${DATED}|" | tee "$CHECKSUM_PATH"
-          sha256sum "$ISO" | sed "s|output/dakota-live.iso|dakota-live-latest.iso|" > "$LATEST_CHECKSUM_PATH"
+          sha256sum "$ISO" | sed "s|${ISO}|${DATED}|" | tee "$CHECKSUM_PATH"
+          sha256sum "$ISO" | sed "s|${ISO}|${LATEST}|" > "$LATEST_CHECKSUM_PATH"
           echo "path=${CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
           echo "name=${DATED}-CHECKSUM" >> "$GITHUB_OUTPUT"
           echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
+          echo "latest=${LATEST}" >> "$GITHUB_OUTPUT"
 
       - name: Upload ISO to Cloudflare R2
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' }}
@@ -156,8 +161,7 @@ jobs:
         run: |
           ISO="${{ steps.iso.outputs.path }}"
           DATED="${{ steps.iso.outputs.dated }}"
-          BUCKET="${{ secrets.R2_BUCKET }}"
-          LATEST="dakota-live-latest.iso"
+          LATEST="${{ steps.checksum.outputs.latest }}"
 
           echo "==> Uploading as $DATED ..."
           rclone copyto --log-level INFO --checksum --s3-no-check-bucket \
@@ -260,7 +264,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.iso.outputs.dated }}
-          path: output/dakota-live.iso
+          path: ${{ steps.iso.outputs.path }}
           if-no-files-found: error
           retention-days: 7
 
@@ -277,6 +281,6 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: boot-screenshot-amd64
+          name: boot-screenshot-${{ matrix.target }}
           path: screenshot.png
           if-no-files-found: warn
