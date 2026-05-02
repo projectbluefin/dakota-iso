@@ -133,7 +133,7 @@ iso-sd-boot target:
     if ! findmnt -n -o FSTYPE -T "${WORKDIR}" 2>/dev/null | grep -qE '^(xfs|btrfs)$'; then
         echo "Hint: $WORKDIR is not an XFS/BTRFS mount.  For faster VFS import, run:" >&2
         echo "  sudo just mount-xfs" >&2
-        echo "  sudo just iso-sd-boot workdir=/mnt {{target}}" >&2
+        echo "  sudo just workdir=/mnt iso-sd-boot {{target}}" >&2
     fi
 
     # Preflight space check: warn if the output dir's filesystem looks tight.
