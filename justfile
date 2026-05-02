@@ -154,23 +154,6 @@ iso-sd-boot target:
     echo "=== Disk space after intermediate cleanup ==="
     df -h "${OUTPUT_DIR}"
 
-    # Squash payload to single layer BEFORE entering _ns.
-    # Chunkified Dakota images have ~120 layers; VFS storage copies the full OS
-    # filesystem at each layer (~6GB) = ~720GB total. One squashed layer = ~6GB.
-    # Uses buildah (not podman create/commit) because buildah preserves the
-    # original image config (CMD, ENTRYPOINT, ENV, labels, annotations).
-    # podman create --entrypoint /bin/sh would corrupt the config, causing
-    # fisherman's "podman run ... bootc install" to fail with "cannot execute
-    # binary file" (sh treats the bootc ELF binary as a script).
-    echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
-    SQUASH_CTR=$(buildah from --pull-never "${PAYLOAD_IMAGE}")
-    buildah commit --squash "${SQUASH_CTR}" localhost/{{target}}-squashed:build
-    buildah rm "${SQUASH_CTR}"
-    podman rmi "${PAYLOAD_IMAGE}" || true
-    echo "=== Disk space after squash ==="
-    df -h "${OUTPUT_DIR}"
-    podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
-
     # podman unshare enters the user namespace so rootless podman's sub-uid mapped
     # files are accessible/removable.  When running as root (e.g. CI with sudo),
     # there is no user namespace to enter — run commands directly instead.
@@ -216,12 +199,19 @@ iso-sd-boot target:
         printf '[storage]\ndriver = \"vfs\"\nrunroot = \"/tmp/cs-runroot\"\ngraphroot = \"/vfs-storage\"\n' \
             > \"\${STORAGE_CONF}\"
 
+        # Chunkified Dakota images have ~120 layers; VFS storage copies the full OS
+        # filesystem at each layer (~6GB) = ~720GB total. One squashed layer = ~6GB.
+        # Uses buildah (not podman create/commit) because buildah preserves the
+        # original image config (CMD, ENTRYPOINT, ENV, labels, annotations).
+        # podman create --entrypoint /bin/sh would corrupt the config, causing
+        # fisherman's `podman run ... bootc install` to fail with `cannot execute
+        # binary file` (sh treats the bootc ELF binary as a script).
         echo 'Exporting squashed OCI image to archive...'
-        # localhost/{{target}}-squashed:build was created in the outer recipe.
-        skopeo copy \
-            containers-storage:localhost/{{target}}-squashed:build \
-            oci-archive:\${PAYLOAD_OCI}:${PAYLOAD_IMAGE}
-        podman rmi localhost/{{target}}-squashed:build || true
+        echo '=== Squashing '"${PAYLOAD_IMAGE}"' to single layer (avoids VFS explosion) ==='
+        SQUASH_CTR=\$(buildah from --pull-never '"${PAYLOAD_IMAGE}"')
+        buildah commit --squash \"\${SQUASH_CTR}\" oci-archive:\${PAYLOAD_OCI}:'"${PAYLOAD_IMAGE}"'
+        buildah rm \"\${SQUASH_CTR}\"
+        podman rmi '"${PAYLOAD_IMAGE}"' || true
 
         echo 'Importing Dakota OCI image into squashfs containers-storage...'
         echo '=== Disk space before VFS import ==='
