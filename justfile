@@ -52,7 +52,7 @@ mount-xfs:
     echo "XFS mounted at /mnt (45G)"
     echo ""
     echo "Now run your build with CS_STAGING on /mnt:"
-    echo "  sudo env CS_STAGING_OVERRIDE=/mnt/cs-staging just iso-sd-boot dakota"
+    echo "  sudo env CS_STAGING_OVERRIDE=/mnt/cs-staging SQUASHFS_ROOT_OVERRIDE=/mnt/sfs-root just iso-sd-boot dakota"
     df -h /mnt
 
 # Build the ISO in the background, detached from the terminal session.
@@ -126,7 +126,7 @@ iso-sd-boot target:
        ! findmnt -n -o FSTYPE /mnt 2>/dev/null | grep -qE '^(xfs|btrfs)$'; then
         echo "Hint: /mnt is not an XFS/BTRFS mount.  For faster VFS import, run:" >&2
         echo "  sudo just mount-xfs" >&2
-        echo "  sudo env CS_STAGING_OVERRIDE=/mnt/cs-staging just iso-sd-boot {{target}}" >&2
+        echo "  sudo env CS_STAGING_OVERRIDE=/mnt/cs-staging SQUASHFS_ROOT_OVERRIDE=/mnt/sfs-root just iso-sd-boot {{target}}" >&2
     fi
 
     # Preflight space check: warn if the output dir's filesystem looks tight.
@@ -190,7 +190,7 @@ iso-sd-boot target:
     SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
     BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
     CS_STAGING="${CS_STAGING_OVERRIDE:-${OUTPUT_DIR}/{{target}}-cs-staging}"
-    SQUASHFS_ROOT="${OUTPUT_DIR}/{{target}}-sfs-root"
+    SQUASHFS_ROOT="${SQUASHFS_ROOT_OVERRIDE:-${OUTPUT_DIR}/{{target}}-sfs-root}"
     # CS_STAGING and SQUASHFS_ROOT contain sub-uid owned files; must be removed inside the namespace.
     trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; _ns_rm '${CS_STAGING}' '${SQUASHFS_ROOT}' 2>/dev/null || true" EXIT
     echo "=== Disk space before squashfs assembly ==="
@@ -249,16 +249,37 @@ iso-sd-boot target:
         # mksquashfs adds each source directory as a named subdirectory — it does
         # NOT union-merge multiple sources into root. To get the VFS storage at
         # /var/lib/containers/storage/ in the squashfs (not at /dakota-cs-staging/...),
-        # we build a single unified source tree using XFS reflinks (instant, ~zero space).
-        echo 'Building unified squashfs source tree...'
+        # we build a single unified source tree using overlayfs + bind mounts.
+        echo 'Building unified squashfs source tree using bind mounts...'
         mkdir -p \"\${SQUASHFS_ROOT}\"
-        cp -a --reflink=auto \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\" 2>/dev/null || \
+        OVERLAY_UPPER=\$(mktemp -d \"\${SQUASHFS_ROOT}_upper_XXXXXX\")
+        OVERLAY_WORK=\$(mktemp -d \"\${SQUASHFS_ROOT}_work_XXXXXX\")
+
+        squashroot_cleanup() {
+            umount \"\${SQUASHFS_ROOT}/var/lib/containers/storage\" 2>/dev/null || true
+            umount \"\${SQUASHFS_ROOT}\"                            2>/dev/null || true
+            rm -rf \"\${OVERLAY_UPPER}\" \"\${OVERLAY_WORK}\"       2>/dev/null || true
+        }
+        trap squashroot_cleanup EXIT
+
+        FS_TYPE=\$(findmnt -n -o FSTYPE -T \"\${SQUASHFS_ROOT}\" 2>/dev/null || echo \"unknown\")
+        if [[ \"\${FS_TYPE}\" == \"xfs\" || \"\${FS_TYPE}\" == \"ext4\" ]]; then
+            echo \"Filesystem is \${FS_TYPE}, using overlay\"
+            mount -t overlay overlay \
+                -o lowerdir=\"\${MOUNT}\",upperdir=\"\${OVERLAY_UPPER}\",workdir=\"\${OVERLAY_WORK}\" \
+                \"\${SQUASHFS_ROOT}\"
+        else
+            echo \"Filesystem is \${FS_TYPE}, doing it the boring way\"
             cp -a \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\"
-        # Merge VFS storage into the correct path within the unified source tree.
+        fi
+
+        # Bind mount the container storage into the squashfs at the correct path
         mkdir -p \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
-        cp -a \"\${CS_STAGING}/var/lib/containers/storage/.\" \
-            \"\${SQUASHFS_ROOT}/var/lib/containers/storage/\"
-        rm -rf \"\${CS_STAGING}\"
+
+        mount --bind \"\${CS_STAGING}/var/lib/containers/storage\" \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
+        echo '=== Disk space after creation of squashfs root ==='
+        df -h /
+        du -sh \"\${SQUASHFS_ROOT}\" 2>/dev/null || true
 
         # Build squashfs from the unified source tree.
         # dedup removes blocks shared between live rootfs and OCI layers (same base image).
@@ -273,6 +294,7 @@ iso-sd-boot target:
 
         # Clean up staging dirs inside unshare — vfs files are owned by sub-uids
         # and cannot be removed by the real user outside the user namespace.
+        squashroot_cleanup
         rm -rf \"\${SQUASHFS_ROOT}\"
 
         # Export only boot files needed for ESP assembly
