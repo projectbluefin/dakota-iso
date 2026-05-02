@@ -5,6 +5,11 @@ image-builder-dev := "image-builder-dev"
 # Override with: just output_dir=/your/path iso-sd-boot dakota
 output_dir := "output"
 
+# Working directory for ISO builds where container storage staging
+# and the squashfs-root are stored.
+# override with: just workdir=/your/path iso-sd-boot dakota
+workdir := output_dir
+
 # Set to 1 to enable SSH in the live session for debugging.
 # Example: just debug=1 output_dir=/tmp/out iso-sd-boot dakota
 # Never use debug=1 for production/release ISOs.
@@ -51,8 +56,10 @@ mount-xfs:
     mount -o loop "${IMG}" /mnt
     echo "XFS mounted at /mnt (45G)"
     echo ""
-    echo "Now run your build with CS_STAGING on /mnt:"
-    echo "  sudo env CS_STAGING_OVERRIDE=/mnt/cs-staging SQUASHFS_ROOT_OVERRIDE=/mnt/sfs-root just iso-sd-boot dakota"
+    echo "Now run your build with workdir on /mnt:"
+    echo "  sudo just workdir=/mnt iso-sd-boot dakota"
+    echo "To run rootless (replace \`user\` with your username):"
+    echo "  sudo chown user:user /mnt && just workdir=/mnt iso-sd-boot dakota"
     df -h /mnt
 
 # Build the ISO in the background, detached from the terminal session.
@@ -116,17 +123,17 @@ iso-sd-boot target:
 
     mkdir -p {{output_dir}}
     OUTPUT_DIR=$(realpath "{{output_dir}}")
+    WORKDIR=$(realpath "{{workdir}}")
 
     echo "=== Disk space before container build ==="
     df -h "${OUTPUT_DIR}"
 
     # Hint: XFS at /mnt dramatically speeds up VFS import for chunkified images.
-    # Skip hint if CS_STAGING_OVERRIDE is already set (e.g., CI with BTRFS).
-    if [[ -z "${CS_STAGING_OVERRIDE:-}" ]] && \
-       ! findmnt -n -o FSTYPE /mnt 2>/dev/null | grep -qE '^(xfs|btrfs)$'; then
-        echo "Hint: /mnt is not an XFS/BTRFS mount.  For faster VFS import, run:" >&2
+    # Skip hint if WORKDIR is already set (e.g., CI with BTRFS).
+    if ! findmnt -n -o FSTYPE -T "${WORKDIR}" 2>/dev/null | grep -qE '^(xfs|btrfs)$'; then
+        echo "Hint: $WORKDIR is not an XFS/BTRFS mount.  For faster VFS import, run:" >&2
         echo "  sudo just mount-xfs" >&2
-        echo "  sudo env CS_STAGING_OVERRIDE=/mnt/cs-staging SQUASHFS_ROOT_OVERRIDE=/mnt/sfs-root just iso-sd-boot {{target}}" >&2
+        echo "  sudo just iso-sd-boot workdir=/mnt {{target}}" >&2
     fi
 
     # Preflight space check: warn if the output dir's filesystem looks tight.
@@ -159,10 +166,8 @@ iso-sd-boot target:
     # there is no user namespace to enter — run commands directly instead.
     if [[ $(id -u) -eq 0 ]]; then
         _ns()    { bash -c "$1"; }
-        _ns_rm() { rm -rf "$@"; }
     else
         _ns()    { podman unshare bash -c "$1"; }
-        _ns_rm() { podman unshare rm -rf "$@"; }
     fi
 
     # The OCI payload (for offline install) is built into a staging directory on
@@ -172,25 +177,44 @@ iso-sd-boot target:
     # -processors 4 caps memory usage — default (all CPUs) OOMs on this machine.
     SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
     BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
-    CS_STAGING="${CS_STAGING_OVERRIDE:-${OUTPUT_DIR}/{{target}}-cs-staging}"
-    SQUASHFS_ROOT="${SQUASHFS_ROOT_OVERRIDE:-${OUTPUT_DIR}/{{target}}-sfs-root}"
+    CS_STAGING="${WORKDIR}/{{target}}-cs-staging"
+    SQUASHFS_ROOT="${WORKDIR}/{{target}}-sfs-root"
     # CS_STAGING and SQUASHFS_ROOT contain sub-uid owned files; must be removed inside the namespace.
-    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; _ns_rm '${CS_STAGING}' '${SQUASHFS_ROOT}' 2>/dev/null || true" EXIT
+    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar' 2>/dev/null || true" EXIT
     echo "=== Disk space before squashfs assembly ==="
-    df -h /
+    df -h "${OUTPUT_DIR}"
+    if [[ "$WORKDIR" != "$OUTPUT_DIR" ]]; then
+        df -h "${WORKDIR}"
+    fi
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
     _ns "
         set -euo pipefail
         echo '=== Disk space inside _ns block ==='
-        df -h /
+        df -h '${OUTPUT_DIR}'
+        if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
+            df -h '${WORKDIR}'
+        fi
+
+        SQUASHFS_ROOT='${SQUASHFS_ROOT}'
+        CS_STAGING='${CS_STAGING}'
+        OVERLAY_UPPER=\$(mktemp -d \"\${SQUASHFS_ROOT}_upper_XXXXXX\")
+        OVERLAY_WORK=\$(mktemp -d \"\${SQUASHFS_ROOT}_work_XXXXXX\")
+
+        ns_cleanup() {
+            umount \"\${SQUASHFS_ROOT}/var/lib/containers/storage\" 2>/dev/null || true
+            umount \"\${SQUASHFS_ROOT}\"                            2>/dev/null || true
+            podman image unmount localhost/{{target}}-installer     2>/dev/null || true
+            rm -rf \"\${OVERLAY_UPPER}\" \"\${OVERLAY_WORK}\"       2>/dev/null || true
+            rm -rf \"\${CS_STAGING}\" \"\${SQUASHFS_ROOT}\"         2>/dev/null || true
+        }
+        trap ns_cleanup EXIT
+
         MOUNT=\$(podman image mount localhost/{{target}}-installer)
         PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH
 
         # Populate containers-storage in a staging dir on /var (197G free).
         # Two-step skopeo copy decouples source and destination storage configs.
         PAYLOAD_OCI='${OUTPUT_DIR}/{{target}}-payload.oci.tar'
-        CS_STAGING='${CS_STAGING}'
-        SQUASHFS_ROOT='${SQUASHFS_ROOT}'
         SQUASHFS_STORAGE=\"\${CS_STAGING}/var/lib/containers/storage\"
         # Storage conf for skopeo running inside the installer container.
         # Paths are container-relative: /vfs-storage is the bind-mounted SQUASHFS_STORAGE.
@@ -204,8 +228,8 @@ iso-sd-boot target:
         # Uses buildah (not podman create/commit) because buildah preserves the
         # original image config (CMD, ENTRYPOINT, ENV, labels, annotations).
         # podman create --entrypoint /bin/sh would corrupt the config, causing
-        # fisherman's `podman run ... bootc install` to fail with `cannot execute
-        # binary file` (sh treats the bootc ELF binary as a script).
+        # fisherman's \`podman run ... bootc install\` to fail with \`cannot execute
+        # binary file\` (sh treats the bootc ELF binary as a script).
         echo 'Exporting squashed OCI image to archive...'
         echo '=== Squashing '"${PAYLOAD_IMAGE}"' to single layer (avoids VFS explosion) ==='
         SQUASH_CTR=\$(buildah from --pull-never '"${PAYLOAD_IMAGE}"')
@@ -215,7 +239,10 @@ iso-sd-boot target:
 
         echo 'Importing Dakota OCI image into squashfs containers-storage...'
         echo '=== Disk space before VFS import ==='
-        df -h /
+        df -h '${OUTPUT_DIR}'
+        if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
+            df -h '${WORKDIR}'
+        fi
         # Run skopeo from inside the installer image so the VFS tar-split metadata is
         # written in a format the live ISO can read.  The build host links a newer
         # containers/storage that emits a binary tar-split format; the installer image
@@ -233,8 +260,11 @@ iso-sd-boot target:
         rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
 
         echo '=== Disk space after VFS import ==='
-        df -h /
-        du -sh \${CS_STAGING} 2>/dev/null || true
+        df -h '${OUTPUT_DIR}'
+        if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
+            df -h '${WORKDIR}'
+        fi
+        du -sh \"\${CS_STAGING}\" 2>/dev/null || true
 
         # mksquashfs adds each source directory as a named subdirectory — it does
         # NOT union-merge multiple sources into root. To get the VFS storage at
@@ -242,22 +272,15 @@ iso-sd-boot target:
         # we build a single unified source tree using overlayfs + bind mounts.
         echo 'Building unified squashfs source tree using bind mounts...'
         mkdir -p \"\${SQUASHFS_ROOT}\"
-        OVERLAY_UPPER=\$(mktemp -d \"\${SQUASHFS_ROOT}_upper_XXXXXX\")
-        OVERLAY_WORK=\$(mktemp -d \"\${SQUASHFS_ROOT}_work_XXXXXX\")
-
-        squashroot_cleanup() {
-            umount \"\${SQUASHFS_ROOT}/var/lib/containers/storage\" 2>/dev/null || true
-            umount \"\${SQUASHFS_ROOT}\"                            2>/dev/null || true
-            rm -rf \"\${OVERLAY_UPPER}\" \"\${OVERLAY_WORK}\"       2>/dev/null || true
-        }
-        trap squashroot_cleanup EXIT
 
         FS_TYPE=\$(findmnt -n -o FSTYPE -T \"\${SQUASHFS_ROOT}\" 2>/dev/null || echo \"unknown\")
         if [[ \"\${FS_TYPE}\" == \"xfs\" || \"\${FS_TYPE}\" == \"ext4\" ]]; then
-            echo \"Filesystem is \${FS_TYPE}, using overlay\"
-            mount -t overlay overlay \
-                -o lowerdir=\"\${MOUNT}\",upperdir=\"\${OVERLAY_UPPER}\",workdir=\"\${OVERLAY_WORK}\" \
-                \"\${SQUASHFS_ROOT}\"
+            echo \"Filesystem is \${FS_TYPE}, trying overlay\"
+            if ! mount -t overlay overlay \
+                -o lowerdir=\"\${MOUNT}\",upperdir=\"\${OVERLAY_UPPER}\",workdir=\"\${OVERLAY_WORK}\" \"\${SQUASHFS_ROOT}\"; then
+                echo \"Overlay mount failed on \${FS_TYPE}; falling back to cp -a\"
+                cp -a \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\"
+            fi
         else
             echo \"Filesystem is \${FS_TYPE}, doing it the boring way\"
             cp -a \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\"
@@ -268,7 +291,10 @@ iso-sd-boot target:
 
         mount --bind \"\${CS_STAGING}/var/lib/containers/storage\" \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
         echo '=== Disk space after creation of squashfs root ==='
-        df -h /
+        df -h '${OUTPUT_DIR}'
+        if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
+            df -h '${WORKDIR}'
+        fi
         du -sh \"\${SQUASHFS_ROOT}\" 2>/dev/null || true
 
         # Build squashfs from the unified source tree.
@@ -282,21 +308,15 @@ iso-sd-boot target:
             -processors 4 \
             -e proc -e sys -e dev -e run -e tmp
 
-        # Clean up staging dirs inside unshare — vfs files are owned by sub-uids
-        # and cannot be removed by the real user outside the user namespace.
-        squashroot_cleanup
-        rm -rf \"\${SQUASHFS_ROOT}\"
-
         # Export only boot files needed for ESP assembly
         tar -C \"\$MOUNT\" \
             -cf '${BOOT_TAR}' \
             ./usr/lib/modules \
             ./usr/lib/systemd/boot/efi
-        podman image umount localhost/{{target}}-installer
     "
 
     echo "=== Disk space after squashfs, before ISO assembly ==="
-    df -h /
+    df -h "${OUTPUT_DIR}"
     du -sh "${SQUASHFS}" "${BOOT_TAR}" 2>/dev/null || true
 
     # Run build-iso.sh directly on the host — no container needed.
