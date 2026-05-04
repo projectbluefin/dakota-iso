@@ -77,6 +77,9 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Configure podman storage (intelligent driver selection)
+        run: bash .github/scripts/configure_podman_storage.sh
+
       - name: Build debug ISO
         id: build
         run: |
