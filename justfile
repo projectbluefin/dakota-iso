@@ -5,6 +5,11 @@ image-builder-dev := "image-builder-dev"
 # Override with: just output_dir=/your/path iso-sd-boot dakota
 output_dir := "output"
 
+# Working directory for ISO builds where container storage staging
+# and the squashfs-root are stored.
+# override with: just workdir=/your/path iso-sd-boot dakota
+workdir := output_dir
+
 # Set to 1 to enable SSH in the live session for debugging.
 # Example: just debug=1 output_dir=/tmp/out iso-sd-boot dakota
 # Never use debug=1 for production/release ISOs.
@@ -24,6 +29,38 @@ luks-passphrase := "testpassphrase"
 #   release           — zstd level 15, 1M blocks   — ~20% smaller, ~5× slower
 # Example: just compression=release iso-sd-boot dakota
 compression := "fast"
+
+# Create an XFS loopback mount at /mnt for faster VFS import.
+#
+# The chunkified Dakota images (~120 layers) cause VFS import under BTRFS
+# to create ~450 GB of intermediate directories.  XFS handles this workload
+# much faster.  This recipe creates a 45 GB XFS loopback at /mnt.
+#
+# Idempotent: skips if /mnt is already an XFS mount.
+# Must be run as root: sudo just mount-xfs
+mount-xfs:
+    #!/usr/bin/bash
+    set -euo pipefail
+    # Already XFS? Nothing to do.
+    if findmnt -n -o FSTYPE /mnt 2>/dev/null | grep -q '^xfs$'; then
+        echo "/mnt is already XFS — skipping"
+        exit 0
+    fi
+    echo "Creating 45G XFS loopback at /mnt..."
+    IMG="/var/tmp/dakota-xfs-loopback.img"
+    truncate -s 0 "${IMG}"
+    # Disable copy-on-write on BTRFS hosts (harmless no-op on other fs)
+    chattr +C "${IMG}" 2>/dev/null || true
+    fallocate -l 45G "${IMG}"
+    mkfs.xfs -f "${IMG}"
+    mount -o loop "${IMG}" /mnt
+    echo "XFS mounted at /mnt (45G)"
+    echo ""
+    echo "Now run your build with workdir on /mnt:"
+    echo "  sudo just workdir=/mnt iso-sd-boot dakota"
+    echo "To run rootless (replace \`user\` with your username):"
+    echo "  sudo chown user:user /mnt && just workdir=/mnt iso-sd-boot dakota"
+    df -h /mnt
 
 # Build the ISO in the background, detached from the terminal session.
 # Logs are written to {{output_dir}}/build.log and tailed live.
@@ -52,17 +89,19 @@ _payload_ref_flag target:
     @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
 
 container target:
+    @test -f "{{target}}/payload_ref" || { echo "ERROR: {{target}}/payload_ref not found — create it with the base image reference, e.g.: echo 'ghcr.io/projectbluefin/dakota:latest' > {{target}}/payload_ref"; exit 1; }
     podman build --cap-add sys_admin --security-opt label=disable \
         --layers \
         --build-arg DEBUG={{debug}} \
         --build-arg INSTALLER_CHANNEL={{installer_channel}} \
-        -t {{target}}-installer ./{{target}}
+        --build-arg BASE_IMAGE=$(cat {{target}}/payload_ref | tr -d '[:space:]') \
+        -t {{target}}-installer -f ./dakota/Containerfile ./dakota
 
 # Build the Debian-based ISO assembly container for the given target.
 # This container has xorriso, mksquashfs, dosfstools, and mtools.
 iso-builder target:
     podman build --security-opt label=disable -t {{target}}-iso-builder \
-        -f ./{{target}}/Containerfile.builder ./{{target}}
+        -f ./dakota/Containerfile.builder ./dakota
 
 # Build a systemd-boot UEFI live ISO for the given target.
 #
@@ -80,30 +119,39 @@ iso-builder target:
 iso-sd-boot target:
     #!/usr/bin/bash
     set -euo pipefail
+    PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
+
+    mkdir -p {{output_dir}}
+    OUTPUT_DIR=$(realpath "{{output_dir}}")
+    WORKDIR=$(realpath "{{workdir}}")
 
     echo "=== Disk space before container build ==="
-    df -h /
-    # VFS import decompresses all layers (~100GB for current image).
-    # Total build needs ~120GB (18GB container build + 3GB OCI export + 100GB VFS import).
-    # Check early to fail fast with a clear message.
-    # Check the parent directory (which should exist), since output_dir may not be created yet.
-    CHECK_PATH="{{output_dir}}"
-    if [ ! -d "$CHECK_PATH" ]; then
-        CHECK_PATH=$(dirname "$CHECK_PATH")
+    df -h "${OUTPUT_DIR}"
+
+    # Hint: XFS at /mnt dramatically speeds up VFS import for chunkified images.
+    # Skip hint if WORKDIR is already set (e.g., CI with BTRFS).
+    if ! findmnt -n -o FSTYPE -T "${WORKDIR}" 2>/dev/null | grep -qE '^(xfs|btrfs)$'; then
+        echo "Hint: $WORKDIR is not an XFS/BTRFS mount.  For faster VFS import, run:" >&2
+        echo "  sudo just mount-xfs" >&2
+        echo "  sudo just workdir=/mnt iso-sd-boot {{target}}" >&2
     fi
-    AVAILABLE_KB=$(df --output=avail -B1024 "$CHECK_PATH" | tail -1 | tr -d ' ')
-    REQUIRED_KB=$((110 * 1024 * 1024))  # 110GB in KB (build needs ~100GB VFS + margin)
+
+    # Preflight space check: warn if the output dir's filesystem looks tight.
+    # This is advisory — CI environments manage space externally (XFS loopback,
+    # secondary /mnt mounts) so hard-failing here would be wrong.
+    # We check output dir (not /) because on composefs/ostree systems df / reports 0.
+    AVAILABLE_KB=$(df --output=avail -B1024 "${OUTPUT_DIR}" | tail -1 | tr -d ' ')
+    REQUIRED_KB=$((20 * 1024 * 1024))  # 20GB minimum for ISO output
     if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
-        echo "ERROR: Need ~110GB free for ISO build, but only $(( AVAILABLE_KB / 1024 / 1024 ))GB available" >&2
-        echo "Hint: use a runner with /mnt secondary mount, or 150GB+ root disk" >&2
-        exit 1
+        echo "WARNING: Only $(( AVAILABLE_KB / 1024 / 1024 ))GB free on $(df --output=target "${OUTPUT_DIR}" | tail -1) — ISO output needs ~5GB, full build needs more" >&2
+        echo "Hint: set output_dir= to a path with more space, or use a larger disk" >&2
     fi
     podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
 
     just debug={{debug}} installer_channel={{installer_channel}} container {{target}}
 
     echo "=== Disk space after container build ==="
-    df -h /
+    df -h "${OUTPUT_DIR}"
     podman images --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}" 2>/dev/null || true
 
     # Aggressively free space: remove dangling images and known disposable images.
@@ -111,20 +159,15 @@ iso-sd-boot target:
     podman rmi debian:sid 2>/dev/null || true
     podman image prune -f 2>/dev/null || true
     echo "=== Disk space after intermediate cleanup ==="
-    df -h /
-
-    mkdir -p {{output_dir}}
-    OUTPUT_DIR=$(realpath "{{output_dir}}")
+    df -h "${OUTPUT_DIR}"
 
     # podman unshare enters the user namespace so rootless podman's sub-uid mapped
     # files are accessible/removable.  When running as root (e.g. CI with sudo),
     # there is no user namespace to enter — run commands directly instead.
     if [[ $(id -u) -eq 0 ]]; then
         _ns()    { bash -c "$1"; }
-        _ns_rm() { rm -rf "$@"; }
     else
         _ns()    { podman unshare bash -c "$1"; }
-        _ns_rm() { podman unshare rm -rf "$@"; }
     fi
 
     # The OCI payload (for offline install) is built into a staging directory on
@@ -134,25 +177,44 @@ iso-sd-boot target:
     # -processors 4 caps memory usage — default (all CPUs) OOMs on this machine.
     SQUASHFS="${OUTPUT_DIR}/{{target}}-rootfs.sfs"
     BOOT_TAR="${OUTPUT_DIR}/{{target}}-boot-files.tar"
-    CS_STAGING="${CS_STAGING_OVERRIDE:-${OUTPUT_DIR}/{{target}}-cs-staging}"
-    SQUASHFS_ROOT="${OUTPUT_DIR}/{{target}}-sfs-root"
+    CS_STAGING="${WORKDIR}/{{target}}-cs-staging"
+    SQUASHFS_ROOT="${WORKDIR}/{{target}}-sfs-root"
     # CS_STAGING and SQUASHFS_ROOT contain sub-uid owned files; must be removed inside the namespace.
-    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar'; _ns_rm '${CS_STAGING}' '${SQUASHFS_ROOT}' 2>/dev/null || true" EXIT
+    trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${OUTPUT_DIR}/{{target}}-payload.oci.tar' 2>/dev/null || true" EXIT
     echo "=== Disk space before squashfs assembly ==="
-    df -h /
+    df -h "${OUTPUT_DIR}"
+    if [[ "$WORKDIR" != "$OUTPUT_DIR" ]]; then
+        df -h "${WORKDIR}"
+    fi
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
     _ns "
         set -euo pipefail
         echo '=== Disk space inside _ns block ==='
-        df -h /
+        df -h '${OUTPUT_DIR}'
+        if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
+            df -h '${WORKDIR}'
+        fi
+
+        SQUASHFS_ROOT='${SQUASHFS_ROOT}'
+        CS_STAGING='${CS_STAGING}'
+        OVERLAY_UPPER=\$(mktemp -d \"\${SQUASHFS_ROOT}_upper_XXXXXX\")
+        OVERLAY_WORK=\$(mktemp -d \"\${SQUASHFS_ROOT}_work_XXXXXX\")
+
+        ns_cleanup() {
+            umount \"\${SQUASHFS_ROOT}/var/lib/containers/storage\" 2>/dev/null || true
+            umount \"\${SQUASHFS_ROOT}\"                            2>/dev/null || true
+            podman image unmount localhost/{{target}}-installer     2>/dev/null || true
+            rm -rf \"\${OVERLAY_UPPER}\" \"\${OVERLAY_WORK}\"       2>/dev/null || true
+            rm -rf \"\${CS_STAGING}\" \"\${SQUASHFS_ROOT}\"         2>/dev/null || true
+        }
+        trap ns_cleanup EXIT
+
         MOUNT=\$(podman image mount localhost/{{target}}-installer)
         PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH
 
         # Populate containers-storage in a staging dir on /var (197G free).
         # Two-step skopeo copy decouples source and destination storage configs.
         PAYLOAD_OCI='${OUTPUT_DIR}/{{target}}-payload.oci.tar'
-        CS_STAGING='${CS_STAGING}'
-        SQUASHFS_ROOT='${SQUASHFS_ROOT}'
         SQUASHFS_STORAGE=\"\${CS_STAGING}/var/lib/containers/storage\"
         # Storage conf for skopeo running inside the installer container.
         # Paths are container-relative: /vfs-storage is the bind-mounted SQUASHFS_STORAGE.
@@ -161,25 +223,26 @@ iso-sd-boot target:
         printf '[storage]\ndriver = \"vfs\"\nrunroot = \"/tmp/cs-runroot\"\ngraphroot = \"/vfs-storage\"\n' \
             > \"\${STORAGE_CONF}\"
 
-        echo 'Exporting Dakota OCI image to archive...'
-        skopeo copy \
-            containers-storage:ghcr.io/projectbluefin/dakota:latest \
-            oci-archive:\${PAYLOAD_OCI}:ghcr.io/projectbluefin/dakota:latest
-
-        echo '=== Disk space after OCI export ==='
-        df -h /
-        ls -lh \${PAYLOAD_OCI} 2>/dev/null || true
-
-        # Remove base image from podman storage — no longer needed after OCI export.
-        # The OCI archive has all the data; the base image just takes up space.
-        podman rmi ghcr.io/projectbluefin/dakota:latest || true
-        podman image prune -f 2>/dev/null || true
-        echo '=== Disk space after removing base image ==='
-        df -h /
+        # Chunkified Dakota images have ~120 layers; VFS storage copies the full OS
+        # filesystem at each layer (~6GB) = ~720GB total. One squashed layer = ~6GB.
+        # Uses buildah (not podman create/commit) because buildah preserves the
+        # original image config (CMD, ENTRYPOINT, ENV, labels, annotations).
+        # podman create --entrypoint /bin/sh would corrupt the config, causing
+        # fisherman's \`podman run ... bootc install\` to fail with \`cannot execute
+        # binary file\` (sh treats the bootc ELF binary as a script).
+        echo 'Exporting squashed OCI image to archive...'
+        echo '=== Squashing '"${PAYLOAD_IMAGE}"' to single layer (avoids VFS explosion) ==='
+        SQUASH_CTR=\$(buildah from --pull-never '"${PAYLOAD_IMAGE}"')
+        buildah commit --squash \"\${SQUASH_CTR}\" oci-archive:\${PAYLOAD_OCI}:'"${PAYLOAD_IMAGE}"'
+        buildah rm \"\${SQUASH_CTR}\"
+        podman rmi '"${PAYLOAD_IMAGE}"' || true
 
         echo 'Importing Dakota OCI image into squashfs containers-storage...'
         echo '=== Disk space before VFS import ==='
-        df -h /
+        df -h '${OUTPUT_DIR}'
+        if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
+            df -h '${WORKDIR}'
+        fi
         # Run skopeo from inside the installer image so the VFS tar-split metadata is
         # written in a format the live ISO can read.  The build host links a newer
         # containers/storage that emits a binary tar-split format; the installer image
@@ -191,28 +254,48 @@ iso-sd-boot target:
             -v \"\${SQUASHFS_STORAGE}:/vfs-storage\" \
             -v \"\${STORAGE_CONF}:/tmp/st.conf:ro\" \
             localhost/{{target}}-installer \
-            sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:ghcr.io/projectbluefin/dakota:latest containers-storage:ghcr.io/projectbluefin/dakota:latest'
+            sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:'"${PAYLOAD_IMAGE}"' containers-storage:'"${PAYLOAD_IMAGE}"''
 
 
         rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
 
         echo '=== Disk space after VFS import ==='
-        df -h /
-        du -sh \${CS_STAGING} 2>/dev/null || true
+        df -h '${OUTPUT_DIR}'
+        if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
+            df -h '${WORKDIR}'
+        fi
+        du -sh \"\${CS_STAGING}\" 2>/dev/null || true
 
         # mksquashfs adds each source directory as a named subdirectory — it does
         # NOT union-merge multiple sources into root. To get the VFS storage at
         # /var/lib/containers/storage/ in the squashfs (not at /dakota-cs-staging/...),
-        # we build a single unified source tree using XFS reflinks (instant, ~zero space).
-        echo 'Building unified squashfs source tree...'
+        # we build a single unified source tree using overlayfs + bind mounts.
+        echo 'Building unified squashfs source tree using bind mounts...'
         mkdir -p \"\${SQUASHFS_ROOT}\"
-        cp -a --reflink=auto \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\" 2>/dev/null || \
+
+        FS_TYPE=\$(findmnt -n -o FSTYPE -T \"\${SQUASHFS_ROOT}\" 2>/dev/null || echo \"unknown\")
+        if [[ \"\${FS_TYPE}\" == \"xfs\" || \"\${FS_TYPE}\" == \"ext4\" ]]; then
+            echo \"Filesystem is \${FS_TYPE}, trying overlay\"
+            if ! mount -t overlay overlay \
+                -o lowerdir=\"\${MOUNT}\",upperdir=\"\${OVERLAY_UPPER}\",workdir=\"\${OVERLAY_WORK}\" \"\${SQUASHFS_ROOT}\"; then
+                echo \"Overlay mount failed on \${FS_TYPE}; falling back to cp -a\"
+                cp -a \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\"
+            fi
+        else
+            echo \"Filesystem is \${FS_TYPE}, doing it the boring way\"
             cp -a \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\"
-        # Merge VFS storage into the correct path within the unified source tree.
+        fi
+
+        # Bind mount the container storage into the squashfs at the correct path
         mkdir -p \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
-        cp -a \"\${CS_STAGING}/var/lib/containers/storage/.\" \
-            \"\${SQUASHFS_ROOT}/var/lib/containers/storage/\"
-        rm -rf \"\${CS_STAGING}\"
+
+        mount --bind \"\${CS_STAGING}/var/lib/containers/storage\" \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
+        echo '=== Disk space after creation of squashfs root ==='
+        df -h '${OUTPUT_DIR}'
+        if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
+            df -h '${WORKDIR}'
+        fi
+        du -sh \"\${SQUASHFS_ROOT}\" 2>/dev/null || true
 
         # Build squashfs from the unified source tree.
         # dedup removes blocks shared between live rootfs and OCI layers (same base image).
@@ -225,20 +308,15 @@ iso-sd-boot target:
             -processors 4 \
             -e proc -e sys -e dev -e run -e tmp
 
-        # Clean up staging dirs inside unshare — vfs files are owned by sub-uids
-        # and cannot be removed by the real user outside the user namespace.
-        rm -rf \"\${SQUASHFS_ROOT}\"
-
         # Export only boot files needed for ESP assembly
         tar -C \"\$MOUNT\" \
             -cf '${BOOT_TAR}' \
             ./usr/lib/modules \
             ./usr/lib/systemd/boot/efi
-        podman image umount localhost/{{target}}-installer
     "
 
     echo "=== Disk space after squashfs, before ISO assembly ==="
-    df -h /
+    df -h "${OUTPUT_DIR}"
     du -sh "${SQUASHFS}" "${BOOT_TAR}" 2>/dev/null || true
 
     # Run build-iso.sh directly on the host — no container needed.
@@ -247,7 +325,7 @@ iso-sd-boot target:
     # just always runs recipes from the justfile directory, so relative path works.
     TMPDIR="${OUTPUT_DIR}" \
     PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" \
-        bash "{{target}}/src/build-iso.sh" "${BOOT_TAR}" "${SQUASHFS}" "${OUTPUT_DIR}/{{target}}-live.iso"
+        bash "dakota/src/build-iso.sh" "${BOOT_TAR}" "${SQUASHFS}" "${OUTPUT_DIR}/{{target}}-live.iso"
 
     echo "ISO ready: ${OUTPUT_DIR}/{{target}}-live.iso"
 
@@ -594,6 +672,7 @@ luks-install target:
     VM_NAME="dakota-debug"
     PASSPHRASE="{{luks-passphrase}}"
     DISK="/dev/sda"
+    PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o IdentitiesOnly=yes -o PreferredAuthentications=password"
     SSH="sshpass -p live ssh $SSH_OPTS"
     SCP="sshpass -p live scp $SSH_OPTS"
@@ -637,7 +716,7 @@ luks-install target:
     # just's parser (it sees the closing ) at column 0 as a delimiter).
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:ghcr.io/projectbluefin/dakota:latest",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:'"${PAYLOAD_IMAGE}"'",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
         "${DISK}" "${PASSPHRASE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@"$GUEST_IP":/tmp/luks-recipe.json
     echo "Uploaded recipe to /tmp/luks-recipe.json"
@@ -695,7 +774,7 @@ luks-unlock target:
     fi
     echo "Waiting for Plymouth passphrase prompt (VM MAC: ${MAC})..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "{{target}}/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
+    sudo python3 "dakota/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
 
 # Connect to the serial console of the dakota-debug VM to watch boot after
 # luks-install.  At the LUKS passphrase prompt type the passphrase (default:
@@ -824,19 +903,23 @@ luks-boot-qemu-live target:
         -daemonize
     echo "Live QEMU started (monitor: {{luks-qemu-monitor-live}})"
 
-    echo "Waiting for live environment SSH on port {{luks-qemu-ssh-port}}..."
+    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
+    echo "Waiting for live environment on port {{luks-qemu-ssh-port}}..."
+    # Check for DAKOTA_LIVE_READY serial marker OR SSH connectivity.
+    # The serial marker requires live-ready.service to print to journal+console.
+    # On some installer channel builds (e.g. dev) the service starts but never
+    # writes to the serial console; SSH still works because debug-ssh-banner
+    # confirms sshd is up.  Either path means the live env is ready.
     for i in $(seq 1 60); do
         if sudo grep -q "DAKOTA_LIVE_READY" "{{luks-qemu-serial-live}}" 2>/dev/null; then
             echo "Live environment ready (serial marker seen)"
             break
         fi
+        if sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} true 2>/dev/null; then
+            echo "Live environment ready (SSH connected)"
+            break
+        fi
         [[ "$i" -eq 60 ]] && { echo "ERROR: live env not ready after 5m"; sudo tail -30 "{{luks-qemu-serial-live}}" || true; exit 1; }
-        sleep 5
-    done
-    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
-    for i in $(seq 1 30); do
-        sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} true 2>/dev/null && { echo "SSH ready"; break; }
-        [[ "$i" -eq 30 ]] && { echo "ERROR: SSH timed out"; exit 1; }
         sleep 5
     done
 
@@ -852,13 +935,14 @@ luks-install-qemu target:
     set -euo pipefail
     PASSPHRASE="{{luks-passphrase}}"
     DISK="/dev/vda"
+    PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
     SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}}"
     SCP="sshpass -p live scp $SSH_OPTS -P {{luks-qemu-ssh-port}}"
 
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:ghcr.io/projectbluefin/dakota:latest",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:'"${PAYLOAD_IMAGE}"'",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
         "${DISK}" "${PASSPHRASE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
     echo "Uploaded recipe — running fisherman (takes several minutes)..."
@@ -933,7 +1017,7 @@ luks-unlock-qemu target:
     PASSPHRASE="{{luks-passphrase}}"
     echo "Unlocking LUKS on installed QEMU VM..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "{{target}}/src/luks-unlock.py" qemu \
+    sudo python3 "dakota/src/luks-unlock.py" qemu \
         "{{luks-qemu-monitor-installed}}" \
         "$PASSPHRASE" \
         "{{luks-qemu-serial-installed}}"
@@ -941,5 +1025,5 @@ luks-unlock-qemu target:
     # Show key screenshots inline for terminals that support it (Kitty, iTerm2, etc.)
     for label in "Plymouth prompt" "Final boot"; do
         key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
-        bash "{{target}}/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
+        bash "dakota/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
     done

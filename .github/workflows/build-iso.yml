@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'dakota/**'
+      - 'dakota-nvidia/**'
       - 'justfile'
       - '.github/workflows/build-iso.yml'
   schedule:
@@ -20,8 +21,12 @@ on:
 
 jobs:
   build-and-publish:
-    name: Build Dakota Live ISO
+    name: Build ${{ matrix.target }} Live ISO
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [dakota, dakota-nvidia]
     permissions:
       contents: read
       packages: read
@@ -36,62 +41,37 @@ jobs:
         with:
           tool-cache: true
 
-      - name: Mount BTRFS for podman storage
-        # Use 95% of /mnt for the loopback to maximise space for flatpak runtime
-        # downloads, container image layers, OCI export, and squashfs assembly.
-        # The podman build --mount=type=cache uses this filesystem, so any
-        # GH Actions cache pointed at /var/lib/containers would just waste space.
-        env:
-          BTRFS_LOOPBACK_FREE: "0.95"
-        run: bash .github/scripts/mount_btrfs.sh
-
-      - name: Disk space after cleanup
+      - name: Disk space after free
         run: |
           echo "=== Disk space after free-disk-space ==="
           df -h /
-          df -h /mnt 2>/dev/null || echo "/mnt not a separate mount"
+          df -i /
           echo "=== Podman info ==="
-          podman info --format '{{.Store.GraphStatus}}' 2>/dev/null || true
-          echo "=== Podman images ==="
-          podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" 2>/dev/null || true
-
-      - name: Configure podman storage for extra disk
-        run: |
-          # Redirect podman graphroot to /mnt when it's a separate mount with
-          # extra space.  This gives us ~70GB instead of ~50GB on /dev/root.
-          if mountpoint -q /mnt; then
-            MNT_AVAIL=$(df --output=avail -B1 /mnt | tail -1 | tr -d ' ')
-            echo "/mnt available: $(( MNT_AVAIL / 1024 / 1024 / 1024 )) GB"
-            # Clear any existing podman storage on root fs
-            sudo rm -rf /var/lib/containers/storage
-            # Create storage dir on /mnt
-            sudo mkdir -p /mnt/containers/storage
-            # Write config pointing to /mnt
-            sudo bash -c 'printf "[storage]\\ndriver = \"overlay\"\\ngraphroot = \"/mnt/containers/storage\"\\nrunroot = \"/run/containers/storage\"\\n" > /etc/containers/storage.conf'
-            echo "Podman storage redirected to /mnt"
-          # Also redirect CS_STAGING to /mnt (VFS import needs ~43GB)
-          echo "CS_STAGING_OVERRIDE=/mnt/cs-staging" >> $GITHUB_ENV
-          else
-            echo "/mnt not available, using default storage"
-          fi
-          echo "Driver: $(sudo podman info --format '{{.Store.GraphDriverName}}')"
-          echo "GraphRoot: $(sudo podman info --format '{{.Store.GraphRoot}}')"
+          sudo podman info --format 'Driver: {{.Store.GraphDriverName}}  GraphRoot: {{.Store.GraphRoot}}' 2>/dev/null || true
 
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y just podman rclone mtools xorriso
+          sudo apt-get install -y just podman buildah rclone mtools xorriso
 
       - name: Log in to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | \
-            podman login ghcr.io -u ${{ github.actor }} --password-stdin
+            sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Build Live ISO
         run: |
           echo "=== Disk space before build ==="
           df -h /
-          sudo just installer_channel=dev output_dir=output iso-sd-boot dakota
+          # Build on /var/iso-build (large root partition, ~119GB free after free-disk-space).
+          # The squash-to-single-layer approach reduces VFS import from ~720GB to ~6GB,
+          # so no XFS staging is needed. Total peak disk usage: ~40GB.
+          sudo mkdir -p /var/iso-build
+          sudo $(command -v just) installer_channel=dev output_dir=/var/iso-build iso-sd-boot ${{ matrix.target }}
+          # Copy final ISO to workspace for artifact/upload steps
+          mkdir -p output
+          sudo cp /var/iso-build/*.iso output/ 2>/dev/null || true
+          sudo chown -R "$USER:$(id -gn)" output/
 
       - name: Disk space after build
         run: |
@@ -107,26 +87,23 @@ jobs:
       - name: Clean up podman images
         run: |
           echo "=== Removing podman images to free space ==="
-          sudo podman rmi localhost/dakota-installer 2>/dev/null || true
-          sudo podman rmi ghcr.io/projectbluefin/dakota:latest 2>/dev/null || true
-          sudo podman rmi debian:sid 2>/dev/null || true
+          sudo podman rmi localhost/${{ matrix.target }}-installer 2>/dev/null || true
           sudo podman system prune -af --volumes 2>/dev/null || true
           echo "=== Disk space after cleanup ==="
           df -h /
           sudo podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" 2>/dev/null || true
 
       - name: Fix output directory ownership
-        # sudo just creates output/ as root; subsequent steps run as the runner
-        # user and cannot write into it without this ownership transfer.
-        run: sudo chown -R "$USER:$(id -gn)" output/
+        # Ownership already handled in the build step; this is a safety net.
+        run: sudo chown -R "$USER:$(id -gn)" output/ 2>/dev/null || true
 
       - name: Compute ISO name
         id: iso
         run: |
           DATE=$(date -u +%Y%m%d)
           SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          echo "dated=dakota-live-${DATE}-${SHA}.iso" >> "$GITHUB_OUTPUT"
-          echo "path=output/dakota-live.iso" >> "$GITHUB_OUTPUT"
+          echo "dated=${{ matrix.target }}-live-${DATE}-${SHA}.iso" >> "$GITHUB_OUTPUT"
+          echo "path=output/${{ matrix.target }}-live.iso" >> "$GITHUB_OUTPUT"
 
       - name: Generate SHA256 checksum
         id: checksum
@@ -134,15 +111,17 @@ jobs:
           ISO="${{ steps.iso.outputs.path }}"
           DATED="${{ steps.iso.outputs.dated }}"
           CHECKSUM_PATH="output/${DATED}-CHECKSUM"
-          LATEST_CHECKSUM_PATH="output/dakota-live-latest.iso-CHECKSUM"
+          LATEST="${{ matrix.target }}-live-latest.iso"
+          LATEST_CHECKSUM_PATH="output/${LATEST}-CHECKSUM"
           # Full sha256sum format (hash + filename) so users can run: sha256sum -c
           # Two manifests: one with the dated filename, one with the "latest" alias.
           # They share the same hash but different recorded filenames so both work.
-          sha256sum "$ISO" | sed "s|output/dakota-live.iso|${DATED}|" | tee "$CHECKSUM_PATH"
-          sha256sum "$ISO" | sed "s|output/dakota-live.iso|dakota-live-latest.iso|" > "$LATEST_CHECKSUM_PATH"
+          sha256sum "$ISO" | sed "s|${ISO}|${DATED}|" | tee "$CHECKSUM_PATH"
+          sha256sum "$ISO" | sed "s|${ISO}|${LATEST}|" > "$LATEST_CHECKSUM_PATH"
           echo "path=${CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
           echo "name=${DATED}-CHECKSUM" >> "$GITHUB_OUTPUT"
           echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
+          echo "latest=${LATEST}" >> "$GITHUB_OUTPUT"
 
       - name: Upload ISO to Cloudflare R2
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' }}
@@ -156,8 +135,7 @@ jobs:
         run: |
           ISO="${{ steps.iso.outputs.path }}"
           DATED="${{ steps.iso.outputs.dated }}"
-          BUCKET="${{ secrets.R2_BUCKET }}"
-          LATEST="dakota-live-latest.iso"
+          LATEST="${{ steps.checksum.outputs.latest }}"
 
           echo "==> Uploading as $DATED ..."
           rclone copyto --log-level INFO --checksum --s3-no-check-bucket \
@@ -252,15 +230,19 @@ jobs:
 
           echo "quit" | sudo socat - UNIX-CONNECT:/tmp/qemu-monitor.sock || true
 
-          # Fail the job if the live environment never reached the ready state
-          sudo grep -q "DAKOTA_LIVE_READY" /tmp/serial.log || \
+          # Fail the job if the live environment never reached the ready state.
+          # Accept either the explicit DAKOTA_LIVE_READY token (written directly to
+          # /dev/ttyS0 by live-ready.service) or the systemd completion message from
+          # the same service, which always appears on the console regardless of TTY
+          # routing.
+          sudo grep -qE "DAKOTA_LIVE_READY|Finished live-ready\.service" /tmp/serial.log || \
             { echo "ERROR: Live environment did not reach ready state"; sudo tail -50 /tmp/serial.log; exit 1; }
 
       - name: Upload ISO as artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.iso.outputs.dated }}
-          path: output/dakota-live.iso
+          path: ${{ steps.iso.outputs.path }}
           if-no-files-found: error
           retention-days: 7
 
@@ -277,6 +259,6 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: boot-screenshot-amd64
+          name: boot-screenshot-${{ matrix.target }}
           path: screenshot.png
           if-no-files-found: warn

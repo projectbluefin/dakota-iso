@@ -206,22 +206,28 @@ systemctl enable var-tmp.mount
 
 # ── Live-ready marker service ─────────────────────────────────────────────────
 # Prints DAKOTA_LIVE_READY to the serial console after display-manager.service
-# starts.  CI boot verification greps for this token instead of the fragile
-# "Started gdm.service" journal line (which uses Description=, not the unit
-# name) and confirms the desktop environment is actually up.
+# starts.  CI boot verification greps for this token in the serial log.
+#
+# StandardOutput=tty + TTYPath=/dev/ttyS0 ensures the echo goes to the serial
+# device directly.  StandardOutput=journal+console routes to /dev/console which
+# is NOT the serial device in headless QEMU (-display none, -serial file:...).
+#
+# WantedBy=multi-user.target (not display-manager.service) ensures reliable
+# enablement; After=display-manager.service provides ordering only.
 cat > /usr/lib/systemd/system/live-ready.service << 'LREOF'
 [Unit]
 Description=Live environment ready marker
 After=display-manager.service
-Wants=display-manager.service
+Requires=display-manager.service
 
 [Service]
 Type=oneshot
 ExecStart=/bin/echo DAKOTA_LIVE_READY
-StandardOutput=journal+console
+StandardOutput=tty
+TTYPath=/dev/ttyS0
 
 [Install]
-WantedBy=display-manager.service
+WantedBy=multi-user.target
 LREOF
 systemctl enable live-ready.service
 
