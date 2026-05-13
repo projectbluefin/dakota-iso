@@ -260,8 +260,9 @@ just iso-sd-boot my-variant
 - **Runner:** `ubuntu-24.04`
 - **Runs as:** root via `sudo just`
 - **Build path:** `/var/iso-build` (~119 GB free after free-disk-space action)
-- **Uploads:** ISOs to Cloudflare R2 as `<target>-live-latest.iso` + CHECKSUM;
-  also uploads as dated GitHub artifact (7-day retention)
+- **Uploads:** ISOs to Cloudflare R2 (`testing` bucket) as `<target>-live-latest.iso` + CHECKSUM;
+  also as dated `<target>-live-YYYYMMDD-<sha>.iso` — **no expiry, full history back to April 10**.
+  GitHub artifacts have 7-day retention but R2 dated ISOs are permanent.
 - **Smoke test:** boots the built ISO in QEMU, waits for `DAKOTA_LIVE_READY` on serial
 
 ### `test-luks-install.yml`
@@ -458,6 +459,54 @@ podman run --rm -v /var/tmp/test:/work \
         apt-get install -y -qq xorriso mtools dosfstools isomd5sum >/dev/null 2>&1 && \
         bash /build-iso.sh /work/boot-files.tar /work/squashfs.img /work/out.iso"
 ```
+
+---
+
+## R2 bucket management
+
+**Bucket:** `testing` · **Account ID:** `2a4147f637f7d9e6a67ca185357d3b0a`
+**Endpoint:** `https://2a4147f637f7d9e6a67ca185357d3b0a.r2.cloudflarestorage.com`
+**Full ISO history on R2 back to April 10 — no expiry.**
+
+### rclone config (`~/.config/rclone/rclone.conf`)
+
+```ini
+[R2]
+type = s3
+provider = Cloudflare
+region = auto
+access_key_id = abfd2b00ed95ee9b17b7c35a68b0f959
+secret_access_key = 8ab5b927c2bd2508cf3518fafaa458ba3176754f317291087dc3ab920d86490a
+endpoint = https://2a4147f637f7d9e6a67ca185357d3b0a.r2.cloudflarestorage.com
+acl = private
+no_check_bucket = true
+```
+
+⚠️ `no_check_bucket = true` is **required** — without it, CopyObject hangs on large files.
+`acl = private` is required per Cloudflare docs for Object-level permission tokens.
+
+```bash
+# List bucket contents
+rclone ls R2:testing | grep dakota | sort -k2
+
+# Server-side copy (near-instant for same-bucket copies)
+rclone copyto -v R2:testing/dakota-live-20260508-3059a71.iso R2:testing/dakota-live-alpha2.iso
+
+# Promote a dated ISO to latest
+rclone copyto -v R2:testing/dakota-live-YYYYMMDD-<sha>.iso R2:testing/dakota-live-latest.iso
+rclone copyto -v R2:testing/dakota-live-YYYYMMDD-<sha>.iso-CHECKSUM R2:testing/dakota-live-latest.iso-CHECKSUM
+```
+
+### Cloudflare CLI (`cf`)
+
+Installed via `npm install -g cf` (v0.0.5). R2 not yet supported in this version.
+Use `rclone` for all R2 operations.
+
+### Named ISOs on R2
+
+| Name | Source ISO | Notes |
+|---|---|---|
+| `dakota-live-alpha2.iso` | `20260508-3059a71` | Last build with fisherman v0.1.0 before v0.2.0 regression |
 
 ---
 
