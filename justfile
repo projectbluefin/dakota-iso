@@ -487,7 +487,8 @@ boot-iso-serial target:
     #!/usr/bin/bash
     set -euo pipefail
     QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 2>/dev/null | head -1)
+               /usr/bin/qemu-system-x86_64 \
+               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=$(ls \
         {{output_dir}}/{{target}}-live.iso \
@@ -505,14 +506,16 @@ boot-iso-serial target:
         /usr/share/OVMF/OVMF_CODE.fd \
         /usr/share/edk2/ovmf/OVMF_CODE.fd \
         /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
-        /usr/share/ovmf/OVMF.fd; do
+        /usr/share/ovmf/OVMF.fd \
+        /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.0/share/qemu/edk2-x86_64-code.fd; do
         [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
     done
     OVMF_VARS_SRC=""
     for f in \
         /usr/share/OVMF/OVMF_VARS.fd \
         /usr/share/edk2/ovmf/OVMF_VARS.fd \
-        /usr/share/edk2-ovmf/x64/OVMF_VARS.fd; do
+        /usr/share/edk2-ovmf/x64/OVMF_VARS.fd \
+; do
         [[ -f "$f" ]] && { OVMF_VARS_SRC="$f"; break; }
     done
     if [[ -z "$OVMF_CODE" ]]; then
@@ -527,7 +530,7 @@ boot-iso-serial target:
 
     echo "Booting ${ISO} via UEFI — serial console below (Ctrl-A X to quit)"
     echo "SSH available on localhost:2222 (user: liveuser, password: live) if built with debug=1"
-    sudo "$QEMU" \
+    "$QEMU" \
         -machine q35 \
         -m 4096 \
         -accel kvm \
@@ -574,14 +577,16 @@ boot-libvirt-debug target:
         /usr/share/OVMF/OVMF_CODE.fd \
         /usr/share/edk2/ovmf/OVMF_CODE.fd \
         /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
-        /usr/share/ovmf/OVMF.fd; do
+        /usr/share/ovmf/OVMF.fd \
+        /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.0/share/qemu/edk2-x86_64-code.fd; do
         [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
     done
     OVMF_VARS=""
     for f in \
         /usr/share/OVMF/OVMF_VARS.fd \
         /usr/share/edk2/ovmf/OVMF_VARS.fd \
-        /usr/share/edk2-ovmf/x64/OVMF_VARS.fd; do
+        /usr/share/edk2-ovmf/x64/OVMF_VARS.fd \
+; do
         [[ -f "$f" ]] && { OVMF_VARS="$f"; break; }
     done
     if [[ -z "$OVMF_CODE" ]]; then
@@ -859,7 +864,8 @@ luks-boot-qemu-live target:
     #!/usr/bin/bash
     set -euo pipefail
     QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 2>/dev/null | head -1)
+               /usr/bin/qemu-system-x86_64 \
+               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=$(ls \
         {{output_dir}}/{{target}}-live.iso \
@@ -873,11 +879,13 @@ luks-boot-qemu-live target:
 
     OVMF_CODE=""; OVMF_VARS=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
-              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
+              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
+              /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.0/share/qemu/edk2-x86_64-code.fd; do
         [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
     done
     for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
-              /usr/share/edk2/ovmf/OVMF_VARS.fd; do
+              /usr/share/edk2/ovmf/OVMF_VARS.fd \
+      ; do
         if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-qemu-live-vars.fd; OVMF_VARS=/var/tmp/dakota-qemu-live-vars.fd; break; fi
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
@@ -886,7 +894,7 @@ luks-boot-qemu-live target:
     sudo rm -f "{{luks-qemu-monitor-live}}" "{{luks-qemu-serial-live}}"
 
     echo "Booting live ISO: $ISO"
-    sudo "$QEMU" \
+    "$QEMU" \
         -machine q35 -cpu host -m 8192 -smp 4 -accel kvm \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
@@ -974,15 +982,18 @@ luks-boot-qemu-installed target:
     #!/usr/bin/bash
     set -euo pipefail
     QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 2>/dev/null | head -1)
+               /usr/bin/qemu-system-x86_64 \
+               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     OVMF_CODE=""; OVMF_VARS=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
-              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do
+              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
+              /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.0/share/qemu/edk2-x86_64-code.fd; do
         [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
     done
     for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
-              /usr/share/edk2/ovmf/OVMF_VARS.fd; do
+              /usr/share/edk2/ovmf/OVMF_VARS.fd \
+      ; do
         if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-qemu-installed-vars.fd; OVMF_VARS=/var/tmp/dakota-qemu-installed-vars.fd; break; fi
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
@@ -990,7 +1001,7 @@ luks-boot-qemu-installed target:
     sudo rm -f "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-installed}}"
 
     echo "Booting installed disk: {{luks-qemu-disk}}"
-    sudo "$QEMU" \
+    "$QEMU" \
         -machine q35 -cpu host -m 8192 -smp 4 -accel kvm \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
