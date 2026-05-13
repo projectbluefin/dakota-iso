@@ -489,13 +489,15 @@ no_check_bucket = true
 # List bucket contents
 rclone ls R2:testing | grep dakota | sort -k2
 
-# Server-side copy (near-instant for same-bucket copies)
+# Server-side copy — takes 2-5 min for 4-5GB files, that is normal, do not assume failure
 rclone copyto -v R2:testing/dakota-live-20260508-3059a71.iso R2:testing/dakota-live-alpha2.iso
 
 # Promote a dated ISO to latest
 rclone copyto -v R2:testing/dakota-live-YYYYMMDD-<sha>.iso R2:testing/dakota-live-latest.iso
 rclone copyto -v R2:testing/dakota-live-YYYYMMDD-<sha>.iso-CHECKSUM R2:testing/dakota-live-latest.iso-CHECKSUM
 ```
+
+⚠️ **Direct uploads from this host hang/fail** (routing issue). Always use R2→R2 server-side copies.
 
 ### Cloudflare CLI (`cf`)
 
@@ -507,6 +509,7 @@ Use `rclone` for all R2 operations.
 | Name | Source ISO | Notes |
 |---|---|---|
 | `dakota-live-alpha2.iso` | `20260508-3059a71` | Last build with fisherman v0.1.0 before v0.2.0 regression |
+| `dakota-nvidia-live-alpha2.iso` | `20260508-3059a71` | nvidia variant, same build |
 
 ---
 
