@@ -177,31 +177,52 @@ echo ">>> Assembling ISO..."
 # an alternate section without a primary entry, confusing some UEFI firmware).
 # platform_id=0xef must be set before efi_path= so xorriso records the correct
 # platform in the El Torito validation entry (0xef = EFI, not 0x00 = BIOS).
+#
+# GPT hybrid layout — why -append_partition instead of -boot_image isolinux partition_entry=gpt_basdat:
+#
+# The previous approach (partition_entry=gpt_basdat) created a GPT entry with
+# type GUID EBD0A0A2-B9E5-4433-87C0-68B6B72699C7 (Microsoft Basic Data).
+# UEFI firmware that scans GPT for a bootable EFI System Partition looks for
+# type GUID C12A7328-F81F-11D2-BA4B-00A0C93EC93B.  Firmware that uses the El
+# Torito catalog (VMs, optical drives) is unaffected — but bare-metal hardware
+# that GPT-scans a dd'd USB will not find an EFI partition and may refuse to
+# boot, or fall back to a slow/incorrect path.
+#
+# The fix: -append_partition appends the ESP image to the end of the ISO and
+# creates a proper GPT entry with EFI System Partition type GUID.  The El Torito
+# entry still points to EFI/efi.img inside the ISO filesystem for optical/VM
+# boot; the appended partition handles GPT-scanning firmware on USB.  The size
+# overhead is one ESP copy (~38 MiB) which is negligible on a ~4.5 GiB ISO.
 rm -f "${OUTPUT_ISO}"
 touch "${OUTPUT_ISO}"
+# EFI System Partition type GUID (C12A7328-F81F-11D2-BA4B-00A0C93EC93B)
+ESP_GUID="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 xorriso \
     -dev "stdio:${OUTPUT_ISO}" \
     -volid "${LABEL}" \
     -rockridge on \
     -joliet on \
+    -append_partition 2 "${ESP_GUID}" "${ESP_IMG}" \
     -map "${ISO_ROOT}" / \
     -boot_image any platform_id=0xef \
     -boot_image any efi_path=EFI/efi.img \
+    -boot_image any appended_part_as=gpt \
     -boot_image any part_like_isohybrid=on \
-    -boot_image isolinux partition_entry=gpt_basdat \
     -commit
 
 implantisomd5 "${OUTPUT_ISO}" 2>/dev/null || true
 
-# ── Verify hybrid MBR/GPT support ────────────────────────────────────────────
-# xorriso creates the hybrid layout directly. syslinux isohybrid cannot
-# post-process this ISO because it expects an ISOLINUX BIOS boot catalog; Dakota
-# uses systemd-boot with an EFI El Torito image. The xorriso options produce:
-#   - MBR entries for whole-image/ESP visibility on USB/removable media
-#   - GPT entry for the EFI System Partition image
-#   - El Torito EFI boot catalog for optical/VM firmware
+# ── Verify hybrid MBR/GPT layout ─────────────────────────────────────────────
+# Expected output:
+#   System area summary: MBR cyl-align-off GPT
+#   GPT type GUID: 28732ac11ff8d211ba4b00a0c93ec93b  (= C12A7328... EFI System Partition)
+# If GPT type GUID shows a2a0d0eb... (Basic Data), the old code is still active.
 echo ">>> Hybrid MBR/GPT layout:"
 xorriso -indev "${OUTPUT_ISO}" -report_system_area plain 2>/dev/null | \
     grep -E '^(System area|ISO image size|MBR|GPT|Partition)' || true
+xorriso -indev "${OUTPUT_ISO}" -report_system_area plain 2>/dev/null | \
+    grep 'GPT type GUID' | head -1 | grep -q '28732ac1' && \
+    echo ">>> GPT EFI System Partition type: OK" || \
+    echo ">>> WARNING: GPT type GUID is not EFI System Partition — check xorriso options"
 
 echo ">>> Done: ${OUTPUT_ISO} ($(du -sh "${OUTPUT_ISO}" | cut -f1))"
