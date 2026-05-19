@@ -58,8 +58,13 @@ jobs:
           cd tacklebox-src && go build -o ../tacklebox ./cmd/tacklebox
 
       # Only the NVIDIA environment is a live squashfs on the ISO.
-      # Non-NVIDIA is listed in images.json for the installer catalog but
-      # installed via network pull from the NVIDIA live environment.
+      # Both images are pulled here so tacklebox can copy them into the
+      # shared offline store (LiveOS/store.squashfs.img) during ISO assembly.
+      - name: Pull offline payload images
+        run: |
+          sudo podman pull ghcr.io/projectbluefin/dakota-nvidia:latest
+          sudo podman pull ghcr.io/projectbluefin/dakota:latest
+
       - name: Build live image — dakota-nvidia
         run: |
           sudo podman build \

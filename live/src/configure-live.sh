@@ -396,16 +396,48 @@ EOF
 mkdir -p /usr/lib/tmpfiles.d
 echo 'f /etc/hostname 0644 - - - dakota-live' > /usr/lib/tmpfiles.d/live-hostname.conf
 
-# ── VFS containers-storage ────────────────────────────────────────────────────
-# The ISO embeds the Dakota OCI image as VFS containers-storage in the squashfs.
-# Configure podman to use the VFS driver so the pre-embedded image is visible
-# for offline installation.  Without this, podman initializes with the overlay
-# driver at first boot, creating a db.sql that conflicts with VFS access.
+# ── containers-storage: overlay + superiso-store ──────────────────────────────
+# The ISO carries both Dakota images in a shared store squashfs
+# (LiveOS/store.squashfs.img) built by tacklebox offline_payloads.
+# dmsquash-live mounts the ISO at /run/initramfs/live, so the squashfs is
+# visible at /run/initramfs/live/LiveOS/store.squashfs.img.
+# We mount it at /var/lib/superiso-store via a systemd mount unit and register
+# it as an additionalimagestores so bootc-installer can install either image
+# without a network pull.
+
+mkdir -p /var/lib/superiso-store /var/lib/containers/storage
+
+# systemd mount unit — same pattern as superiso Containerfile.generic.
+STORE_UNIT="$(systemd-escape --path /var/lib/superiso-store).mount"
+cat > "/usr/lib/systemd/system/${STORE_UNIT}" << 'STOREUNITEOF'
+[Unit]
+Description=Tacklebox offline image store (loop-mounted from live ISO)
+DefaultDependencies=no
+After=systemd-remount-fs.service local-fs-pre.target
+Before=local-fs.target
+ConditionPathExists=/run/initramfs/live/LiveOS/store.squashfs.img
+
+[Mount]
+What=/run/initramfs/live/LiveOS/store.squashfs.img
+Where=/var/lib/superiso-store
+Type=squashfs
+Options=loop,ro,nodev
+
+[Install]
+WantedBy=local-fs.target
+STOREUNITEOF
+systemctl enable "${STORE_UNIT}"
+
+# overlay driver + additionalimagestores so both Dakota images are resolvable
+# by bootc-installer and fisherman without touching the live writable store.
+mkdir -p /etc/containers
 cat > /etc/containers/storage.conf << 'STOREOF'
 [storage]
-driver = "vfs"
+driver = "overlay"
 runroot = "/run/containers/storage"
 graphroot = "/var/lib/containers/storage"
+[storage.options]
+additionalimagestores = ["/var/lib/superiso-store"]
 STOREOF
 
 # fisherman handles scratch space, transport-prefix stripping, OCI export, and

@@ -1,6 +1,10 @@
 {
   "media_name": "DAKOTA_LIVE",
-  "size": "20G",
+  "size": "30G",
+  "offline_payloads": [
+    "ghcr.io/projectbluefin/dakota-nvidia:latest",
+    "ghcr.io/projectbluefin/dakota:latest"
+  ],
   "bootable_environments": [
     {
       "id": "dakota-nvidia",
