@@ -68,7 +68,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            just podman buildah mtools xorriso \
+            just podman buildah mtools xorriso squashfs-tools \
             qemu-system-x86 ovmf socat sshpass \
             imagemagick -qq
 
@@ -83,19 +83,36 @@ jobs:
       - name: Build debug ISO
         id: build
         run: |
-          # Build on /var/iso-build (large root partition, ~119GB free after free-disk-space).
-          # The squash-to-single-layer approach reduces VFS import from ~720GB to ~6GB,
-          # so no XFS staging is needed.
+          # Build on /var/iso-build (~119 GB free after free-disk-space).
           START=$(date +%s)
           sudo mkdir -p /var/iso-build
-          sudo $(command -v just) debug=1 installer_channel=${{ matrix.installer_channel }} output_dir=/var/iso-build iso-sd-boot dakota
-          # Copy final ISO to workspace for subsequent steps
           mkdir -p output
-          sudo cp /var/iso-build/*.iso output/ 2>/dev/null || true
+
+          # 1. Build the live container with SSH debug mode enabled
+          sudo podman build \
+            --cap-add sys_admin --security-opt label=disable \
+            --build-arg TARGET=dakota-nvidia \
+            --build-arg DEBUG=1 \
+            --build-arg INSTALLER_CHANNEL=${{ matrix.installer_channel }} \
+            -t localhost/dakota-nvidia-live:latest ./live
+
+          # 2. Export rootfs squashfs + boot files tar
+          sudo bash scripts/build-live-squashfs.sh \
+            localhost/dakota-nvidia-live:latest \
+            /var/iso-build/dakota-nvidia.rootfs.sfs \
+            /var/iso-build/boot.tar
+
+          # 3. Assemble the UEFI-bootable live ISO
+          #    (no offline store needed for the LUKS E2E — fisherman will pull from network)
+          sudo bash live/src/build-iso.sh \
+            /var/iso-build/boot.tar \
+            /var/iso-build/dakota-nvidia.rootfs.sfs \
+            /var/iso-build/dakota-live.iso
+
+          sudo cp /var/iso-build/dakota-live.iso output/dakota-live.iso
           sudo chown -R "$USER:$(id -gn)" output/
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
-          ISO=$(ls output/*.iso 2>/dev/null | head -1)
-          echo "iso_size=$(stat -c%s "$ISO" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
+          echo "iso_size=$(stat -c%s output/dakota-live.iso 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
 
       - name: Fix output directory ownership
         run: sudo chown -R "$USER:$(id -gn)" output/ 2>/dev/null || true
