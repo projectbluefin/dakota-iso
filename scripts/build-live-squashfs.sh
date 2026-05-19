@@ -28,9 +28,6 @@ if [[ $(id -u) -ne 0 ]]; then
     exit 1
 fi
 
-# Determine unprivileged user for podman unshare operations.
-RUN_AS="${SUDO_USER:-$(id -un)}"
-
 WORK="$(mktemp -d /var/tmp/tbox-live-sfs.XXXXXX)"
 trap 'podman image unmount "${IMAGE}" 2>/dev/null || true
       umount "${WORK}/squashfs-root/var/lib/containers/storage" 2>/dev/null || true
@@ -44,7 +41,7 @@ WDIR="${WORK}/overlay-work"
 mkdir -p "${SFS_ROOT}" "${UPPER}" "${WDIR}"
 
 echo ">>> [live-squashfs] mounting image ${IMAGE} ..."
-MOUNT="$(sudo -u "${RUN_AS}" podman image mount "${IMAGE}")"
+MOUNT="$(podman image mount "${IMAGE}")"
 
 echo ">>> [live-squashfs] building unified squashfs source tree ..."
 FS_TYPE="$(findmnt -n -o FSTYPE -T "${SFS_ROOT}" 2>/dev/null || echo unknown)"
@@ -65,15 +62,12 @@ SFS_LEVEL=3; SFS_BLOCK=131072
 echo ">>> [live-squashfs] mksquashfs -> ${OUTPUT_SFS} (zstd-${SFS_LEVEL}) ..."
 mkdir -p "$(dirname "${OUTPUT_SFS}")"
 
-# Run inside podman unshare for correct sub-uid UID mappings.
-sudo -u "${RUN_AS}" podman unshare bash -c "
-    mksquashfs ${SFS_ROOT@Q} ${OUTPUT_SFS@Q} \
-        -noappend -comp zstd \
-        -Xcompression-level ${SFS_LEVEL} \
-        -b ${SFS_BLOCK} \
-        -processors 4 \
-        -e proc -e sys -e dev -e run -e tmp
-"
+mksquashfs "${SFS_ROOT}" "${OUTPUT_SFS}" \
+    -noappend -comp zstd \
+    -Xcompression-level "${SFS_LEVEL}" \
+    -b "${SFS_BLOCK}" \
+    -processors 4 \
+    -e proc -e sys -e dev -e run -e tmp
 echo ">>> [live-squashfs] squashfs: $(du -sh "${OUTPUT_SFS}" | cut -f1)"
 
 echo ">>> [live-squashfs] exporting boot files tar ..."
@@ -84,5 +78,5 @@ tar -C "${MOUNT}" \
     ./usr/lib/systemd/boot/efi
 echo ">>> [live-squashfs] boot tar: $(du -sh "${OUTPUT_BOOT_TAR}" | cut -f1)"
 
-sudo -u "${RUN_AS}" podman image unmount "${IMAGE}" 2>/dev/null || true
+podman image unmount "${IMAGE}" 2>/dev/null || true
 echo ">>> [live-squashfs] done"
