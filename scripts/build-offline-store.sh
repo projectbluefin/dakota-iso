@@ -30,7 +30,7 @@ fi
 
 STORE_ROOT="$(mktemp -d /var/tmp/tbox-offline-store.XXXXXX)"
 RUN_ROOT="$(mktemp -d /tmp/tbox-offrun.XXXXXX)"
-trap 'rm -rf "${STORE_ROOT}" "${RUN_ROOT}"' EXIT
+trap 'umount -R "${STORE_ROOT}" 2>/dev/null || true; rm -rf "${STORE_ROOT}" "${RUN_ROOT}" 2>/dev/null || true' EXIT
 
 chmod 0777 "${STORE_ROOT}" "${RUN_ROOT}"
 
