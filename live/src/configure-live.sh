@@ -6,8 +6,13 @@
 #
 # At this point the initramfs has already been replaced (by the Debian
 # initramfs-builder stage) with a dmsquash-live capable one.  This script
-# handles the runtime live-environment: user, GDM autologin, tuna-installer
+# handles the runtime live-environment: user, GDM autologin, installer
 # configuration + autostart, and Flatpak pre-installation.
+#
+# TARGET (set via ARG/ENV in the Containerfile) selects which Dakota variant
+# is being built: "dakota" (stock) or "dakota-nvidia".  It controls the
+# imgref and local_imgref written into recipe.json so each squashfs image on
+# the dual-env ISO knows which OCI image it carries for offline installation.
 
 set -exo pipefail
 
@@ -253,13 +258,38 @@ install -Dm644 "$SCRIPT_DIR/images/dakotaraptor.png" /usr/share/bootc-installer/
 
 # ── Installer configuration ───────────────────────────────────────────────────
 # The bootc-installer reads both overrides from /etc/bootc-installer/:
-#   images.json — locks the catalog to Dakota only
-#   recipe.json — sets distro branding, tour slides, and install steps
+#   images.json — the full catalog of installable images (both variants)
+#   recipe.json — distro branding, tour slides, install steps, and the
+#                 local_imgref for offline installation
+#
+# TARGET controls which OCI image is embedded in this squashfs's VFS
+# containers-storage and therefore available for offline install.  Each live
+# environment on the dual-env ISO carries its own image; the other variant
+# can be installed via network.
+TARGET="${TARGET:-dakota-nvidia}"
+IMGREF="ghcr.io/projectbluefin/${TARGET}:latest"
+
 mkdir -p /etc/bootc-installer
 cp "$SCRIPT_DIR/etc/bootc-installer/images.json" /etc/bootc-installer/images.json
-cp "$SCRIPT_DIR/etc/bootc-installer/recipe.json" /etc/bootc-installer/recipe.json
-# Flag file read by the installer (tuna-os/tuna-installer#26) to activate live
-# ISO mode even when the installer is running inside a Flatpak sandbox.
+
+# Generate recipe.json with the correct imgref/local_imgref for this variant.
+# All other fields (branding, tour, steps) are identical across variants.
+python3 - << PYEOF
+import json, sys
+
+with open("$SCRIPT_DIR/etc/bootc-installer/recipe.json") as f:
+    recipe = json.load(f)
+
+recipe["imgref"] = "$IMGREF"
+recipe["local_imgref"] = "containers-storage:$IMGREF"
+
+with open("/etc/bootc-installer/recipe.json", "w") as f:
+    json.dump(recipe, f, indent=2)
+    f.write("\n")
+PYEOF
+
+# Flag file read by the installer to activate live ISO mode even when running
+# inside a Flatpak sandbox.
 touch /etc/bootc-installer/live-iso-mode
 
 # ── Installer autostart ───────────────────────────────────────────────────────

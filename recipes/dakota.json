@@ -1,0 +1,16 @@
+{
+  "media_name": "DAKOTA_LIVE",
+  "size": "30G",
+  "bootable_environments": [
+    {
+      "id": "dakota-nvidia",
+      "image": "localhost/dakota-nvidia-live:latest",
+      "modes": ["live"]
+    },
+    {
+      "id": "dakota",
+      "image": "localhost/dakota-live:latest",
+      "modes": ["live"]
+    }
+  ]
+}
