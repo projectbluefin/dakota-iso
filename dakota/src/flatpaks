@@ -6,6 +6,7 @@
 # Releases bundle (not on Flathub) earlier in build.sh.
 #
 # Format: one app ID per line, resolved from the flathub remote.
+be.alexandervanhee.gradia
 com.github.PintaProject.Pinta
 com.github.tchx84.Flatseal
 com.mattjakeman.ExtensionManager
