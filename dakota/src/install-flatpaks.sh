@@ -36,20 +36,27 @@ flatpak remote-add --system --if-not-exists flathub \
 
 # bootc-installer bundle
 # INSTALLER_CHANNEL controls which release tag to pull from:
-#   stable (default) → continuous   (latest stable build from main/prod)
+#   stable (default) → continuous   (latest stable build from prod branch)
 #   dev              → continuous-dev (latest dev build, tracks dev branch)
-# castrojo/tuna-installer is the Project Bluefin Dakota fork of tuna-os/tuna-installer.
-# v1.0.0 bundles fisherman v0.2.0-17 which includes the fix for #38 (OCI cache
-# mount on composefs/btrfs). Do not revert to tuna-os/tuna-installer.
-RELEASE_TAG="v1.0.0"
+# Primary source: projectbluefin/bootc-installer (Project Bluefin's fork).
+# Fallback: tuna-os/tuna-installer (upstream) if projectbluefin assets are unavailable.
+# v2.5.0 includes fisherman v0.2.0 with fix for #38 (OCI cache mount on composefs/btrfs).
+INSTALLER_REPO="projectbluefin/bootc-installer"
+FALLBACK_REPO="tuna-os/tuna-installer"
+RELEASE_TAG="continuous"
 FLATPAK_FILENAME="org.bootcinstaller.Installer.flatpak"
 if [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]]; then
     RELEASE_TAG="continuous-dev"
     FLATPAK_FILENAME="org.bootcinstaller.Installer.Devel.flatpak"
 fi
-curl --retry 3 --location \
-    "https://github.com/castrojo/tuna-installer/releases/download/${RELEASE_TAG}/${FLATPAK_FILENAME}" \
-    -o /tmp/tuna-installer.flatpak
+if ! curl --retry 3 --fail --location \
+    "https://github.com/${INSTALLER_REPO}/releases/download/${RELEASE_TAG}/${FLATPAK_FILENAME}" \
+    -o /tmp/tuna-installer.flatpak 2>/dev/null; then
+    echo "Primary source unavailable, falling back to ${FALLBACK_REPO}..."
+    curl --retry 3 --fail --location \
+        "https://github.com/${FALLBACK_REPO}/releases/download/${RELEASE_TAG}/${FLATPAK_FILENAME}" \
+        -o /tmp/tuna-installer.flatpak
+fi
 INSTALLER_APP_ID="org.bootcinstaller.Installer"
 [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
 
