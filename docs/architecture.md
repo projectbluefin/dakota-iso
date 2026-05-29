@@ -104,7 +104,7 @@ Requirements:
 - **Backend binary:** `fisherman` → symlinked to `/usr/local/bin/fisherman` by `configure-live.sh`
 - **Config:** `/etc/bootc-installer/images.json` (catalog) + `recipe.json` (branding)
 - **Flatpak sandbox:** Inside the Flatpak, `/etc` is reserved. Host `/etc` is at `/run/host/etc`.
-  Recipe passed via `VANILLA_CUSTOM_RECIPE=/run/host/etc/bootc-installer/recipe.json`.
+  Recipe passed via `BOOTC_CUSTOM_RECIPE=/run/host/etc/bootc-installer/recipe.json`.
 - **live-iso-mode:** `touch /etc/bootc-installer/live-iso-mode` activates live ISO mode
   in the installer.
 
