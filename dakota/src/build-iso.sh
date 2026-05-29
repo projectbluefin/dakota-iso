@@ -213,9 +213,14 @@ implantisomd5 "${OUTPUT_ISO}" 2>/dev/null || true
 echo ">>> Partition layout:"
 xorriso -indev "${OUTPUT_ISO}" -report_system_area plain 2>/dev/null | \
     grep -E '^(System area|ISO image size|MBR|GPT|Partition)' || true
-xorriso -indev "${OUTPUT_ISO}" -report_system_area plain 2>/dev/null | \
-    grep 'System area summary' | grep -q 'protective' && \
-    echo ">>> Protective MBR + GPT: OK" || \
-    echo ">>> WARNING: protective MBR not found — USB may not boot on older firmware"
+if xorriso -indev "${OUTPUT_ISO}" -report_system_area plain 2>/dev/null | \
+    grep 'System area summary' | grep -q 'protective'; then
+    echo ">>> Protective MBR + GPT: OK"
+else
+    echo "ERROR: protective MBR not found — ISO will not boot on older UEFI firmware (Acer, Dell pre-2023)." >&2
+    echo "       This is a hard build failure. Check the xorriso flags and rebuild." >&2
+    echo "       Ref: https://github.com/projectbluefin/dakota-iso/issues/15" >&2
+    exit 1
+fi
 
 echo ">>> Done: ${OUTPUT_ISO} ($(du -sh "${OUTPUT_ISO}" | cut -f1))"
