@@ -34,6 +34,7 @@ OUTPUT_ISO="${3:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso
 LABEL="DAKOTA_LIVE"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/iso-build.XXXXXX")
+# shellcheck disable=SC2064  # WORK is set above; expanding now is intentional
 trap "chmod -R u+rwX '${WORK}' 2>/dev/null; rm -rf '${WORK}'" EXIT
 
 BOOT_DIR="${WORK}/boot-files"

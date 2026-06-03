@@ -80,7 +80,7 @@ for app in "${INSTALLED[@]}"; do
     # Keep the installer regardless (stable or devel app ID)
     [[ "$app" == "org.bootcinstaller.Installer" ]] && continue
     [[ "$app" == "org.bootcinstaller.Installer.Devel" ]] && continue
-    if [[ ! " ${WANTED[*]} " =~ " ${app} " ]]; then
+    if [[ ! " ${WANTED[*]} " == *" ${app} "* ]]; then
         echo "Removing dropped flatpak: $app"
         flatpak uninstall --system --noninteractive "$app" || true
     fi

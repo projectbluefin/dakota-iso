@@ -19,5 +19,6 @@ installkernel() {
 
 install() {
     inst_multiple mount umount blkid losetup find grep sed mkdir ln readlink basename cat sleep udevadm
+    # shellcheck disable=SC2154  # moddir is provided by the dracut runtime environment
     inst_hook initqueue 20 "$moddir/dakota-isofile.sh"
 }
