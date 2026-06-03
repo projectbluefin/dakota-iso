@@ -2,41 +2,45 @@
 
 [![Build and Publish](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml/badge.svg)](https://github.com/projectbluefin/dakota-iso/actions/workflows/build-iso.yml)
 
-| Variant | Download | Checksum |
-|---------|----------|----------|
-| **Dakota** | [⬇ dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) |
-| **Dakota NVIDIA** | [⬇ dakota-nvidia-live-latest.iso](https://projectbluefin.dev/dakota-nvidia-live-latest.iso) | [checksum](https://projectbluefin.dev/dakota-nvidia-live-latest.iso-CHECKSUM) |
+| Download | Checksum |
+|----------|----------|
+| [⬇ dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) |
 
-Builds bootable UEFI live ISOs from [Dakota](https://github.com/projectbluefin/dakota) images — GNOME OS-based workstations using composefs and systemd-boot. The live environment boots straight to GDM with a full GNOME session and launches the Dakota installer automatically.
+Builds a bootable UEFI live ISO from [Dakota](https://github.com/projectbluefin/dakota) images — GNOME OS-based workstations using composefs and systemd-boot. The live environment boots straight to GDM with a full GNOME session and launches the Dakota installer automatically.
 
-The **NVIDIA** variant includes proprietary NVIDIA drivers baked into the image for systems with NVIDIA GPUs.
+The ISO is unified: it boots the **NVIDIA** variant live (for systems with NVIDIA GPUs) and ships the standard Dakota image in an offline store so it can be installed on non-NVIDIA hardware without a network pull.
 
 ## How it works
 
-The build uses two Podman containers:
+The build uses three steps:
 
-1. **`dakota-installer`** — a multi-stage container that pulls the Dakota base image, creates a live user, configures GDM autologin, installs Flatpaks from Flathub, and drops in the installer config.
-2. **`dakota-iso-builder`** — a Debian-based toolchain container (xorriso, mksquashfs, dosfstools, mtools) that assembles the final ISO from the exported rootfs.
+1. **`live/Containerfile`** — a 3-stage multi-arch build that pulls the Dakota NVIDIA image, creates a live user, configures GDM autologin, installs Flatpaks from Flathub, and drops in the installer config.
+2. **`scripts/build-live-squashfs.sh`** — mounts the live container image via `podman image mount` and runs `mksquashfs` directly on the merged overlay view. No per-layer VFS expansion needed.
+3. **`scripts/build-offline-store.sh`** — uses `skopeo copy` to import both `dakota` and `dakota-nvidia` images into an isolated VFS store, then creates a second squashfs that ships inside the ISO for offline installation.
+4. **`live/src/build-iso.sh`** — assembles the final ISO with the live squashfs, boot files, and offline store embedded at `LiveOS/store.squashfs.img`.
 
 The ISO layout:
 - **EFI/efi.img** — FAT32 ESP with systemd-boot, kernel, and initramfs
-- **LiveOS/squashfs.img** — squashfs of the full live rootfs
+- **LiveOS/squashfs.img** — squashfs of the full live rootfs (NVIDIA variant)
+- **LiveOS/store.squashfs.img** — offline OCI image store (both dakota and dakota-nvidia)
 - **El Torito** UEFI entry (no-emulation mode) pointing to the ESP image
 
-At boot, `dmsquash-live` mounts the squashfs and creates an overlayfs so the live environment is fully writable.
+At boot, `dmsquash-live` mounts the squashfs and creates an overlayfs so the live environment is fully writable. The offline store is mounted at `/var/lib/containers/storage` so the installer can install Dakota without a network pull.
 
 ## Requirements
 
 | Tool | Notes |
 |---|---|
 | `podman` | Rootless works; needs `--cap-add sys_admin` for the live env build |
+| `buildah` | Squash OCI layers before VFS import |
+| `skopeo` | Copy images into the offline store |
 | `just` | Task runner — `cargo install just` or distro package |
 | KVM + `qemu-system-x86_64` | For local boot testing on amd64 only |
 | OVMF firmware | `edk2-ovmf` (Fedora/RHEL) or `ovmf` (Debian/Ubuntu) — amd64 |
 
 **Disk space:** The build needs ~22 GB free:
-- ~12 GB for the rootfs tarball (Flatpak-heavy)
-- ~5 GB for the squashfs
+- ~6 GB for the live squashfs (NVIDIA variant)
+- ~6 GB for the offline store squashfs (both dakota and dakota-nvidia)
 - ~5 GB for the final ISO
 
 By default, output goes to `./output/`. If `/tmp` is a small tmpfs on your machine, override with `just output_dir=/path/with/space iso-sd-boot dakota`.
@@ -48,10 +52,10 @@ By default, output goes to `./output/`. If `/tmp` is a small tmpfs on your machi
 git clone https://github.com/projectbluefin/dakota-iso
 cd dakota-iso
 
-# Full build — live env container + ISO assembly
+# Full build — live env container + ISO assembly (single-variant, for local testing)
 just iso-sd-boot dakota
 
-# Build the NVIDIA variant
+# Build the NVIDIA variant (boots live with NVIDIA drivers)
 just iso-sd-boot dakota-nvidia
 
 # Override output directory (if ./output/ is on a small filesystem)
@@ -62,21 +66,24 @@ The build takes **20–40 minutes** depending on your internet connection — th
 
 Output: `output/<target>-live.iso` (~4.5 GB)
 
+> **CI builds** a unified ISO containing both NVIDIA (live boot) and non-NVIDIA (offline
+> install) variants. To replicate the full CI pipeline locally, run the three scripts
+> directly:
+> ```bash
+> sudo bash scripts/build-live-squashfs.sh localhost/dakota-nvidia-live:latest \
+>   output/dakota-nvidia.rootfs.sfs output/dakota-nvidia-boot.tar
+> sudo bash scripts/build-offline-store.sh output/store.squashfs.img \
+>   ghcr.io/projectbluefin/dakota-nvidia:latest ghcr.io/projectbluefin/dakota:latest
+> sudo bash live/src/build-iso.sh --store output/store.squashfs.img \
+>   output/dakota-nvidia-boot.tar output/dakota-nvidia.rootfs.sfs output/dakota-live.iso
+> ```
+
 ### Build stages
 
 ```
 just container dakota          # Build the live environment container
-just iso-builder dakota        # Build the ISO assembly toolchain container
-just iso-sd-boot dakota        # Full end-to-end build (runs both above + assembles ISO)
+just iso-sd-boot dakota        # Full end-to-end build (runs container + assembles ISO)
 ```
-
-### Building the NVIDIA variant
-
-```bash
-just iso-sd-boot dakota-nvidia
-```
-
-The only difference is the `payload_ref` file — everything else (Containerfile, scripts, ISO assembly) is shared.
 
 ## Adding a new variant
 
@@ -88,7 +95,7 @@ echo 'ghcr.io/projectbluefin/my-variant:latest' > my-variant/payload_ref
 just iso-sd-boot my-variant
 ```
 
-The Containerfile accepts a `BASE_IMAGE` build-arg (defaulting to `ghcr.io/projectbluefin/dakota:latest`). The justfile reads `<target>/payload_ref` and passes it as the build-arg automatically. The installer configs inside the ISO are patched at build time to reference the correct image.
+The Containerfile (`live/Containerfile`) accepts a `TARGET` build-arg (defaulting to `dakota-nvidia`). The justfile reads `<target>/payload_ref` but passes the target name directly as `TARGET`. The installer configs inside the ISO are patched at build time to reference the correct image.
 
 ## Testing
 
@@ -162,7 +169,7 @@ virsh domdisplay dakota-live
 
 ## Installer configuration
 
-The installer is pre-configured to install Dakota only. Configuration lives in `dakota/src/etc/bootc-installer/`:
+The installer is pre-configured to install Dakota. Configuration lives in `live/src/etc/bootc-installer/`:
 
 | File | Purpose |
 |---|---|

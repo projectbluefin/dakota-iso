@@ -94,26 +94,16 @@ container target:
         --layers \
         --build-arg DEBUG={{debug}} \
         --build-arg INSTALLER_CHANNEL={{installer_channel}} \
-        --build-arg BASE_IMAGE=$(cat {{target}}/payload_ref | tr -d '[:space:]') \
-        -t {{target}}-installer -f ./dakota/Containerfile ./dakota
-
-# Build the Debian-based ISO assembly container for the given target.
-# This container has xorriso, mksquashfs, dosfstools, and mtools.
-iso-builder target:
-    podman build --security-opt label=disable -t {{target}}-iso-builder \
-        -f ./dakota/Containerfile.builder ./dakota
+        --build-arg TARGET={{target}} \
+        -t {{target}}-installer -f ./live/Containerfile ./live
 
 # Build a systemd-boot UEFI live ISO for the given target.
 #
-# Uses a two-container approach:
-#   1. localhost/<target>-installer — the live environment (3-stage Containerfile)
-#   2. localhost/<target>-iso-builder — Debian ISO assembly tools (Containerfile.builder)
-#
-# The installer image is exported as a clean rootfs tarball via `podman export`,
-# then the ISO builder creates:
-#   - A FAT ESP image with systemd-boot + loader entries + kernel + initramfs
-#   - A squashfs of the full live rootfs
-#   - An ISO9660 image with El Torito EFI pointing to the FAT ESP
+# Builds the live environment container from live/Containerfile, then assembles
+# the ISO on the host using build-iso.sh.  This produces a single-variant ISO
+# for local testing.  CI builds a unified ISO with both NVIDIA (live) and
+# non-NVIDIA (offline store) variants — see scripts/build-live-squashfs.sh and
+# scripts/build-offline-store.sh.
 #
 # Output: output/<target>-live.iso
 iso-sd-boot target:

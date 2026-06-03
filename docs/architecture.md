@@ -2,15 +2,21 @@
 
 How the Dakota live ISO is assembled and how it boots.
 
-## Two-container pipeline
+## Build pipeline
 
 ```
 just iso-sd-boot dakota
-  └─ just container dakota          → builds localhost/dakota-installer
-  └─ just iso-sd-boot (assembly)    → runs build-iso.sh on host
+  └─ just container dakota          → builds localhost/dakota-installer (live/Containerfile)
+  └─ just iso-sd-boot (assembly)    → runs dakota/src/build-iso.sh on host
+
+CI (build-iso.yml) — unified ISO:
+  └─ podman build live/Containerfile  → localhost/dakota-nvidia-live:latest
+  └─ scripts/build-live-squashfs.sh   → dakota-nvidia.rootfs.sfs + boot.tar
+  └─ scripts/build-offline-store.sh   → store.squashfs.img (dakota + dakota-nvidia)
+  └─ live/src/build-iso.sh --store    → dakota-live.iso
 ```
 
-### Container 1: `dakota-installer` (Containerfile — 3 stages)
+### Container: `<target>-installer` (`live/Containerfile` — 3 stages)
 
 | Stage | Base | Purpose |
 |---|---|---|
@@ -31,7 +37,7 @@ Only `/tmp/initramfs.img` crosses the stage boundary.
 - Sets up `live-ready.service` (writes `DAKOTA_LIVE_READY` to serial when GDM starts)
 - Debug builds only: enables SSH, sets passwords, opens firewall port 22
 
-### Container 2: ISO assembly (`build-iso.sh`)
+### ISO assembly (`build-iso.sh` / `live/src/build-iso.sh`)
 
 Runs on the host (not inside a container). Assembles the final ISO from the exported rootfs.
 
@@ -42,11 +48,12 @@ xorriso available via brew at `/home/linuxbrew/.linuxbrew/bin/xorriso`.
 ## ISO layout
 
 ```
-EFI/efi.img              — FAT32 ESP: systemd-boot + kernel + initramfs
-EFI/BOOT/BOOTX64.EFI    — EFI fallback (Proxmox OVMF / Ventoy)
-LiveOS/squashfs.img      — squashfs of the full live rootfs (+ embedded OCI)
-boot/grub/loopback.cfg   — Ventoy/GRUB loopback metadata
-images/pxeboot/*         — kernel/initramfs copies for loopback ISO boot
+EFI/efi.img                  — FAT32 ESP: systemd-boot + kernel + initramfs
+EFI/BOOT/BOOTX64.EFI        — EFI fallback (Proxmox OVMF / Ventoy)
+LiveOS/squashfs.img          — squashfs of the full live rootfs (NVIDIA variant)
+LiveOS/store.squashfs.img    — offline OCI image store (dakota + dakota-nvidia, CI builds only)
+boot/grub/loopback.cfg       — Ventoy/GRUB loopback metadata
+images/pxeboot/*             — kernel/initramfs copies for loopback ISO boot
 ```
 
 **No GRUB2, no shim.** El Torito UEFI → FAT ESP → systemd-boot → kernel + initramfs.
@@ -83,6 +90,20 @@ xorriso -indev output/dakota-live.iso -report_system_area plain 2>/dev/null | gr
 
 Note: `fdisk -l` shows `Disklabel type: dos` on hybrid layouts — this is expected and
 does NOT mean GPT is missing. `gdisk`, `parted`, and UEFI firmware see GPT correctly.
+
+## Offline image store (`store.squashfs.img`)
+
+CI builds embed a second squashfs at `LiveOS/store.squashfs.img` containing both
+`dakota` and `dakota-nvidia` images as VFS containers-storage. The installer mounts
+this store for offline installation — no network pull required.
+
+`scripts/build-offline-store.sh` creates the store:
+1. Creates an isolated podman graphroot at a temp directory
+2. Runs `skopeo copy` for each image into that graphroot (JSON tar-split format)
+3. Runs `mksquashfs` on the resulting VFS store directory
+
+The store is mounted at `/var/lib/containers/storage` at runtime so the installer
+finds the images at the expected path.
 
 ## Embedded OCI image (VFS containers-storage)
 

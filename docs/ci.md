@@ -11,24 +11,29 @@ How the GitHub Actions workflows build, test, and publish Dakota ISOs.
 
 ## build-iso.yml
 
-**Matrix:** `[dakota, dakota-nvidia]` (fail-fast: false)  
+**Job:** `build-and-publish` (single job, no matrix)
 **Runner:** `ubuntu-24.04`  
-**Runs as:** root via `sudo just`
+**Runs as:** root via `sudo`
+**Path triggers:** `live/**`, `scripts/**`, `.github/workflows/build-iso.yml`
 
 ### Pipeline steps
 
 1. **Free disk space** — `jlumbroso/free-disk-space` reclaims ~119 GB at `/var/iso-build`
-2. **Install deps** — `just podman buildah rclone mtools xorriso`
+2. **Install deps** — `apt-get install podman buildah skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
-4. **Build ISO** — `sudo just installer_channel=stable output_dir=/var/iso-build iso-sd-boot <target>`
-5. **Generate checksum** — dated + latest variants
-6. **Upload to R2** — dated ISO + `<target>-live-latest.iso` + checksums
-7. **Boot verification** — QEMU UEFI boot, wait for `DAKOTA_LIVE_READY` serial marker
-8. **Upload artifacts** — ISO + checksum + screenshot (7-day retention)
+4. **Pull payload images** — pulls `dakota-nvidia:latest` and `dakota:latest` into local podman store
+5. **Build live container** — `podman build live/ --build-arg TARGET=dakota-nvidia` → `localhost/dakota-nvidia-live:latest`
+6. **Build live squashfs** — `scripts/build-live-squashfs.sh` → `dakota-nvidia.rootfs.sfs` + `dakota-nvidia-boot.tar`
+7. **Build offline store** — `scripts/build-offline-store.sh` → `store.squashfs.img` (both dakota + dakota-nvidia)
+8. **Assemble ISO** — `live/src/build-iso.sh --store store.squashfs.img ...` → `dakota-live.iso` (~4.5 GB)
+9. **Generate checksum** — dated + latest variants
+10. **Upload to R2** — `dakota-live-YYYYMMDD-<sha>.iso` + `dakota-live-latest.iso` + checksums
+11. **Boot verification** — QEMU UEFI boot, wait for `DAKOTA_LIVE_READY` serial marker
+12. **Upload artifacts** — ISO + checksum + screenshot (7-day retention)
 
 ### ⚠️ installer_channel is locked to `stable` in CI
 
-Do NOT change `installer_channel` to `dev` in `build-iso.yml`. There is an active
+Do NOT change `installer_channel` to `dev` in the live container build. There is an active
 regression in the dev channel (`tuna-os/fisherman#38`) where the overlay storage
 code path fails with:
 ```
@@ -39,8 +44,8 @@ Production CI must stay on `installer_channel=stable` until the regression is fi
 ### Disk layout in CI
 
 The build path is `/var/iso-build` (~119 GB free after disk-space action).
-Peak usage ~22 GB thanks to the squash-to-single-layer step (see `docs/build.md`).
-No XFS loopback needed in CI (squash reduces the BTRFS pressure enough on ext4).
+Peak usage ~22 GB (live squashfs ~6 GB + offline store ~6 GB + ISO ~5 GB + intermediate).
+No XFS loopback needed in CI.
 
 ### Boot verification logic
 
