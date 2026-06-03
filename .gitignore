@@ -1,2 +1,4 @@
 image-builder-cli/
 output/
+*.pyc
+__pycache__/
