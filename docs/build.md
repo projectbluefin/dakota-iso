@@ -75,16 +75,20 @@ just compression=release iso-sd-boot dakota   # production ISOs for R2
 
 Use `fast` for CI and local testing. Use `release` for ISOs that go to R2.
 
-## Why the squash-before-import step
+## Why squashing matters for VFS import
 
 Dakota images are chunkified with ~120 OCI layers. Without squashing, VFS import
 creates ~6 GB × 120 layers = ~720 GB of intermediate directories, overflowing any
 standard CI runner or local disk.
 
-The justfile squashes to 1 layer before VFS import, reducing peak usage to ~22 GB.
-The squash uses `buildah from --pull-never` + `buildah commit --squash` — NOT
-`podman create --entrypoint ... && podman commit` (the latter corrupts the Entrypoint
-config, breaking `bootc install`).
+**CI** avoids this with `scripts/build-live-squashfs.sh`, which uses `podman image mount`
+to get a single merged overlay view and runs `mksquashfs` directly on that mount.
+No per-layer VFS expansion — peak disk usage stays ~6 GB for the live squashfs.
+
+**Local builds** (via `just iso-sd-boot`) use `buildah commit --squash` to squash
+the image to one layer before VFS import. The squash uses `buildah from --pull-never`
++ `buildah commit --squash` — NOT `podman create --entrypoint ... && podman commit`
+(the latter corrupts the Entrypoint config, breaking `bootc install`).
 
 ## Boot testing locally
 
@@ -105,7 +109,6 @@ just debug=1 boot-libvirt-debug dakota
 |---|---|
 | `iso-sd-boot <target>` | **Full build** — container + ISO assembly |
 | `container <target>` | Build the live-env container only |
-| `iso-builder <target>` | Build the Debian ISO toolchain container |
 | `build-bg <target>` | Background build with live log tail |
 | `mount-xfs` | Create 45 GB XFS loopback at /mnt (sudo, idempotent) |
 | `boot-iso-serial <target>` | Boot ISO in QEMU, serial output (Ctrl-A X) |
