@@ -4,15 +4,18 @@ How Dakota ISO variants work and how to add new ones.
 
 ## Current variants
 
-| Variant | `payload_ref` | ISO output |
+| Variant | `payload_ref` | Role in unified ISO |
 |---|---|---|
-| `dakota` | `ghcr.io/projectbluefin/dakota:latest` | `dakota-live.iso` |
-| `dakota-nvidia` | `ghcr.io/projectbluefin/dakota-nvidia:latest` | `dakota-nvidia-live.iso` |
+| `dakota` | `ghcr.io/projectbluefin/dakota:latest` | offline install (in `store.squashfs.img`) |
+| `dakota-nvidia` | `ghcr.io/projectbluefin/dakota-nvidia:latest` | live boot environment |
+
+CI produces **one unified ISO** (`dakota-live.iso`). The NVIDIA variant boots live; both
+variants are available for installation via the embedded offline store.
 
 ## How variants work
 
 Each variant is a directory containing a single file — `payload_ref` — with the OCI
-image reference. Everything else (Containerfile, scripts, ISO assembly) is shared.
+image reference.
 
 ```
 dakota/
@@ -21,19 +24,22 @@ dakota-nvidia/
   payload_ref    ← ghcr.io/projectbluefin/dakota-nvidia:latest
 ```
 
-The justfile reads `<target>/payload_ref` and passes it as the `BASE_IMAGE` build-arg:
+The justfile reads `<target>/payload_ref` and uses it for squashfs assembly. The live
+container is built from `live/Containerfile` with `--build-arg TARGET=<target>`:
 
 ```makefile
 container target:
     podman build \
-        --build-arg BASE_IMAGE=$(cat {{target}}/payload_ref | tr -d '[:space:]') \
-        -t {{target}}-installer -f ./dakota/Containerfile ./dakota
+        --build-arg TARGET={{target}} \
+        -t {{target}}-installer -f ./live/Containerfile ./live
 ```
 
 The installer configs inside the ISO (`images.json`, `recipe.json`) are patched at
 build time to reference the correct image via `configure-live.sh`.
 
 ## Adding a new variant
+
+For local testing, create a `<variant>/payload_ref` and run `just iso-sd-boot`:
 
 ```bash
 mkdir my-variant
@@ -43,35 +49,36 @@ just iso-sd-boot my-variant
 
 Output: `output/my-variant-live.iso`
 
-That's it — no Containerfile changes needed unless the new variant requires
-custom installer config or branding.
-
-## Adding a variant to CI
-
-To build a new variant in `build-iso.yml`, add it to the matrix:
+To include the new variant in CI's unified ISO, add it to the `build-offline-store.sh`
+invocation in `build-iso.yml` so the offline store carries the new image:
 
 ```yaml
-matrix:
-  target: [dakota, dakota-nvidia, my-variant]
+- name: Build offline image store squashfs
+  run: |
+    sudo bash scripts/build-offline-store.sh \
+      /var/iso-build/store.squashfs.img \
+      ghcr.io/projectbluefin/dakota-nvidia:latest \
+      ghcr.io/projectbluefin/dakota:latest \
+      ghcr.io/projectbluefin/my-variant:latest   # ← add here
 ```
 
-And add the matching R2 upload lines in the upload step if the variant
-should publish to `projectbluefin.dev`.
+And if the new variant should boot live (not just be installable), update the
+live container build step to use `--build-arg TARGET=my-variant`.
 
 ## Installer branding per variant
 
 The installer branding (`distro_name`, `distro_logo`, tour slides) is defined in
-`dakota/src/etc/bootc-installer/recipe.json`. This is shared across all variants.
+`live/src/etc/bootc-installer/recipe.json`. This is shared across all variants.
 
 If a variant needs different branding:
 1. Create `<variant>/recipe.json` with the custom content
 2. Update `configure-live.sh` to copy `<variant>/recipe.json` if it exists,
-   falling back to `dakota/src/etc/bootc-installer/recipe.json`
+   falling back to `live/src/etc/bootc-installer/recipe.json`
 
 ## `images.json` — catalog lock
 
-`dakota/src/etc/bootc-installer/images.json` locks the installer to show only one
-image choice. Key fields:
+`live/src/etc/bootc-installer/images.json` locks the installer to show only the
+available image choices. Key fields:
 
 ```json
 {
