@@ -1,5 +1,7 @@
+import hashlib
 import sys
 import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, mock_open
 
@@ -311,6 +313,358 @@ class TestLuksUnlock(unittest.TestCase):
             luks_unlock.run_wait_live("/tmp/sock", "/tmp/screenshot.ppm")
         # Should copy the bright frames
         self.assertTrue(mock_copy.called)
+
+
+class TestVirshScreenshotSize(unittest.TestCase):
+    """virsh_screenshot_size(vm, path) → int"""
+
+    @patch("subprocess.run")
+    def test_returns_zero_when_virsh_fails(self, mock_run):
+        """Non-zero virsh returncode → 0 regardless of file state."""
+        mock_run.return_value = MagicMock(returncode=1)
+        result = luks_unlock.virsh_screenshot_size("myvm", "/any/path.png")
+        self.assertEqual(result, 0)
+
+    @patch("os.path.getsize")
+    @patch("subprocess.run")
+    def test_returns_file_size_on_success(self, mock_run, mock_getsize):
+        """virsh exits 0 and file exists → real byte count."""
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_getsize.return_value = 8192
+        result = luks_unlock.virsh_screenshot_size("myvm", "/tmp/snap.png")
+        self.assertEqual(result, 8192)
+
+    @patch("os.path.getsize")
+    @patch("subprocess.run")
+    def test_returns_zero_when_file_absent_after_success(self, mock_run, mock_getsize):
+        """virsh exits 0 but the screendump file was never written → 0."""
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_getsize.side_effect = OSError("file not found")
+        result = luks_unlock.virsh_screenshot_size("myvm", "/tmp/snap.png")
+        self.assertEqual(result, 0)
+
+    @patch("subprocess.run")
+    def test_passes_vm_name_to_virsh(self, mock_run):
+        """The virsh command must include the requested VM name."""
+        mock_run.return_value = MagicMock(returncode=1)
+        luks_unlock.virsh_screenshot_size("target-vm-99", "/tmp/x.png")
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("target-vm-99", cmd)
+
+    @patch("os.path.getsize")
+    @patch("subprocess.run")
+    def test_zero_size_file_returns_zero(self, mock_run, mock_getsize):
+        """virsh exits 0 but the screendump is an empty file → 0."""
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_getsize.return_value = 0
+        result = luks_unlock.virsh_screenshot_size("myvm", "/tmp/snap.png")
+        self.assertEqual(result, 0)
+
+
+def _make_ppm(width: int = 4, height: int = 4, pixel_value: int = 0x80) -> bytes:
+    """Return a minimal valid P6 PPM bytestring with uniform pixel colour."""
+    header = f"P6\n{width} {height}\n255\n".encode()
+    pixels = bytes([pixel_value] * (width * height * 3))
+    return header + pixels
+
+
+class TestQemuScreendump(unittest.TestCase):
+    """qemu_screendump(sock, path) → (brightness, md5)
+
+    socat is mocked so tests run without a live QEMU monitor socket.
+    The PPM file is either pre-written (happy paths) or absent (error paths).
+    """
+
+    def _patch_subprocess_and_sleep(self):
+        """Return a context manager stack that silences socat and time.sleep."""
+        import contextlib
+        return contextlib.ExitStack()
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_returns_minus_one_when_file_absent(self, mock_run, mock_sleep):
+        """socat runs but produces no file → (-1, '')."""
+        mock_run.return_value = MagicMock()
+        brightness, md5 = luks_unlock.qemu_screendump(
+            "/fake.sock", "/nonexistent/no_screen.ppm"
+        )
+        self.assertEqual(brightness, -1)
+        self.assertEqual(md5, "")
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_valid_ppm_returns_positive_brightness(self, mock_run, mock_sleep):
+        """A well-formed PPM with mid-grey pixels → brightness ≈ 128."""
+        ppm = _make_ppm(4, 4, 0x80)
+        with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as f:
+            f.write(ppm)
+            path = f.name
+        try:
+            mock_run.return_value = MagicMock()
+            brightness, md5 = luks_unlock.qemu_screendump("/fake.sock", path)
+            self.assertGreater(brightness, 0)
+            self.assertEqual(len(md5), 32)
+        finally:
+            os.unlink(path)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_all_black_ppm_returns_zero_brightness(self, mock_run, mock_sleep):
+        """All-zero pixels → brightness 0.0 (Plymouth passphrase-screen heuristic)."""
+        ppm = _make_ppm(4, 4, 0x00)
+        with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as f:
+            f.write(ppm)
+            path = f.name
+        try:
+            mock_run.return_value = MagicMock()
+            brightness, _ = luks_unlock.qemu_screendump("/fake.sock", path)
+            self.assertEqual(brightness, 0.0)
+        finally:
+            os.unlink(path)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_all_white_ppm_returns_max_brightness(self, mock_run, mock_sleep):
+        """All-white pixels → brightness 255.0 (GDM / active desktop)."""
+        ppm = _make_ppm(4, 4, 0xFF)
+        with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as f:
+            f.write(ppm)
+            path = f.name
+        try:
+            mock_run.return_value = MagicMock()
+            brightness, _ = luks_unlock.qemu_screendump("/fake.sock", path)
+            self.assertEqual(brightness, 255.0)
+        finally:
+            os.unlink(path)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_corrupt_ppm_missing_header_sentinel(self, mock_run, mock_sleep):
+        """File exists but lacks the '255\\n' sentinel → (-1, '')."""
+        with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as f:
+            f.write(b"not a ppm file at all")
+            path = f.name
+        try:
+            mock_run.return_value = MagicMock()
+            brightness, md5 = luks_unlock.qemu_screendump("/fake.sock", path)
+            self.assertEqual(brightness, -1)
+            self.assertEqual(md5, "")
+        finally:
+            os.unlink(path)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_empty_pixel_data_after_header(self, mock_run, mock_sleep):
+        """Header present but zero pixels → (-1, '')."""
+        with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as f:
+            f.write(b"P6\n0 0\n255\n")  # valid header, empty pixel section
+            path = f.name
+        try:
+            mock_run.return_value = MagicMock()
+            brightness, md5 = luks_unlock.qemu_screendump("/fake.sock", path)
+            self.assertEqual(brightness, -1)
+            self.assertEqual(md5, "")
+        finally:
+            os.unlink(path)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_md5_matches_file_content(self, mock_run, mock_sleep):
+        """Returned MD5 must match hashlib.md5 of the raw file bytes."""
+        ppm = _make_ppm(8, 8, 0x42)
+        with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as f:
+            f.write(ppm)
+            path = f.name
+        try:
+            mock_run.return_value = MagicMock()
+            _, md5 = luks_unlock.qemu_screendump("/fake.sock", path)
+            self.assertEqual(md5, hashlib.md5(ppm).hexdigest())
+        finally:
+            os.unlink(path)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_two_identical_screendumps_return_same_md5(self, mock_run, mock_sleep):
+        """Stability detection requires identical MD5s across polls.
+        Two calls with the same file must return the same hash."""
+        ppm = _make_ppm(4, 4, 0xAA)
+        with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as f:
+            f.write(ppm)
+            path = f.name
+        try:
+            mock_run.return_value = MagicMock()
+            _, md5_first = luks_unlock.qemu_screendump("/fake.sock", path)
+            _, md5_second = luks_unlock.qemu_screendump("/fake.sock", path)
+            self.assertEqual(md5_first, md5_second)
+        finally:
+            os.unlink(path)
+
+    @patch("time.sleep")
+    @patch("subprocess.run")
+    def test_different_content_returns_different_md5(self, mock_run, mock_sleep):
+        """Changed screen content (different pixel values) must yield different hash.
+        This is the invariant the Plymouth-stability loop depends on."""
+        ppm_a = _make_ppm(4, 4, 0x10)
+        ppm_b = _make_ppm(4, 4, 0x20)
+        with (
+            tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as fa,
+            tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as fb,
+        ):
+            fa.write(ppm_a)
+            fb.write(ppm_b)
+            path_a, path_b = fa.name, fb.name
+        try:
+            mock_run.return_value = MagicMock()
+            _, md5_a = luks_unlock.qemu_screendump("/fake.sock", path_a)
+            _, md5_b = luks_unlock.qemu_screendump("/fake.sock", path_b)
+            self.assertNotEqual(md5_a, md5_b)
+        finally:
+            os.unlink(path_a)
+            os.unlink(path_b)
+
+
+class TestQemuCheckSerialEdgeCases(unittest.TestCase):
+    """Additional edge cases for qemu_check_serial not covered in TestLuksUnlock."""
+
+    def _write(self, content: str) -> str:
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False)
+        f.write(content)
+        f.close()
+        return f.name
+
+    def tearDown(self):
+        # Temp files created by _write are cleaned up lazily; OS handles the rest.
+        pass
+
+    def test_empty_file_returns_empty(self):
+        path = self._write("")
+        try:
+            self.assertEqual(luks_unlock.qemu_check_serial(path), "")
+        finally:
+            os.unlink(path)
+
+    def test_emergency_takes_priority_over_plymouth(self):
+        """If both markers are present, 'emergency' must win (checked first in code)."""
+        path = self._write(
+            "Please enter passphrase for disk sda3_crypt:\n"
+            "You are in emergency mode!\n"
+        )
+        try:
+            self.assertEqual(luks_unlock.qemu_check_serial(path), "emergency")
+        finally:
+            os.unlink(path)
+
+    def test_emergency_shell_variant(self):
+        path = self._write("You are in emergency shell.")
+        try:
+            self.assertEqual(luks_unlock.qemu_check_serial(path), "emergency")
+        finally:
+            os.unlink(path)
+
+    def test_ansi_stripped_for_gnome_initial_setup(self):
+        ansi_line = (
+            "\x1b[32m  OK  \x1b[0m] Started "
+            "\x1b[1mgnome-initial-setup\x1b[0m.service\n"
+        )
+        path = self._write(ansi_line)
+        try:
+            self.assertEqual(luks_unlock.qemu_check_serial(path), "gnome-initial-setup")
+        finally:
+            os.unlink(path)
+
+    def test_unrelated_content_returns_empty(self):
+        path = self._write("[ OK ] Started NetworkManager.service\n")
+        try:
+            self.assertEqual(luks_unlock.qemu_check_serial(path), "")
+        finally:
+            os.unlink(path)
+
+
+class TestVirshSendPassphraseEdgeCases(unittest.TestCase):
+    """Additional coverage: all-lowercase letters and all-digits have no warnings."""
+
+    def _collect_warnings(self, passphrase: str) -> str:
+        import io
+        buf = io.StringIO()
+        with (
+            patch("subprocess.run", return_value=MagicMock()),
+            patch("time.sleep"),
+            patch("sys.stderr", buf),
+        ):
+            luks_unlock.virsh_send_passphrase("vm", passphrase)
+        return buf.getvalue()
+
+    def test_all_lowercase_ascii_no_warnings(self):
+        import string
+        warnings = self._collect_warnings(string.ascii_lowercase)
+        self.assertNotIn("WARNING", warnings)
+
+    def test_all_digits_no_warnings(self):
+        warnings = self._collect_warnings("0123456789")
+        self.assertNotIn("WARNING", warnings)
+
+    def test_uppercase_triggers_warning(self):
+        """Uppercase letters are not in the virsh key map → each emits a warning."""
+        import io
+        buf = io.StringIO()
+        with (
+            patch("subprocess.run", return_value=MagicMock()),
+            patch("time.sleep"),
+            patch("sys.stderr", buf),
+        ):
+            luks_unlock.virsh_send_passphrase("vm", "A")
+        self.assertIn("WARNING", buf.getvalue())
+
+    def test_special_chars_trigger_warning(self):
+        import io
+        buf = io.StringIO()
+        with (
+            patch("subprocess.run", return_value=MagicMock()),
+            patch("time.sleep"),
+            patch("sys.stderr", buf),
+        ):
+            luks_unlock.virsh_send_passphrase("vm", "!@#")
+        self.assertIn("WARNING", buf.getvalue())
+
+
+class TestQemuSendPassphraseEdgeCases(unittest.TestCase):
+    """Additional coverage for qemu_send_passphrase."""
+
+    def test_uppercase_triggers_warning(self):
+        import io
+        buf = io.StringIO()
+        with (
+            patch("subprocess.run", return_value=MagicMock()),
+            patch("time.sleep"),
+            patch("sys.stderr", buf),
+        ):
+            luks_unlock.qemu_send_passphrase("/sock", "Z")
+        self.assertIn("WARNING", buf.getvalue())
+
+    def test_underscore_and_minus_differ(self):
+        """_ → shift-minus and - → minus must be distinct QEMU key names."""
+        sent_minus = []
+        sent_under = []
+
+        def capture_minus(cmd, **kw):
+            inp = kw.get("input", b"")
+            if inp.startswith(b"sendkey "):
+                sent_minus.append(inp[len(b"sendkey "):].strip().decode())
+            return MagicMock()
+
+        def capture_under(cmd, **kw):
+            inp = kw.get("input", b"")
+            if inp.startswith(b"sendkey "):
+                sent_under.append(inp[len(b"sendkey "):].strip().decode())
+            return MagicMock()
+
+        with patch("subprocess.run", side_effect=capture_minus), patch("time.sleep"):
+            luks_unlock.qemu_send_passphrase("/s", "-")
+        with patch("subprocess.run", side_effect=capture_under), patch("time.sleep"):
+            luks_unlock.qemu_send_passphrase("/s", "_")
+
+        # First key (before "ret") must differ
+        self.assertNotEqual(sent_minus[0], sent_under[0])
 
 
 if __name__ == "__main__":
