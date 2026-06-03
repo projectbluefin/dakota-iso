@@ -904,8 +904,12 @@ luks-boot-qemu-live target:
             QEMU_PREFIX=""
         fi
     fi
+    CPU_FLAG="-cpu host"
+    if [[ "$QEMU_ACCEL" =~ tcg ]]; then
+        CPU_FLAG="-cpu qemu64"
+    fi
     $QEMU_PREFIX "$QEMU" \
-        -machine q35 -cpu host -m 8192 -smp 4 $QEMU_ACCEL \
+        -machine q35 $CPU_FLAG -m 8192 -smp 4 $QEMU_ACCEL \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=iso,file=${ISO},media=cdrom,readonly=on,format=raw" \
@@ -1023,8 +1027,12 @@ luks-boot-qemu-installed target:
             QEMU_PREFIX=""
         fi
     fi
+    CPU_FLAG="-cpu host"
+    if [[ "$QEMU_ACCEL" =~ tcg ]]; then
+        CPU_FLAG="-cpu qemu64"
+    fi
     $QEMU_PREFIX "$QEMU" \
-        -machine q35 -cpu host -m 8192 -smp 4 $QEMU_ACCEL \
+        -machine q35 $CPU_FLAG -m 8192 -smp 4 $QEMU_ACCEL \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
