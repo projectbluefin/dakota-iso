@@ -1,7 +1,7 @@
 # Multi-Arch ISO (x86_64 + aarch64)
 
 Design document for building a single ISO that boots on both x86_64 and aarch64
-hardware. Tracks issue #36.
+hardware. Implements issue #36 (closed).
 
 ## Current state
 
@@ -101,9 +101,10 @@ Simplest, no dracut changes, already supported upstream.
 
 ## Implementation plan
 
-### Phase 1: `build-iso.sh` multi-arch support (this PR)
+### Phase 1: `build-iso.sh` multi-arch support ✅ Complete
 
-Extend `build-iso.sh` to accept multiple boot-files tars and squashfs images:
+`build-iso.sh` (both `live/src/` and `dakota/src/`) accepts multiple boot-files tars
+and squashfs images via `--arch` flags:
 
 ```bash
 # Current (single-arch):
@@ -124,6 +125,9 @@ When multiple `--arch` flags are provided:
 - Per-arch BLS entries with `rd.live.squashimg=squashfs-<arch>.img`
 - Per-arch squashfs images under `LiveOS/`
 - ESP image sized to fit all architectures
+
+ShellCheck and pytest CI gates pass. See `tests/test_multi_arch_iso.py` for arg-parsing
+and integration tests.
 
 ### Phase 2: Justfile recipes
 
@@ -157,10 +161,12 @@ aarch64 QEMU.
 
 | Blocker | Status | Notes |
 |---|---|---|
-| `rd.live.squashimg` support in dmsquash-live | Supported upstream | Verified in dracut source |
-| aarch64 Dakota images published to GHCR | Blocked | `tuna-os/dakota-x13s` builds exist but may not be on GHCR |
-| Fat ESP with both EFI binaries | Ready | Standard UEFI pattern, no firmware changes needed |
-| CI aarch64 QEMU boot | Ready | TCG emulation works on ubuntu-24.04 runners |
+| `rd.live.squashimg` support in dmsquash-live | ✅ Supported | Verified in dracut source |
+| `build-iso.sh` multi-arch `--arch` flag | ✅ Implemented | Phase 1 complete |
+| aarch64 Dakota images published to GHCR | ⏳ Blocked | `tuna-os/dakota-x13s` builds exist but may not be on GHCR |
+| Fat ESP with both EFI binaries | ✅ Ready | Standard UEFI pattern, no firmware changes needed |
+| Justfile `multi-arch-iso` recipe | ⏳ Not started | Phase 2 |
+| CI aarch64 QEMU boot test | ⏳ Not started | Phase 3; TCG emulation works on ubuntu-24.04 runners |
 
 ## Size estimates
 
