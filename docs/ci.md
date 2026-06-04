@@ -121,12 +121,12 @@ add an inline `# shellcheck disable=SCxxxx` comment with a justification.
 
 ## test.yml — Python Unit Tests
 
-Runs `pytest tests/ -v` against Python 3.11. Tests live in `tests/test_luks_unlock.py`
-and cover `live/src/luks-unlock.py` (also mirrored at `dakota/src/luks-unlock.py`):
-- virsh screenshot size (5 tests)
-- QEMU screendump PPM parsing (9 tests)
-- Serial log parsing edge cases (5 tests)
-- Passphrase injection key-name logic (6 tests)
+Runs `pytest tests/ -v` against Python 3.11.
+
+| File | Tests | Coverage |
+|---|---|---|
+| `tests/test_luks_unlock.py` | 52 | `luks-unlock.py` virsh/QEMU interaction, screenshot parsing, passphrase injection |
+| `tests/test_multi_arch_iso.py` | 4 | `build-iso.sh` `--arch` arg parsing; integration tests (skipped if xorriso/mtools absent) |
 
 Run locally with:
 ```bash

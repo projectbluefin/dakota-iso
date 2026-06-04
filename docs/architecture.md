@@ -45,6 +45,11 @@ Runs on the host (not inside a container). Assembles the final ISO from the expo
 of a build container and allow the justfile to control output paths directly.
 xorriso available via brew at `/home/linuxbrew/.linuxbrew/bin/xorriso`.
 
+**Multi-arch support:** Pass `--arch <arch>:<boot-tar>:<squashfs>` (repeatable) to produce
+a single fat-ESP ISO with per-arch kernels, initramfs images, squashfs rootfs images, and both
+`BOOTX64.EFI` + `BOOTAA64.EFI`. Single-arch positional-arg invocation is unchanged.
+See `docs/multi-arch.md` for design rationale and size estimates.
+
 ## ISO layout
 
 ```
@@ -149,14 +154,18 @@ on rebuilds. The cache is keyed by debug/production mode — switching busts the
 
 ## Tests
 
-Unit tests for `luks-unlock.py` live in `tests/test_luks_unlock.py` (52 tests total).
-Run with `pytest tests/ -v`. The `test.yml` CI workflow gates every PR on these tests.
+Unit tests live in `tests/` and run via `pytest tests/ -v` (gated on every PR by `test.yml`).
 
-Coverage:
-- `virsh_screenshot_size` — virsh failure, absent file, zero-size file
-- `qemu_screendump` — PPM parsing, brightness calculation, MD5 stability
-- `qemu_check_serial` — ANSI stripping, emergency vs Plymouth priority
-- `virsh_send_passphrase` / `qemu_send_passphrase` — key-name mapping, warnings
+| File | Tests | Coverage |
+|---|---|---|
+| `tests/test_luks_unlock.py` | 52 | `luks-unlock.py`: virsh/QEMU screenshot, serial parsing, passphrase injection |
+| `tests/test_multi_arch_iso.py` | 4 | `build-iso.sh`: `--arch` flag arg parsing; single-arch + multi-arch ISO integration (skipped if tools absent) |
+
+Run locally:
+```bash
+pip install pytest
+pytest tests/ -v
+```
 
 ---
 
