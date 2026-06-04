@@ -131,3 +131,12 @@ or corrupt ISO that fails to boot. Always use `/var` or an explicit `output_dir`
 in the image config. Dakota/bootc images have no Entrypoint by design; a fake one causes
 `bootc install` to fail with "cannot execute binary file". Always use
 `buildah commit --squash` to squash layers cleanly without touching config.
+
+### live/src/install-flatpaks.sh must mirror dakota/src/install-flatpaks.sh (2026-06)
+
+`live/src/install-flatpaks.sh` is a parallel copy of `dakota/src/install-flatpaks.sh`
+for the live-squashfs build path. When the installer source logic changes in one, it
+must be replicated in the other. After PR fc0346d added primary/fallback logic to the
+`dakota` copy, the `live` copy was left behind still pointing only at `tuna-os/tuna-installer`.
+Both files now use `projectbluefin/bootc-installer` as primary (with `--fail` so curl
+exits non-zero on HTTP errors) and fall back to `tuna-os/tuna-installer` automatically.
