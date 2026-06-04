@@ -192,7 +192,6 @@ EOF
         cp "${INITRD}"  "${ISO_ROOT}/images/pxeboot/${arch}/initrd.img"
 
         # Accumulate ESP size
-        local initrd_mb vmlinuz_mb
         initrd_mb=$(du -m "${INITRD}" | cut -f1)
         vmlinuz_mb=$(du -m "${VMLINUZ}" | cut -f1)
         ESP_TOTAL_MB=$(( ESP_TOTAL_MB + initrd_mb + vmlinuz_mb + 1 ))
