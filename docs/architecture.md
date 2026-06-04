@@ -143,9 +143,20 @@ After=display-manager.service   # ordering only
 
 ## Bundled Flatpaks
 
-Pre-installed into the live squashfs at build time. List in `dakota/src/flatpaks`.
+Pre-installed into the live squashfs at build time. List in `live/src/flatpaks`.
 The `install-flatpaks.sh` script uses `--mount=type=cache` to avoid re-downloading
 on rebuilds. The cache is keyed by debug/production mode — switching busts the cache.
+
+## Tests
+
+Unit tests for `luks-unlock.py` live in `tests/test_luks_unlock.py` (52 tests total).
+Run with `pytest tests/ -v`. The `test.yml` CI workflow gates every PR on these tests.
+
+Coverage:
+- `virsh_screenshot_size` — virsh failure, absent file, zero-size file
+- `qemu_screendump` — PPM parsing, brightness calculation, MD5 stability
+- `qemu_check_serial` — ANSI stripping, emergency vs Plymouth priority
+- `virsh_send_passphrase` / `qemu_send_passphrase` — key-name mapping, warnings
 
 ---
 

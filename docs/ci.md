@@ -8,6 +8,8 @@ How the GitHub Actions workflows build, test, and publish Dakota ISOs.
 |---|---|---|
 | Build & Publish | `build-iso.yml` | push to main, daily 03:00 UTC, `workflow_dispatch` |
 | LUKS E2E Test | `test-luks-install.yml` | PRs to main, weekly Mon 04:00 UTC, `workflow_dispatch` |
+| ShellCheck Lint | `lint.yml` | PRs to main, push to main |
+| Python Unit Tests | `test.yml` | PRs to main, push to main |
 
 ## build-iso.yml
 
@@ -108,6 +110,29 @@ All workflow files go in `.github/workflows/`. Before adding:
 - Run `actionlint` (config in `.github/actionlint.yaml`)
 - Check matrix `fail-fast: false` for variant builds
 - Do not use `installer_channel=dev` in scheduled/release builds
+
+## lint.yml — ShellCheck
+
+Runs ShellCheck on every `.sh` file in the repository. Severity threshold is `warning`
+(style/info is ignored). Uses `ludeeus/action-shellcheck@2.0.0`.
+
+Any new shell script must pass ShellCheck before merge. For intentional suppression,
+add an inline `# shellcheck disable=SCxxxx` comment with a justification.
+
+## test.yml — Python Unit Tests
+
+Runs `pytest tests/ -v` against Python 3.11. Tests live in `tests/test_luks_unlock.py`
+and cover `live/src/luks-unlock.py` (also mirrored at `dakota/src/luks-unlock.py`):
+- virsh screenshot size (5 tests)
+- QEMU screendump PPM parsing (9 tests)
+- Serial log parsing edge cases (5 tests)
+- Passphrase injection key-name logic (6 tests)
+
+Run locally with:
+```bash
+pip install pytest
+pytest tests/ -v
+```
 
 ---
 

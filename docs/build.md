@@ -90,7 +90,22 @@ the image to one layer before VFS import. The squash uses `buildah from --pull-n
 + `buildah commit --squash` — NOT `podman create --entrypoint ... && podman commit`
 (the latter corrupts the Entrypoint config, breaking `bootc install`).
 
-## Boot testing locally
+## Source layout: `live/src/` vs `dakota/src/`
+
+Two parallel source trees exist:
+
+| Path | Used by | Notes |
+|---|---|---|
+| `live/src/` | CI (`build-iso.yml`), `live/Containerfile` | Canonical for CI; `build-iso.sh` here supports `--store` for offline OCI store |
+| `dakota/src/` | Local justfile (`iso-sd-boot`, `luks-*` recipes) | `build-iso.sh` here is the simpler local variant without `--store` |
+
+The live container (`live/Containerfile`) is used for **both** local and CI builds.
+`live/src/flatpaks` is the definitive list of bundled Flatpaks.
+
+`dakota/src/flatpaks` is a legacy copy — it may diverge. Use `live/src/flatpaks` as the
+source of truth when adding or removing apps.
+
+
 
 ```bash
 # Quick headless QEMU test — watch for DAKOTA_LIVE_READY on serial (Ctrl-A X to quit)
@@ -119,7 +134,12 @@ just debug=1 boot-libvirt-debug dakota
 
 ## Lessons
 
-### Never build on /tmp — it fills silently and corrupts output (2026-05)
+### `dakota/src/flatpaks` diverged from `live/src/flatpaks` (2026-06)
+
+`dakota/src/flatpaks` contains `be.alexandervanhee.gradia` but `live/src/flatpaks` does not.
+Since `live/Containerfile` uses `live/src/flatpaks`, CI builds omit Gradia. Keep `live/src/flatpaks`
+as the source of truth and sync `dakota/src/flatpaks` to match it.
+
 
 `/tmp` is a 16 GB tmpfs on this host. A Dakota build needs ~22 GB peak. The build
 does not fail immediately — it runs out of space mid-squash and produces a truncated
