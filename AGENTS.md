@@ -63,6 +63,15 @@ gh issue list --repo projectbluefin/dakota-iso --label "queue/agent-ready" --ass
 Read the relevant skill file in `docs/` **before making any changes**.
 Do not assume you know the build system, disk space requirements, or CI constraints.
 
+**Specific triggers — stop and read before acting:**
+
+| Situation | Read first |
+|---|---|
+| Any QEMU boot issue (installed disk won't boot, UEFI shell loop) | [`docs/luks-testing.md`](docs/luks-testing.md) |
+| ISO is unexpectedly large (>6 GB) | [`docs/ci.md`](docs/ci.md) — check for double-embedded store |
+| CI pipeline changes | [`docs/ci.md`](docs/ci.md) |
+| R2 promotion / named releases | [`docs/r2-promotion.md`](docs/r2-promotion.md) |
+
 ### 2. Verification Gate
 
 Before submitting a PR:
@@ -136,12 +145,31 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 just --list        # verify justfile is parseable (no just check target yet)
 ```
 
+### Agent environment constraints
+
+- **`sudo` is not available** in automated agent bash sessions (no TTY). Never call
+  `sudo dd`, `sudo modprobe`, `sudo nbd-client`, etc. If an operation requires root,
+  provide the exact command for the user to run in their terminal instead.
+- **Block device writes** (USB burning, disk inspection via nbd) always require root.
+  Use `udisksctl` for unmounting; provide `dd` / `qemu-nbd` commands for the user to run.
+
+### ISO size invariant
+
+The unified dakota ISO must be **~5.3 GB** with `SUPERISO_COMPRESSION=release`.
+
+- If an ISO is **~8 GB**: the offline OCI store squashfs is being double-embedded.
+  The live container already has the OCI baked in as VFS containers-storage.
+  Do **not** build a separate `store.squashfs.img` or pass `--store` to `build-iso.sh`.
+  See [`docs/ci.md`](docs/ci.md) lessons.
+- If an ISO is **~6–7 GB**: compression is set to `fast` (zstd-3). Use `release` for R2.
+
 ### Sensitive paths (require maintainer review)
 
 - `.github/workflows/` — CI pipeline changes
 - `justfile` — canonical build interface
-- `dakota/src/build-iso.sh` — ISO assembly logic
-- `dakota/src/configure-live.sh` — live environment setup
+- `live/src/build-iso.sh` — ISO assembly logic (canonical; `dakota/src/build-iso.sh` is the local-only copy)
+- `live/src/configure-live.sh` — live environment setup
+- `live/src/install-flatpaks.sh` — Flatpak baking into squashfs
 
 ---
 
@@ -196,6 +224,8 @@ Stop and request human input at these four gates. Never guess past them.
 | **Design** | Architecture change, new subsystem, user-visible behavior change |
 | **Security** | Signing, supply chain, secrets, COPR/third-party sources |
 | **Breakage** | Cross-repo breaking change — removing/renaming inputs, changing defaults |
+| **R2 promotion** | Promoting any ISO to a named release (e.g. `alpha3`) — requires explicit user "go ahead" after local boot verification |
+| **CI trigger on release branch** | Triggering a CI build that will upload to R2 — confirm with user first |
 | **Merge** | PR ready for final review — always requires human `lgtm` |
 
 See [`docs/skills/human-gates.md`](docs/skills/human-gates.md) for full evidence requirements.
@@ -206,6 +236,7 @@ Do not request PR review without evidence:
 
 - [ ] CI is passing (link the run in the PR description)
 - [ ] ISO built and booted (or container-only change — state this explicitly)
+- [ ] ISO size is ~5.3 GB (release compression, no double-embedded store)
 - [ ] Skill file update committed in **this same PR** (not a follow-up)
 - [ ] PR title follows Conventional Commits format
 - [ ] Both AI attribution trailers present on every AI-authored commit
