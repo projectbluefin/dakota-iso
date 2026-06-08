@@ -35,26 +35,32 @@ flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo
 
 # bootc-installer bundle
-# INSTALLER_CHANNEL controls which release tag to pull from:
-#   stable (default) → latest-stable (latest stable build from prod branch)
-#   dev              → latest-dev (latest dev build, tracks dev branch)
+# INSTALLER_CHANNEL controls which release to pull from:
+#   stable (default) → GitHub "latest" release (non-pre-release)
+#   dev              → latest-dev rolling pre-release (tracks dev branch)
 # Primary source: projectbluefin/bootc-installer (Project Bluefin's fork).
 # Fallback: tuna-os/tuna-installer (upstream) if projectbluefin assets are unavailable.
-# v2.5.0 includes fisherman v0.2.0 with fix for #38 (OCI cache mount on composefs/btrfs).
+# v2.6.1 adds nvidia_imgref GPU auto-detection support.
 INSTALLER_REPO="projectbluefin/bootc-installer"
 FALLBACK_REPO="tuna-os/tuna-installer"
-RELEASE_TAG="latest-stable"
 FLATPAK_FILENAME="org.bootcinstaller.Installer.flatpak"
 if [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]]; then
     RELEASE_TAG="latest-dev"
     FLATPAK_FILENAME="org.bootcinstaller.Installer.Devel.flatpak"
+    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/download/${RELEASE_TAG}/${FLATPAK_FILENAME}"
+    FALLBACK_URL="https://github.com/${FALLBACK_REPO}/releases/download/${RELEASE_TAG}/${FLATPAK_FILENAME}"
+else
+    # Use GitHub's /releases/latest/download/ redirect — always resolves to the
+    # current latest stable release without needing to know the version tag.
+    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
+    FALLBACK_URL="https://github.com/${FALLBACK_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
 fi
 if ! curl --retry 3 --fail --location \
-    "https://github.com/${INSTALLER_REPO}/releases/download/${RELEASE_TAG}/${FLATPAK_FILENAME}" \
+    "${PRIMARY_URL}" \
     -o /tmp/tuna-installer.flatpak 2>/dev/null; then
     echo "Primary source unavailable, falling back to ${FALLBACK_REPO}..."
     curl --retry 3 --fail --location \
-        "https://github.com/${FALLBACK_REPO}/releases/download/${RELEASE_TAG}/${FLATPAK_FILENAME}" \
+        "${FALLBACK_URL}" \
         -o /tmp/tuna-installer.flatpak
 fi
 INSTALLER_APP_ID="org.bootcinstaller.Installer"
