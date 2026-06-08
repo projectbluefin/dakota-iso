@@ -79,8 +79,26 @@ rm -f /tmp/tuna-installer.flatpak
 flatpak remote-add --system --no-gpg-verify installer-local "file://${INSTALLER_LOCAL_REPO}"
 flatpak install --system --noninteractive installer-local "${INSTALLER_APP_ID}" || \
     flatpak update --system --noninteractive "${INSTALLER_APP_ID}"
-flatpak remote-delete --system installer-local || true
+flatpak remote-delete --system --force installer-local || true
 rm -rf "${INSTALLER_LOCAL_REPO}"
+
+# flatpak install inside a container build (no flatpak-system-helper daemon)
+# creates the deployment directory but omits the 'active' symlink inside the
+# branch directory, leaving the app unreachable to 'flatpak run'/'flatpak list'.
+# Reproduce the symlink that a normal installation would create.
+_app_arch_dir="/var/lib/flatpak/app/${INSTALLER_APP_ID}/x86_64"
+for _branch_dir in "${_app_arch_dir}"/*/; do
+    _branch_dir="${_branch_dir%/}"
+    [[ -d "${_branch_dir}" ]] || continue
+    if [[ ! -L "${_branch_dir}/active" ]]; then
+        # Find the single deployment hash directory
+        _hash=$(find "${_branch_dir}" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' | head -1)
+        if [[ -n "${_hash}" ]]; then
+            ln -sfn "${_hash}" "${_branch_dir}/active"
+            echo "Created active symlink: ${_branch_dir}/active → ${_hash}"
+        fi
+    fi
+done
 
 flatpak override --system --filesystem=/etc:ro "${INSTALLER_APP_ID}"
 
