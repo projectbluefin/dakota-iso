@@ -89,12 +89,18 @@ _payload_ref_flag target:
     @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
 
 container target:
-    @test -f "{{target}}/payload_ref" || { echo "ERROR: {{target}}/payload_ref not found — create it with the base image reference, e.g.: echo 'ghcr.io/projectbluefin/dakota:latest' > {{target}}/payload_ref"; exit 1; }
+    #!/usr/bin/bash
+    test -f "{{target}}/payload_ref" || { echo "ERROR: {{target}}/payload_ref not found — create it with the base image reference, e.g.: echo 'ghcr.io/projectbluefin/dakota:latest' > {{target}}/payload_ref"; exit 1; }
+    # live_target overrides the Containerfile TARGET build-arg when the live
+    # environment image differs from the variant directory name.
+    # e.g. the 'dakota' variant builds its live env from 'dakota-nvidia' so all
+    # hardware can boot live, while payload_ref controls the offline store.
+    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
     podman build --cap-add sys_admin --security-opt label=disable \
         --layers \
         --build-arg DEBUG={{debug}} \
         --build-arg INSTALLER_CHANNEL={{installer_channel}} \
-        --build-arg TARGET={{target}} \
+        --build-arg TARGET="${LIVE_TARGET}" \
         -t {{target}}-installer -f ./live/Containerfile ./live
 
 # Build a systemd-boot UEFI live ISO for the given target.
