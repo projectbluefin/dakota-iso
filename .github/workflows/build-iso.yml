@@ -81,17 +81,19 @@ jobs:
 
       - name: Verify offline OCI store is embedded
         run: |
-          sudo apt-get install -y squashfs-tools -qq
-          # Verify /var/lib/containers/storage is non-empty and contains the expected
-          # image.  An empty store means the offline install will fail (issue #78).
+          # Verify /var/lib/containers/storage contains VFS layer data.
+          # VFS storage uses content-addressed hash paths — image names like
+          # "ghcr.io/..." never appear in file paths.  Check for vfs-images/
+          # which containers/storage creates for every imported image.
           COUNT=$(sudo unsquashfs -lc /var/iso-build/dakota-nvidia.rootfs.sfs \
-            var/lib/containers/storage 2>/dev/null | grep -c "ghcr.io" || true)
+            var/lib/containers/storage/vfs-images 2>/dev/null | \
+            grep -c "squashfs-root" || true)
           if [[ "${COUNT}" -eq 0 ]]; then
-            echo "ERROR: VFS containers-storage is empty — OCI embedding failed" >&2
+            echo "ERROR: VFS containers-storage missing vfs-images — OCI embedding failed" >&2
             echo "The ISO would ship without an offline install store (see issue #78)" >&2
             exit 1
           fi
-          echo ">>> OCI store assertion passed (${COUNT} ghcr.io refs found)"
+          echo ">>> OCI store assertion passed (vfs-images has ${COUNT} entries)"
 
       - name: Disk space before ISO assembly
         run: df -h /

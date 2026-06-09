@@ -221,3 +221,22 @@ overlayfs `st_dev` and are included by mksquashfs.
 
 **Rule:** Never use `mount --bind` to inject data into a directory that will be squash-packed with
 mksquashfs when the mount point is overlayfs.  Always copy.
+
+### VFS storage paths don't contain image names — assertion must check vfs-images/ (2026-06)
+
+**Symptom:** Assertion `grep -c "ghcr.io"` on `unsquashfs -lc` output returns 0 even when the
+OCI store is correctly embedded.
+
+**Root cause:** VFS containers-storage uses content-addressed hashes for all paths.  Image
+names like `ghcr.io/projectbluefin/...` are stored in JSON metadata inside the hash-named
+directories, not in the directory paths themselves.  `unsquashfs -lc` shows file paths only,
+so grepping for `ghcr.io` always returns 0.
+
+**Correct assertion:** Check for `var/lib/containers/storage/vfs-images` — this directory is
+created by containers/storage for every imported image.  If it has entries, the VFS store
+was populated.
+
+**Note on mksquashfs deduplication:** The VFS layer is a squashed copy of the same OS as the
+live rootfs.  mksquashfs deduplicates identical content blocks, so the squashfs size barely
+increases despite embedding 9G of VFS data.  Use inode/file counts to confirm inclusion,
+not squashfs file size.
