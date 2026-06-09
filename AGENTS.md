@@ -4,8 +4,9 @@
 > contribute safely and work in this repository. Human contributors follow the same steps.
 > See the [org-wide agentic model](https://github.com/projectbluefin/common/blob/main/docs/factory/agentic-model.md) for cross-repo rules.
 
-**dakota-iso** builds bootable UEFI live ISOs from [Dakota](https://github.com/projectbluefin/dakota)
-images (GNOME OS / bootc / composefs). Two variants: `dakota` and `dakota-nvidia`.
+**dakota-iso** builds a single bootable UEFI live ISO from [Dakota](https://github.com/projectbluefin/dakota)
+images (GNOME OS / bootc / composefs). The live environment runs the NVIDIA variant; the offline
+embedded OCI store lets the installer deploy to non-NVIDIA hardware without a network pull.
 
 Home repo: [projectbluefin/dakota-iso](https://github.com/projectbluefin/dakota-iso)
 
