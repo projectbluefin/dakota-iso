@@ -16,13 +16,16 @@ ISOs are permanent — no expiry. Full history from 2026-04-10.
 
 ## rclone config (`~/.config/rclone/rclone.conf`)
 
+> Credentials are not stored in this repo. Request them from a project maintainer
+> or retrieve them from the shared password manager.
+
 ```ini
 [R2]
 type = s3
 provider = Cloudflare
 region = auto
-access_key_id = abfd2b00ed95ee9b17b7c35a68b0f959
-secret_access_key = 8ab5b927c2bd2508cf3518fafaa458ba3176754f317291087dc3ab920d86490a
+access_key_id = <your-r2-access-key-id>
+secret_access_key = <your-r2-secret-access-key>
 endpoint = https://2a4147f637f7d9e6a67ca185357d3b0a.r2.cloudflarestorage.com
 acl = private
 no_check_bucket = true
