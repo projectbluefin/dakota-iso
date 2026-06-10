@@ -6,12 +6,11 @@ How to build Dakota live ISOs locally and the key variables that control the bui
 
 ```bash
 just iso-sd-boot dakota               # full build, stable installer
-just iso-sd-boot dakota-nvidia        # NVIDIA variant
 just debug=1 installer_channel=dev iso-sd-boot dakota  # debug + dev installer
 just build-bg dakota                  # background build (survives terminal close)
 ```
 
-Output: `output/<target>-live.iso` (~4.5 GB, ~20–40 min depending on network)
+Output: `output/dakota-live.iso` (~4.3 GB, ~20–40 min depending on network)
 
 ## Key variables
 

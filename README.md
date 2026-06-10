@@ -8,24 +8,28 @@
 
 Builds a bootable UEFI live ISO from [Dakota](https://github.com/projectbluefin/dakota) images — GNOME OS-based workstations using composefs and systemd-boot. The live environment boots straight to GDM with a full GNOME session and launches the Dakota installer automatically.
 
-The ISO is unified: it boots the **NVIDIA** variant live (for systems with NVIDIA GPUs) and ships the standard Dakota image in an offline store so it can be installed on non-NVIDIA hardware without a network pull.
+The ISO boots the **NVIDIA** variant live and embeds the OCI image in a VFS containers-storage
+store inside the squashfs so Dakota can be installed on any hardware without a network pull.
 
 ## How it works
 
 The build uses three steps:
 
-1. **`live/Containerfile`** — a 3-stage multi-arch build that pulls the Dakota NVIDIA image, creates a live user, configures GDM autologin, installs Flatpaks from Flathub, and drops in the installer config.
-2. **`scripts/build-live-squashfs.sh`** — mounts the live container image via `podman image mount` and runs `mksquashfs` directly on the merged overlay view. No per-layer VFS expansion needed.
-3. **`scripts/build-offline-store.sh`** — uses `skopeo copy` to import both `dakota` and `dakota-nvidia` images into an isolated VFS store, then creates a second squashfs that ships inside the ISO for offline installation.
-4. **`live/src/build-iso.sh`** — assembles the final ISO with the live squashfs, boot files, and offline store embedded at `LiveOS/store.squashfs.img`.
+1. **`live/Containerfile`** — a 3-stage build that pulls the Dakota NVIDIA image, creates a live
+   user, configures GDM autologin, installs Flatpaks from Flathub, and drops in the installer config.
+2. **`scripts/build-live-squashfs.sh`** — squashes the payload image to one layer, imports it into
+   a VFS containers-storage tree inside the squashfs root, then calls `mksquashfs`. The OCI store
+   travels inside the squashfs — no separate `store.squashfs.img`.
+3. **`live/src/build-iso.sh`** — assembles the final ISO with the live squashfs and boot files.
 
 The ISO layout:
 - **EFI/efi.img** — FAT32 ESP with systemd-boot, kernel, and initramfs
-- **LiveOS/squashfs.img** — squashfs of the full live rootfs (NVIDIA variant)
-- **LiveOS/store.squashfs.img** — offline OCI image store (both dakota and dakota-nvidia)
+- **LiveOS/squashfs.img** — squashfs of the full live rootfs (NVIDIA variant) + embedded VFS OCI store
 - **El Torito** UEFI entry (no-emulation mode) pointing to the ESP image
 
-At boot, `dmsquash-live` mounts the squashfs and creates an overlayfs so the live environment is fully writable. The offline store is mounted at `/var/lib/containers/storage` so the installer can install Dakota without a network pull.
+At boot, `dmsquash-live` mounts the squashfs and creates an overlayfs so the live environment is
+fully writable. The embedded VFS store at `/var/lib/containers/storage` lets the installer deploy
+Dakota without a network pull.
 
 ## Requirements
 
@@ -39,8 +43,9 @@ At boot, `dmsquash-live` mounts the squashfs and creates an overlayfs so the liv
 | OVMF firmware | `edk2-ovmf` (Fedora/RHEL) or `ovmf` (Debian/Ubuntu) — amd64 |
 
 **Disk space:** The build needs ~22 GB free:
-- ~6 GB for the live squashfs (NVIDIA variant)
-- ~6 GB for the offline store squashfs (both dakota and dakota-nvidia)
+- ~4 GB for the squashed OCI image
+- ~6 GB for the VFS import (single layer)
+- ~6 GB for the squashfs staging tree
 - ~5 GB for the final ISO
 
 By default, output goes to `./output/`. If `/tmp` is a small tmpfs on your machine, override with `just output_dir=/path/with/space iso-sd-boot dakota`.
@@ -52,11 +57,8 @@ By default, output goes to `./output/`. If `/tmp` is a small tmpfs on your machi
 git clone https://github.com/projectbluefin/dakota-iso
 cd dakota-iso
 
-# Full build — live env container + ISO assembly (single-variant, for local testing)
+# Full build — live env container + ISO assembly
 just iso-sd-boot dakota
-
-# Build the NVIDIA variant (boots live with NVIDIA drivers)
-just iso-sd-boot dakota-nvidia
 
 # Override output directory (if ./output/ is on a small filesystem)
 just output_dir=/var/data/iso-output iso-sd-boot dakota
@@ -64,19 +66,7 @@ just output_dir=/var/data/iso-output iso-sd-boot dakota
 
 The build takes **20–40 minutes** depending on your internet connection — the Flatpak install step downloads ~2 GB from Flathub.
 
-Output: `output/<target>-live.iso` (~4.5 GB)
-
-> **CI builds** a unified ISO containing both NVIDIA (live boot) and non-NVIDIA (offline
-> install) variants. To replicate the full CI pipeline locally, run the three scripts
-> directly:
-> ```bash
-> sudo bash scripts/build-live-squashfs.sh localhost/dakota-nvidia-live:latest \
->   output/dakota-nvidia.rootfs.sfs output/dakota-nvidia-boot.tar
-> sudo bash scripts/build-offline-store.sh output/store.squashfs.img \
->   ghcr.io/projectbluefin/dakota-nvidia:latest ghcr.io/projectbluefin/dakota:latest
-> sudo bash live/src/build-iso.sh --store output/store.squashfs.img \
->   output/dakota-nvidia-boot.tar output/dakota-nvidia.rootfs.sfs output/dakota-live.iso
-> ```
+Output: `output/dakota-live.iso` (~4.3 GB)
 
 ### Build stages
 
@@ -85,9 +75,9 @@ just container dakota          # Build the live environment container
 just iso-sd-boot dakota        # Full end-to-end build (runs container + assembles ISO)
 ```
 
-## Adding a new variant
+## Adding a custom build
 
-Each variant is a directory containing a single file — `payload_ref` — with the OCI image reference:
+The justfile accepts any variant directory with a `payload_ref` file:
 
 ```bash
 mkdir my-variant
@@ -95,7 +85,9 @@ echo 'ghcr.io/projectbluefin/my-variant:latest' > my-variant/payload_ref
 just iso-sd-boot my-variant
 ```
 
-The Containerfile (`live/Containerfile`) accepts a `TARGET` build-arg (defaulting to `dakota-nvidia`). The justfile reads `<target>/payload_ref` but passes the target name directly as `TARGET`. The installer configs inside the ISO are patched at build time to reference the correct image.
+The `live/Containerfile` accepts a `TARGET` build-arg (defaulting to `dakota-nvidia`). The
+justfile reads `<target>/payload_ref` and passes the target name as `TARGET`. Installer
+configs are patched at build time to reference the correct image.
 
 ## Testing
 

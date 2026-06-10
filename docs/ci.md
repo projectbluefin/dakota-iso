@@ -65,8 +65,8 @@ If both checks fail after 5 minutes, the job fails with `tail -50 /tmp/serial.lo
 ### R2 upload
 
 ISOs are uploaded to the `testing` bucket as:
-- `<target>-live-YYYYMMDD-<sha>.iso` — permanent dated record
-- `<target>-live-latest.iso` — always points to the last successful build
+- `dakota-live-YYYYMMDD-<sha>.iso` — permanent dated record
+- `dakota-live-latest.iso` — always points to the last successful build
 - Matching `-CHECKSUM` files for both
 
 ⚠️ Direct uploads from the local host hang (routing issue). Always use R2→R2
