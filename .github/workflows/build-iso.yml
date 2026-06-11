@@ -128,6 +128,42 @@ jobs:
           echo "path=${CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
           echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
 
+      - name: Install QEMU deps for E2E test
+        run: sudo apt-get install -y qemu-system-x86 ovmf sshpass socat -qq
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          sudo adduser "$USER" kvm || true
+
+      - name: Install just
+        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1 (just)
+        with:
+          tool: just
+
+      # Run the plain composefs install E2E at 4096 MiB (tight overlay tmpfs).
+      # This is the primary regression guard for ENOSPC-class installer bugs.
+      # A failure here blocks R2 upload — broken ISOs do not ship.
+      - name: Plain install E2E (composefs, no encryption, 4096 MiB)
+        id: plain_e2e
+        timeout-minutes: 60
+        run: |
+          sudo just qemu-mem=4096 installer_channel=stable plain-test-qemu dakota
+
+      - name: Upload plain E2E serial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plain-e2e-serial-logs
+          path: |
+            /tmp/dakota-plain-qemu-live-serial.log
+            /tmp/dakota-plain-qemu-installed-serial.log
+            /tmp/plain-screenshot-final.png
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Upload ISO to Cloudflare R2
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' }}
         env:

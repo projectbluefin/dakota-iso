@@ -1,0 +1,197 @@
+---
+# Test a plain (unencrypted) composefs+systemd-boot installation via fisherman
+# and verify the installed system boots to the graphical target.
+#
+# This is the primary regression guard for installer crashes.  Running with
+# qemu-mem=4096 (4 GiB) keeps the dracut overlay tmpfs tight (~2 GiB), which
+# reliably reproduces ENOSPC-class bugs (e.g. containers/storage writing blobs
+# to /var/tmp instead of the disk-backed scratch dir).
+#
+# Runs two parallel legs:
+#   dev    — continuous-dev Flatpak (catches regressions before stable)
+#   stable — continuous Flatpak    (verifies what users actually download)
+#
+# Reported crash this test guards against:
+#   https://github.com/ublue-os/bluefin/discussions/4754
+
+name: Plain Install E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      installer_channel:
+        description: 'Installer channel to test (dev or stable)'
+        required: false
+        default: ''
+  schedule:
+    # Run weekly on Tuesday 04:00 UTC (staggered from the LUKS test on Monday)
+    - cron: '0 4 * * 2'
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: write
+  actions: read
+
+jobs:
+  unit-tests:
+    name: Python Unit Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1 (just)
+        with:
+          tool: just
+      - run: just test
+
+  plain-e2e:
+    name: Plain Install E2E (${{ matrix.installer_channel }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        installer_channel: [dev, stable]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 ovmf sshpass socat imagemagick \
+            libguestfs-tools just
+
+      - name: Enable KVM access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo adduser "$USER" kvm || true
+
+      - name: Build ISO
+        id: build
+        env:
+          INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
+        run: |
+          START=$SECONDS
+          sudo apt-get install -y --no-install-recommends \
+            podman skopeo squashfs-tools xorriso dosfstools mtools
+          sudo mkdir -p /var/iso-build
+          sudo -E bash scripts/build-live-squashfs.sh \
+            --target dakota \
+            --installer-channel "$INSTALLER_CHANNEL" \
+            --output-dir /var/iso-build
+          sudo bash scripts/build-iso.sh \
+            --squashfs /var/iso-build/dakota-live.squashfs \
+            --boot-tar /var/iso-build/dakota-boot-files.tar \
+            --output /var/iso-build/dakota-live.iso
+          sudo cp /var/iso-build/dakota-live.iso output/
+          ISO_SIZE=$(stat -c%s output/dakota-live.iso 2>/dev/null || echo 0)
+          echo "iso_size=$ISO_SIZE" >> "$GITHUB_OUTPUT"
+          echo "duration=$((SECONDS - START))" >> "$GITHUB_OUTPUT"
+          echo "Built ISO: $(numfmt --to=iec $ISO_SIZE)"
+
+      - name: Run plain install E2E
+        id: plain_test
+        timeout-minutes: 60
+        env:
+          INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
+        run: |
+          START=$SECONDS
+          # 4096 MiB: tight overlay tmpfs to expose ENOSPC-class bugs
+          sudo just qemu-mem=4096 installer_channel="$INSTALLER_CHANNEL" plain-test-qemu dakota
+          echo "duration=$((SECONDS - START))" >> "$GITHUB_OUTPUT"
+
+      - name: Capture serial logs and screenshot
+        if: always()
+        run: |
+          sudo chmod a+r /tmp/dakota-plain-qemu-*.log 2>/dev/null || true
+          sudo chmod a+r /tmp/plain-screenshot-final.ppm 2>/dev/null || true
+          # Convert screenshot for upload
+          convert /tmp/plain-screenshot-final.ppm /tmp/plain-screenshot-final.png 2>/dev/null || true
+
+      - name: Upload serial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plain-e2e-serial-logs-${{ matrix.installer_channel }}
+          path: |
+            /tmp/dakota-plain-qemu-live-serial.log
+            /tmp/dakota-plain-qemu-installed-serial.log
+            /tmp/plain-screenshot-final.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        env:
+          TEST_RESULT:       ${{ steps.plain_test.outcome }}
+          INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
+          BUILD_S:           ${{ steps.build.outputs.duration }}
+          PLAIN_S:           ${{ steps.plain_test.outputs.duration }}
+          ISO_BYTES:         ${{ steps.build.outputs.iso_size }}
+        with:
+          script: |
+            const result  = process.env.TEST_RESULT || 'unknown';
+            const channel = process.env.INSTALLER_CHANNEL || 'unknown';
+            const pass    = result === 'success';
+            const icon    = pass ? '✅' : '❌';
+            const runUrl  = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const fmtDur  = s => s ? `${Math.floor(s/60)}m ${s%60}s` : 'N/A';
+            const fmtMiB  = b => b ? `${(b/1024/1024).toFixed(0)} MiB` : 'N/A';
+            const body = [
+              `## ${icon} Plain Install E2E (${channel}) — ${pass ? 'PASSED' : 'FAILED'}`,
+              '',
+              '| Step | Details |',
+              '|------|---------|',
+              `| ISO build    | ${fmtMiB(process.env.ISO_BYTES)} · ${fmtDur(process.env.BUILD_S)} |`,
+              `| Plain E2E    | ${fmtDur(process.env.PLAIN_S)} |`,
+              `| QEMU RAM     | 4096 MiB (tight overlay tmpfs) |`,
+              `| Result       | ${icon} ${result} |`,
+              '',
+              `<sub>[Workflow run](${runUrl})</sub>`,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });
+
+      - name: Write job summary
+        if: always()
+        run: |
+          RESULT="${{ steps.plain_test.outcome }}"
+          CHANNEL="${{ matrix.installer_channel }}"
+          ICON=$( [ "$RESULT" = "success" ] && echo "✅" || echo "❌" )
+          {
+            echo "## ${ICON} Plain Install E2E (${CHANNEL}) — ${RESULT}"
+            echo ""
+            echo "| Step | Value |"
+            echo "|------|-------|"
+            echo "| ISO size     | $(numfmt --to=iec ${{ steps.build.outputs.iso_size }} 2>/dev/null || echo N/A) |"
+            echo "| Build time   | ${{ steps.build.outputs.duration }}s |"
+            echo "| Plain E2E    | ${{ steps.plain_test.outputs.duration }}s |"
+            echo "| QEMU RAM     | 4096 MiB |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if plain test failed
+        if: steps.plain_test.outcome == 'failure'
+        run: |
+          echo "::error::Plain install E2E failed — see serial logs above"
+          echo "::error::Serial log tail:"
+          tail -30 /tmp/dakota-plain-qemu-installed-serial.log 2>/dev/null || true
+          exit 1

@@ -240,3 +240,34 @@ was populated.
 live rootfs.  mksquashfs deduplicates identical content blocks, so the squashfs size barely
 increases despite embedding 9G of VFS data.  Use inode/file counts to confirm inclusion,
 not squashfs file size.
+
+### ENOSPC in skopeo OCI export — containers/storage tmpdir not redirected (2026-06)
+
+**Symptom:** Live ISO installs fail with:
+```
+reading blob sha256:...: write /var/tmp/container_images_XXXXXXXX: no space left on device
+```
+The installer correctly sets `TMPDIR=/mnt/fisherman-target/.fisherman-scratch` but the
+blob staging file still lands at `/var/tmp`.
+
+**Root cause (3 layers):**
+1. `configure-live.sh` writes `/etc/containers/storage.conf` with `driver = "vfs"` but **no
+   `tmpdir` line**.
+2. `containers/storage` defaults `TMPDir` to `/var/tmp` (hardcoded) when the config has no
+   `tmpdir` field.  Setting `$TMPDIR` in the subprocess env is not sufficient — containers/storage
+   reads the store config first and uses `/var/tmp` as the unconditional fallback.
+3. `/var/tmp` on the live ISO is on the dracut overlayfs (~1.4 GiB writable layer) — too small
+   for multi-GiB OCI layer blobs.
+
+**Fix:** `skopeoExportOCI` (fisherman) now reads the current effective `storage.conf`, injects
+`tmpdir = "<scratchDir>"`, writes the result to a temp file in the disk-backed scratch dir,
+and passes it to skopeo via `CONTAINERS_STORAGE_CONF`.  `$TMPDIR` is retained for belt-and-
+suspenders coverage of containers/image's copy-side blob staging.
+
+**Why CI didn't catch it:** The LUKS E2E test runs QEMU with 8 GiB RAM; the overlay tmpfs
+is ~4 GiB — large enough for individual blobs in most runs.  On 8 GiB user laptops with the
+live environment loaded, free tmpfs headroom is much lower and ENOSPC triggers reliably.
+
+**Prevention:** `plain-test-qemu` (new) runs with `qemu-mem=4096` (4 GiB RAM), which gives
+only ~2 GiB overlay tmpfs — reliably reproducing this class of bug.  The test is gated
+before R2 upload in `build-iso.yml`.
