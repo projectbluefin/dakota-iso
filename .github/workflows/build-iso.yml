@@ -154,6 +154,9 @@ jobs:
 
       - name: Upload plain E2E serial logs
         if: always()
+        run: sudo chmod a+r /tmp/dakota-plain-qemu-*.log /tmp/plain-screenshot-final.png 2>/dev/null || true
+      - name: Upload plain E2E serial logs artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: plain-e2e-serial-logs

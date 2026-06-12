@@ -1205,9 +1205,15 @@ plain-boot-qemu-live target:
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
     echo "Waiting for live environment on port {{plain-qemu-ssh-port}}..."
     for i in $(seq 1 60); do
-        if grep -q "DAKOTA_LIVE_READY\|debug-ssh-banner" <(sudo cat "{{plain-qemu-serial-live}}" 2>/dev/null) ||\
-           sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}} true 2>/dev/null; then
-            echo "Live environment ready."
+        if grep -q "DAKOTA_LIVE_READY\|debug-ssh-banner" <(sudo cat "{{plain-qemu-serial-live}}" 2>/dev/null); then
+            echo "Live environment ready (serial marker)."
+            break
+        fi
+        if sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}} true 2>/dev/null; then
+            # sshd accepted — wait a further 15 s for it to fully stabilise
+            # (kex_exchange_identification resets occur for ~10 s after first accept)
+            echo "SSH responded — waiting 15 s for sshd to stabilise..."
+            sleep 15
             break
         fi
         [[ $i -eq 60 ]] && { echo "Timeout waiting for live environment" >&2; sudo cat "{{plain-qemu-serial-live}}" >&2; exit 1; }
