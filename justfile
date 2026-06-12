@@ -1156,6 +1156,7 @@ plain-boot-qemu-live target:
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=""
     for f in \
+        "{{output_dir}}/{{target}}-debug-live.iso" \
         "{{output_dir}}/{{target}}-live.iso" \
         {{output_dir}}/{{target}}-live-*.iso; do
         [[ -f "$f" ]] && { ISO="$f"; break; }

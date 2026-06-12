@@ -130,6 +130,49 @@ jobs:
           echo "path=${CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
           echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
 
+      # Patch production squashfs to enable sshd for E2E SSH access.
+      # The production ISO has sshd disabled; for the E2E test we need SSH.
+      # Unsquashfs → enable sshd → re-squashfs (zstd-1 for speed) → debug ISO.
+      # Production ISO is NOT modified and is still the one uploaded to R2.
+      - name: Build debug ISO for E2E test (production rootfs + sshd enabled)
+        run: |
+          echo ">>> Unsquashing production rootfs..."
+          sudo unsquashfs -d /var/iso-build/debug-rootfs \
+            /var/iso-build/dakota-nvidia.rootfs.sfs
+
+          # Enable sshd.service
+          sudo mkdir -p \
+            /var/iso-build/debug-rootfs/etc/systemd/system/multi-user.target.wants
+          sudo ln -sf /usr/lib/systemd/system/sshd.service \
+            /var/iso-build/debug-rootfs/etc/systemd/system/multi-user.target.wants/sshd.service
+
+          # Allow password auth (liveuser / live)
+          sudo bash -c 'printf "\nPermitRootLogin yes\nPasswordAuthentication yes\nPermitEmptyPasswords yes\n" \
+            >> /var/iso-build/debug-rootfs/etc/ssh/sshd_config'
+
+          # Set liveuser password to 'live'
+          HASH=$(openssl passwd -6 'live')
+          if sudo grep -q '^liveuser:' /var/iso-build/debug-rootfs/etc/shadow 2>/dev/null; then
+            sudo sed -i "s|^liveuser:[^:]*:|liveuser:${HASH}:|" \
+              /var/iso-build/debug-rootfs/etc/shadow
+          fi
+
+          # Re-squashfs with fast compression (debug-only, not production)
+          echo ">>> Re-squashing debug rootfs (zstd-1)..."
+          sudo mksquashfs /var/iso-build/debug-rootfs \
+            /var/iso-build/dakota-debug.rootfs.sfs \
+            -noappend -comp zstd -Xcompression-level 1 -b 1M -processors 4 \
+            -e proc -e sys -e dev -e run -e tmp
+          sudo rm -rf /var/iso-build/debug-rootfs
+
+          # Assemble debug ISO (reuse boot tar from production build)
+          echo ">>> Assembling debug ISO..."
+          sudo bash live/src/build-iso.sh \
+            /var/iso-build/dakota-nvidia-boot.tar \
+            /var/iso-build/dakota-debug.rootfs.sfs \
+            output/dakota-debug-live.iso
+          echo "Debug ISO: $(du -sh output/dakota-debug-live.iso | cut -f1)"
+
       - name: Install QEMU deps for E2E test
         run: sudo apt-get install -y qemu-system-x86 ovmf sshpass socat -qq
 

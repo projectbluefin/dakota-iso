@@ -292,3 +292,28 @@ disk-backed path.  Locally the default `/var/tmp` still applies.
 
 **Prevention:** If squashfs build ENOSPC recurs in CI, verify `SUPERISO_TMPDIR`
 is set in the `Build live squashfs + boot tar` step env.
+
+### E2E plain install test requires sshd — production ISO has it disabled (2026-06)
+
+**Symptom:** `Plain install E2E` step fails with either:
+- `kex_exchange_identification: read: Connection reset by peer` (QEMU user-net accepts TCP, no listener inside guest)
+- `ERROR: serial marker seen but SSH not ready after 90 s` (sshd never starts)
+
+**Root cause:** sshd is only enabled in the live ISO when the container is built with
+`--build-arg DEBUG=1`.  The production build uses `DEBUG=0`, so no sshd.  The E2E test
+uses SSH to invoke fisherman; without sshd the test cannot proceed.
+
+**Fix:** After building the production ISO, a CI step patches the production squashfs:
+1. `unsquashfs` the production rootfs (includes the embedded VFS store)
+2. Add sshd.service symlink to `multi-user.target.wants`
+3. Append `PasswordAuthentication yes` / `PermitEmptyPasswords yes` to sshd_config
+4. Set `liveuser` password to `live` via `/etc/shadow` patch
+5. `mksquashfs` back with zstd-1 (fast, debug-only)
+6. Assemble `output/dakota-debug-live.iso` (uses same boot tar as production)
+
+`plain-boot-qemu-live` in the justfile prefers `output/{{target}}-debug-live.iso`
+when present, so CI runs against the debug ISO while R2 gets the production ISO.
+
+**Why the VFS store must stay:** `ghcr.io/projectbluefin/dakota-nvidia` is private;
+the live env inside QEMU has no GHCR credentials, so fisherman cannot pull from
+network.  The VFS store (embedded in the squashfs) is the only install source.
