@@ -71,6 +71,7 @@ jobs:
       - name: Build live squashfs + boot tar
         env:
           SUPERISO_COMPRESSION: release
+          SUPERISO_TMPDIR: /var/iso-build
         run: |
           sudo mkdir -p /var/iso-build
           sudo -E bash scripts/build-live-squashfs.sh \

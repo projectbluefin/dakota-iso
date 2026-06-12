@@ -44,7 +44,10 @@ if [[ $(id -u) -ne 0 ]]; then
     exit 1
 fi
 
-WORK="$(mktemp -d /var/tmp/tbox-live-sfs.XXXXXX)"
+# SUPERISO_TMPDIR lets CI redirect scratch space to a large disk-backed path
+# (e.g. /var/iso-build).  The squash+VFS embedding writes ~12 GB of
+# intermediates; /var/tmp on GitHub runners only has ~14 GB total.
+WORK="$(mktemp -d "${SUPERISO_TMPDIR:-/var/tmp}/tbox-live-sfs.XXXXXX")"
 trap 'podman image unmount "${IMAGE}" 2>/dev/null || true
       umount "${WORK}/squashfs-root/var/lib/containers/storage" 2>/dev/null || true
       umount "${WORK}/squashfs-root" 2>/dev/null || true

@@ -271,3 +271,24 @@ live environment loaded, free tmpfs headroom is much lower and ENOSPC triggers r
 **Prevention:** `plain-test-qemu` (new) runs with `qemu-mem=4096` (4 GiB RAM), which gives
 only ~2 GiB overlay tmpfs — reliably reproducing this class of bug.  The test is gated
 before R2 upload in `build-iso.yml`.
+
+### build-live-squashfs.sh WORK dir must be on large disk (2026-06)
+
+**Symptom:** `Build live squashfs + boot tar` step fails with:
+```
+write /usr/lib/locale/.../LC_COLLATE: no space left on device
+mkdir /vfs-storage/vfs-layers/tmp: no space left on device
+```
+
+**Root cause:** `build-live-squashfs.sh` creates `WORK` at `/var/tmp` by default.
+The squash-to-1-layer + VFS embedding writes ~12 GB of intermediates (`payload.oci.tar`
+~6 GB + VFS staging ~6 GB).  `/var/tmp` on GitHub ubuntu-24.04 runners sits on the
+root filesystem which has ~14 GB free after `jlumbroso/free-disk-space` — not enough
+if the image grows at all.
+
+**Fix:** `WORK` now uses `${SUPERISO_TMPDIR:-/var/tmp}`.  In CI, `build-iso.yml`
+sets `SUPERISO_TMPDIR: /var/iso-build` so all intermediates land on the 119 GB
+disk-backed path.  Locally the default `/var/tmp` still applies.
+
+**Prevention:** If squashfs build ENOSPC recurs in CI, verify `SUPERISO_TMPDIR`
+is set in the `Build live squashfs + boot tar` step env.
