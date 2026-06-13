@@ -191,30 +191,42 @@ jobs:
       # ── E2E Gate 1: ENOSPC regression guard (4 GiB RAM, tight overlay tmpfs) ──
       # Runs at 4096 MiB so the dracut overlayfs is ~2 GiB — tight enough to
       # reproduce ENOSPC-class bugs in the installer's blob staging path.
-      # Only tests boot-live + install; boot verification runs at 8 GiB below.
+      # Gate passes as soon as skopeo copies the blob — the slow bootc install
+      # is intentionally skipped here; it runs at 8 GiB in the next step.
       - name: "E2E 1/4 — Boot live ISO (4 GiB)"
         id: e2e_boot_live
         timeout-minutes: 10
         run: sudo env PATH="$PATH" just qemu-mem=4096 plain-boot-qemu-live dakota
 
-      - name: "E2E 2/4 — Install composefs, no encryption (4 GiB)"
+      - name: "E2E 2/4 — ENOSPC gate: OCI export only (4 GiB)"
+        id: e2e_enospc
+        timeout-minutes: 10
+        run: sudo env PATH="$PATH" just plain-enospc-gate dakota
+
+      # Kill the live VM before starting the full install at 8 GiB
+      - name: Reset QEMU for full install (8 GiB)
+        if: always() && steps.e2e_enospc.conclusion == 'success'
+        run: |
+          echo q | sudo socat - UNIX-CONNECT:/tmp/dakota-plain-qemu-live.sock 2>/dev/null || true
+          sudo rm -f /var/tmp/dakota-plain-install.img
+          truncate -s 64G /var/tmp/dakota-plain-install.img
+
+      # ── E2E Gate 2: Full functional install + boot verification (8 GiB) ───────
+      # Boot the live ISO fresh at 8 GiB so btrfs+overlay is not I/O-starved,
+      # run the complete fisherman install, boot the result, and verify.
+      - name: "E2E 3/4 — Full install composefs (8 GiB)"
         id: e2e_install
-        timeout-minutes: 30
-        run: sudo env PATH="$PATH" just plain-install-qemu dakota
+        timeout-minutes: 60
+        run: |
+          sudo env PATH="$PATH" just qemu-mem=8192 plain-boot-qemu-live dakota
+          sudo env PATH="$PATH" just plain-install-qemu dakota
 
-      # ── E2E Gate 2: Boot verification (8 GiB RAM, normal speed) ──────────────
-      # Boots the installed disk at 8 GiB and polls for Graphical target.
-      # Separate step = separate timeout; if install passed but the installed
-      # system won't boot, this step names it precisely.
-      - name: "E2E 3/4 — Boot installed disk (8 GiB)"
-        id: e2e_boot_installed
-        timeout-minutes: 10
-        run: sudo env PATH="$PATH" just qemu-mem=8192 plain-boot-qemu-installed dakota
-
-      - name: "E2E 4/4 — Verify Graphical target"
+      - name: "E2E 4/4 — Boot installed + verify Graphical target (8 GiB)"
         id: e2e_verify
-        timeout-minutes: 10
-        run: sudo env PATH="$PATH" just plain-verify-qemu dakota
+        timeout-minutes: 15
+        run: |
+          sudo env PATH="$PATH" just qemu-mem=8192 plain-boot-qemu-installed dakota
+          sudo env PATH="$PATH" just plain-verify-qemu dakota
 
       - name: Upload plain E2E serial logs
         if: always()

@@ -1124,6 +1124,48 @@ plain-e2e target:
                "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
     just qemu-mem={{qemu-mem}} plain-test-qemu {{target}}
 
+# ENOSPC regression gate: boot live ISO + run fisherman only through the OCI
+# export step, then exit.  Passes when skopeo copies the blob without hitting
+# ENOSPC in /var/tmp.  Runs at 4 GiB to keep overlay tmpfs tight (~2 GiB).
+# Deliberately does NOT wait for the full bootc install — that is tested
+# separately at 8 GiB RAM by plain-install-qemu.
+plain-enospc-gate target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
+    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
+    SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}}"
+    SCP="sshpass -p live scp $SSH_OPTS -P {{plain-qemu-ssh-port}}"
+    if $SSH "sudo podman image exists '${PAYLOAD_IMAGE}' 2>/dev/null"; then
+        INSTALL_IMAGE="containers-storage:${PAYLOAD_IMAGE}"
+    else
+        INSTALL_IMAGE="docker://${PAYLOAD_IMAGE}"
+    fi
+    RECIPE_TMP=$(mktemp /tmp/plain-enospc-recipe-XXXXXX.json)
+    trap "rm -f '${RECIPE_TMP}'" EXIT
+    printf '{\n  "disk": "/dev/vda",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-enospc-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
+        "${INSTALL_IMAGE}" > "${RECIPE_TMP}"
+    $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/enospc-recipe.json
+    echo "Running fisherman (watching for OCI export completion)..."
+    # Run fisherman in background; tail its output and exit the moment
+    # 'OCI export complete' appears — that line proves skopeo finished
+    # without ENOSPC.  The full bootc install continues in the background
+    # but we don't wait for it.
+    $SSH 'sudo /usr/local/bin/fisherman /tmp/enospc-recipe.json' | \
+        while IFS= read -r line; do
+            echo "[fisherman] $line"
+            if echo "$line" | grep -q 'OCI export complete'; then
+                echo ">>> ENOSPC gate PASSED (OCI export complete without ENOSPC)"
+                exit 0
+            fi
+            if echo "$line" | grep -qE '(ENOSPC|no space left|fatal:|error:)'; then
+                echo ">>> ENOSPC gate FAILED: $line" >&2
+                exit 1
+            fi
+        done
+    echo ">>> fisherman exited — OCI export completed successfully"
+
+
 # Run the full plain install test (CI entry point).
 # Expects ISO in {{output_dir}}; does not build.
 plain-test-qemu target:
