@@ -820,6 +820,10 @@ qemu-mem := "4096"
 
 # QEMU install disk path (override with: just luks-qemu-disk=/path/to/disk.qcow2 ...)
 luks-qemu-disk := "/var/tmp/dakota-luks-install.qcow2"
+# Scratch disk for /var/tmp inside the live LUKS VM — prevents ENOSPC during
+# OCI blob extraction.  fisherman bind-mounts /var/tmp for plain targets but
+# not LUKS; this 16G sparse file is mounted over /var/tmp before fisherman runs.
+luks-scratch-disk := "/var/tmp/dakota-luks-scratch.img"
 
 # QEMU monitor socket paths
 luks-qemu-monitor-live := "/tmp/dakota-qemu-live.sock"
@@ -851,7 +855,8 @@ e2e target:
     echo "=== Step 1/2: Building ISO (debug={{debug}}, installer_channel={{installer_channel}}) ==="
     just debug={{debug}} installer_channel={{installer_channel}} output_dir={{output_dir}} iso-sd-boot {{target}}
     echo "=== Step 2/2: LUKS end-to-end test ==="
-    sudo rm -f "{{luks-qemu-disk}}" "{{luks-qemu-monitor-live}}" "{{luks-qemu-monitor-installed}}" \
+    sudo rm -f "{{luks-qemu-disk}}" "{{luks-scratch-disk}}" \
+               "{{luks-qemu-monitor-live}}" "{{luks-qemu-monitor-installed}}" \
                "{{luks-qemu-serial-live}}" "{{luks-qemu-serial-installed}}"
     just luks-test-qemu {{target}}
 
@@ -899,6 +904,9 @@ luks-boot-qemu-live target:
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
 
     [[ -f "{{luks-qemu-disk}}" ]] || qemu-img create -f qcow2 "{{luks-qemu-disk}}" 64G
+    # Scratch disk: 16G sparse file mounted over /var/tmp in the live VM to
+    # give skopeo disk-backed space for VFS blob extraction (~9 GB blob).
+    [[ -f "{{luks-scratch-disk}}" ]] || truncate -s 16G "{{luks-scratch-disk}}"
     sudo rm -f "{{luks-qemu-monitor-live}}" "{{luks-qemu-serial-live}}"
 
     echo "Booting live ISO: $ISO"
@@ -928,6 +936,8 @@ luks-boot-qemu-live target:
         -device scsi-cd,drive=iso \
         -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
         -device virtio-blk-pci,drive=disk \
+        -drive "if=none,id=scratch,file={{luks-scratch-disk}},format=raw,cache=unsafe" \
+        -device virtio-blk-pci,drive=scratch \
         -netdev "user,id=net0,hostfwd=tcp::{{luks-qemu-ssh-port}}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -monitor "unix:{{luks-qemu-monitor-live}},server,nowait" \
@@ -988,6 +998,18 @@ luks-install-qemu target:
     printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
         "${DISK}" "${INSTALL_IMAGE}" "${PASSPHRASE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
+    # Mount scratch disk over /var/tmp before fisherman runs.
+    # fisherman bind-mounts /var/tmp → target scratch for plain installs but not
+    # LUKS targets, leaving /var/tmp as a small RAM tmpfs (~3.2 GiB at 4 GiB RAM).
+    # The VFS blob extraction writes ~9 GB to /var/tmp and hits ENOSPC.
+    # /dev/vdb is the 16G scratch disk passed by luks-boot-qemu-live.
+    echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
+    $SSH 'sudo bash -c "
+        mkfs.ext4 -F /dev/vdb >/dev/null
+        umount /var/tmp 2>/dev/null || true
+        mount /dev/vdb /var/tmp
+        echo \"/var/tmp is now disk-backed on /dev/vdb\"
+    "'
     echo "Uploaded recipe — running fisherman (takes several minutes)..."
     # Use wrapper to patch the composefs hostname-write bug (same as plain install).
     $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh

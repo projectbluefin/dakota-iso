@@ -189,3 +189,26 @@ Poll at 15s — fisherman takes 5–15 min but the completion check is cheap.
 The live boot screenshot was captured immediately after SSH or the serial ready check succeeded. However, SSH and systemd units start much earlier than GDM autologin and the installer GUI. Capturing the screenshot immediately resulted in a black screen.
 
 Fix: Added `wait-live` mode to `luks-unlock.py` which monitors screen brightness and hash stability. It waits up to 5 minutes for the screen to become bright (brightness >= 1.5) and stable before capturing the PPM.
+
+### LUKS ENOSPC: fisherman skips /var/tmp bind-mount for encrypted targets (2026-06-14)
+
+The live environment mounts a tmpfs at `/var/tmp` sized at 80% of VM RAM
+(~3.2 GiB with the default 4 GiB QEMU allocation).  During composefs install,
+fisherman exports the OCI image to an OCI layout via skopeo; containers-storage
+writes intermediate blob temp files to `/var/tmp` regardless of `TMPDIR`.
+
+For plain (non-LUKS) installs fisherman detects the space-constrained live
+environment and bind-mounts `/var/tmp` → `<target>/.fisherman-scratch/var-tmp-override`
+before running skopeo, making writes disk-backed.  **For LUKS targets this
+bind-mount does not happen**, causing the ~9 GB blob extraction to fill the
+~3.2 GiB tmpfs and fail with `no space left on device`.
+
+Fix: `luks-boot-qemu-live` creates a 16G sparse scratch disk (`luks-scratch-disk`,
+default `/var/tmp/dakota-luks-scratch.img`) and passes it to QEMU as a second
+virtio-blk device (`/dev/vdb`).  `luks-install-qemu` SSHes into the live VM,
+formats `/dev/vdb` as ext4, and mounts it over `/var/tmp` before fisherman runs.
+The scratch disk is cleaned up along with the install disk in the `e2e` recipe.
+
+This fixes every LUKS E2E run since composefs was enabled (all had been silently
+timing out at the 90-minute job ceiling before the fisherman wrapper surfaced
+the real error).
