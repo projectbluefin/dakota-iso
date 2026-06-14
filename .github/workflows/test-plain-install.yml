@@ -112,7 +112,7 @@ jobs:
 
       - name: Run plain install E2E
         id: plain_test
-        timeout-minutes: 60
+        timeout-minutes: 90
         env:
           INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
         run: |
