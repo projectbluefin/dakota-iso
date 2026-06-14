@@ -53,7 +53,7 @@ jobs:
   plain-e2e:
     name: Plain Install E2E (${{ matrix.installer_channel }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +64,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: false
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
+        with:
+          tool-cache: true
 
       - name: Install dependencies
         run: |
@@ -80,6 +85,14 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           sudo adduser "$USER" kvm || true
 
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Configure podman storage (intelligent driver selection)
+        run: bash .github/scripts/configure_podman_storage.sh
+
       - name: Build ISO
         id: build
         env:
@@ -87,11 +100,18 @@ jobs:
         run: |
           START=$SECONDS
           sudo apt-get install -y --no-install-recommends \
-            podman skopeo squashfs-tools xorriso dosfstools mtools
+            podman skopeo squashfs-tools xorriso dosfstools mtools buildah
           sudo mkdir -p /var/iso-build
+          mkdir -p output
+          # Pull the payload image so fisherman uses local containers-storage
+          # instead of pulling ~10 GB from the network during the E2E test.
+          PAYLOAD_IMAGE=$(cat dakota/payload_ref | tr -d '[:space:]')
+          sudo podman pull "$PAYLOAD_IMAGE"
           sudo -E bash scripts/build-live-squashfs.sh \
             --target dakota \
             --installer-channel "$INSTALLER_CHANNEL" \
+            --debug 1 \
+            --oci-image "$PAYLOAD_IMAGE" \
             --output-dir /var/iso-build
           sudo bash scripts/build-iso.sh \
             --squashfs /var/iso-build/dakota-live.squashfs \
