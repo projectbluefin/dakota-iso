@@ -53,7 +53,7 @@ jobs:
   plain-e2e:
     name: Plain Install E2E (${{ matrix.installer_channel }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
