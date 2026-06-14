@@ -59,15 +59,17 @@ print(d.get('encryption', {}).get('passphrase', ''))
 " "$RECIPE" 2>/dev/null || echo "")
         if [[ -z "$PASSPHRASE" ]]; then
             echo "ERROR: could not extract LUKS passphrase from recipe — hostname not patched"
-        elif echo "$PASSPHRASE" | cryptsetup luksOpen --key-file=- --batch-mode "$LUKS_DEV" "$MAPPER"; then
+        elif echo "$PASSPHRASE" | cryptsetup luksOpen --key-file=- --batch-mode "$LUKS_DEV" "$MAPPER" 2>/tmp/cryptsetup-err.log; then
             if mount "/dev/mapper/$MAPPER" "$MNT"; then
                 MOUNTED=1
             else
                 echo "ERROR: mount /dev/mapper/$MAPPER failed — hostname not patched"
+                cat /tmp/cryptsetup-err.log 2>/dev/null || true
                 cryptsetup luksClose "$MAPPER" || true
             fi
         else
             echo "ERROR: cryptsetup luksOpen $LUKS_DEV failed — hostname not patched"
+            cat /tmp/cryptsetup-err.log 2>/dev/null || true
         fi
     elif [[ -n "$ROOT_DEV" ]]; then
         # Plain install: mount the btrfs partition directly.
