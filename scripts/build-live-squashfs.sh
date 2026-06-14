@@ -1,43 +1,77 @@
 #!/usr/bin/bash
-# build-live-squashfs.sh [--oci-image <ref>] <image> <output-squashfs> <output-boot-tar>
+# build-live-squashfs.sh  —  build a live squashfs and companion boot tar
 #
-# Exports a container image as a squashfs suitable for dmsquash-live boot,
-# and a companion tar of the boot files (kernel, initramfs, EFI binary) needed
-# to assemble the ISO ESP.
+# Two usage modes:
 #
-# When --oci-image is given, the referenced OCI image is squashed to a single
-# layer and imported into a VFS containers-storage tree at
-# /var/lib/containers/storage inside the squashfs.  This is the offline install
-# store: at boot, fisherman reads local_imgref=containers-storage:<ref> from
-# recipe.json and finds the image there without a network pull.
+# 1. Target mode (used by test-plain-install.yml):
+#      sudo -E bash scripts/build-live-squashfs.sh \
+#          --target <name> \
+#          [--installer-channel dev|stable] \
+#          --output-dir <dir>
+#    Builds the live container from live/Containerfile for the given target,
+#    then exports it to squashfs.  No offline OCI store is embedded;
+#    fisherman pulls the payload from the network at install time.
+#    Outputs: <dir>/<target>-live.squashfs  and  <dir>/<target>-boot-files.tar
 #
-# The OCI image must already be present in the local podman/buildah store.
-# skopeo runs inside the live container so the tar-split metadata is written
-# in the JSON format that the live VFS storage driver expects (not the binary
-# format that the build-host containers/storage might emit).
+# 2. Positional mode (used by build-iso.yml):
+#      sudo -E bash scripts/build-live-squashfs.sh \
+#          [--oci-image ghcr.io/projectbluefin/dakota-nvidia:stable] \
+#          localhost/dakota-nvidia-live:latest \
+#          /out/dakota-nvidia.rootfs.sfs \
+#          /out/dakota-nvidia-boot.tar
+#    Exports a pre-built container image as squashfs.  When --oci-image is
+#    given the referenced OCI image is squashed to a single layer and embedded
+#    into a VFS containers-storage tree at /var/lib/containers/storage inside
+#    the squashfs — the offline install store that fisherman reads at boot.
 #
-# This is the plain-bash equivalent of tacklebox's runEnv() + squashfs stage.
+# The OCI image (positional mode + --oci-image) must already be present in
+# the local podman/buildah store.
+# skopeo runs inside the live container so the VFS tar-split metadata is
+# written in the JSON format that the live ISO expects.
 #
-# Usage (must run as root or with sudo):
-#   sudo bash scripts/build-live-squashfs.sh \
-#       [--oci-image ghcr.io/projectbluefin/dakota-nvidia:stable] \
-#       localhost/dakota-nvidia-live:latest \
-#       /out/dakota-nvidia.rootfs.sfs \
-#       /out/dakota-nvidia-boot.tar
+# Must run as root (sudo).
 
 set -euo pipefail
 
 OCI_IMAGE=""
+TARGET=""
+OUTPUT_DIR=""
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --oci-image) OCI_IMAGE="${2:?--oci-image requires an image ref}"; shift 2 ;;
+        --oci-image)         OCI_IMAGE="${2:?--oci-image requires an image ref}"; shift 2 ;;
+        --target)            TARGET="${2:?--target requires a target name}"; shift 2 ;;
+        --installer-channel) INSTALLER_CHANNEL="${2:?--installer-channel requires a value}"; export INSTALLER_CHANNEL; shift 2 ;;
+        --output-dir)        OUTPUT_DIR="${2:?--output-dir requires a path}"; shift 2 ;;
         *) break ;;
     esac
 done
 
-IMAGE="${1:?Usage: build-live-squashfs.sh [--oci-image <ref>] <image> <output-squashfs> <output-boot-tar>}"
-OUTPUT_SFS="${2:?}"
-OUTPUT_BOOT_TAR="${3:?}"
+if [[ -n "${TARGET}" ]]; then
+    # ── Target mode: build live container then squashfs it ────────────────────
+    [[ -z "${OUTPUT_DIR}" ]] && { echo "ERROR: --target requires --output-dir" >&2; exit 1; }
+
+    LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
+    echo ">>> [live-squashfs] building live container: target=${TARGET} live_target=${LIVE_TARGET} channel=${INSTALLER_CHANNEL:-stable}"
+
+    podman build \
+        --cap-add sys_admin \
+        --security-opt label=disable \
+        --layers \
+        --build-arg INSTALLER_CHANNEL="${INSTALLER_CHANNEL:-stable}" \
+        --build-arg TARGET="${LIVE_TARGET}" \
+        -t "${TARGET}-installer" \
+        -f ./live/Containerfile ./live
+
+    IMAGE="${TARGET}-installer"
+    OUTPUT_SFS="${OUTPUT_DIR}/${TARGET}-live.squashfs"
+    OUTPUT_BOOT_TAR="${OUTPUT_DIR}/${TARGET}-boot-files.tar"
+else
+    # ── Positional mode: use pre-built image ──────────────────────────────────
+    IMAGE="${1:?Usage: build-live-squashfs.sh [--oci-image <ref>] <image> <output-squashfs> <output-boot-tar>}"
+    OUTPUT_SFS="${2:?}"
+    OUTPUT_BOOT_TAR="${3:?}"
+fi
 
 if [[ $(id -u) -ne 0 ]]; then
     echo "ERROR: must run as root (use sudo)" >&2
