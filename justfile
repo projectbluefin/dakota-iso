@@ -989,7 +989,9 @@ luks-install-qemu target:
         "${DISK}" "${INSTALL_IMAGE}" "${PASSPHRASE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
     echo "Uploaded recipe — running fisherman (takes several minutes)..."
-    $SSH 'sudo /usr/local/bin/fisherman /tmp/luks-recipe.json'
+    # Use wrapper to patch the composefs hostname-write bug (same as plain install).
+    $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
+    $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/luks-recipe.json'
     echo "Patching BLS entries to enable dual serial+VT console..."
     $SSH 'sudo bash -c "
         set -euo pipefail
@@ -1299,7 +1301,12 @@ plain-install-qemu target:
         "${DISK}" "${INSTALL_IMAGE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json
     echo "Uploaded recipe — running fisherman (this takes several minutes)..."
-    $SSH 'sudo /usr/local/bin/fisherman /tmp/plain-recipe.json'
+    # Use the wrapper script that patches the composefs hostname-write bug:
+    # fisherman calls ostree admin --print-current-dir (live sysroot, not target)
+    # after unmounting, which fails on composefs/bootc deployments.
+    # scripts/fisherman-install.sh detects hostname-only failures and patches directly.
+    $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
+    $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/plain-recipe.json'
     echo "Patching BLS entries to add serial console..."
     $SSH 'sudo bash -c "
         set -euo pipefail

@@ -215,13 +215,14 @@ jobs:
       # Boot the live ISO fresh at 8 GiB so btrfs+overlay is not I/O-starved,
       # run the complete fisherman install, boot the result, and verify.
       #
-      # continue-on-error: true — fisherman exits non-zero after a successful
-      # composefs install when writing hostname (ostree admin --print-current-dir
-      # fails because composefs uses ostree/bootc/ not ostree/deploy/default/).
-      # The install itself completes; only the post-install hostname step fails.
-      # Tracked upstream: https://github.com/tuna-os/fisherman/issues
+      # continue-on-error: true kept as safety net; the fisherman hostname-write
+      # composefs bug (ostree admin --print-current-dir against live sysroot after
+      # target unmount) is patched locally via scripts/fisherman-install.sh which
+      # detects the hostname-only failure, re-mounts the btrfs root, and writes
+      # /etc/hostname directly into the deployment directory.
+      # Upstream bug: https://github.com/tuna-os/fisherman/issues
       # ISO upload is gated on the ENOSPC gate (step 2), not this step.
-      # A final "E2E status" step below re-fails the job so CI stays visibly red.
+      # A final "E2E status" step below re-fails the job if the install truly fails.
       - name: "E2E 3/4 — Full install composefs (8 GiB)"
         id: e2e_install
         timeout-minutes: 60
@@ -362,10 +363,12 @@ jobs:
 
       # Re-fail the job if E2E full install failed (continue-on-error above allowed
       # the upload to proceed; this step restores the visible red CI status).
+      # Note: the fisherman hostname-write composefs bug is patched in
+      # scripts/fisherman-install.sh; this step should not trigger for hostname
+      # failures anymore.  If it fires, it is a real install failure.
       - name: E2E full-install status
         if: always() && steps.e2e_install.outcome == 'failure'
         run: |
           echo "::error::E2E 3/4 (full composefs install) failed — see step logs above"
-          echo "Known issue: fisherman hostname write fails with composefs backend"
-          echo "Upstream tracking: https://github.com/tuna-os/fisherman"
+          echo "If this is the fisherman hostname-write composefs bug, check scripts/fisherman-install.sh"
           exit 1
