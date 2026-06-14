@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# fisherman-install.sh — run fisherman with a composefs hostname-write workaround.
+# fisherman-install.sh — run fisherman with composefs hostname-write workaround.
 #
 # fisherman exits non-zero on composefs sysroots when writing hostname because
 # it calls `ostree admin --print-current-dir` (against the running system, not the
@@ -7,13 +7,15 @@
 # uses ostree/bootc/ instead of ostree/deploy/default/, the command returns exit 1.
 # The OS install itself is complete; only this post-unmount hostname step fails.
 #
-# This wrapper detects that specific failure, re-mounts the installed btrfs root,
-# locates /etc in the deployment directory tree, and writes the hostname directly.
+# This wrapper detects that specific failure, re-mounts the installed root
+# (unlocking LUKS first when needed), locates /etc in the deployment directory
+# tree, and writes the hostname directly.
 #
 # Upstream bug: https://github.com/tuna-os/fisherman/issues
 #
 # Usage: fisherman-install.sh <recipe.json>
-#   recipe.json must contain a "hostname" key whose value is written on failure.
+#   recipe.json must contain a "hostname" key (and "encryption.passphrase" for
+#   LUKS installs) whose values are used when patching on failure.
 
 set -euo pipefail
 
@@ -32,43 +34,77 @@ if grep -q "writing hostname" /tmp/fish.log && \
 
     echo "==> fisherman hostname write failed (composefs/ostree compat bug) — patching manually"
 
-    # Extract hostname value from the recipe JSON (no jq/python required).
+    # Extract hostname from the recipe JSON.
     HOSTNAME=$(grep -o '"hostname"[[:space:]]*:[[:space:]]*"[^"]*"' "$RECIPE" \
                | grep -o '"[^"]*"$' | tr -d '"' || echo "dakota")
 
-    # Find the btrfs root partition on the target disk.
-    ROOT_DEV=$(lsblk -npo NAME,FSTYPE /dev/vda | awk '$2=="btrfs"{print $1;exit}')
-    if [[ -z "$ROOT_DEV" ]]; then
-        echo "ERROR: btrfs root partition not found on /dev/vda — hostname not patched"
-        exit "$FISH_RC"
-    fi
+    # Detect whether this is a LUKS install (crypto_LUKS partition on /dev/vda)
+    # or a plain btrfs install.
+    LUKS_DEV=$(lsblk -npo NAME,FSTYPE /dev/vda \
+               | awk '$2=="crypto_LUKS"{print $1;exit}')
+    ROOT_DEV=$(lsblk -npo NAME,FSTYPE /dev/vda \
+               | awk '$2=="btrfs"{print $1;exit}')
 
     MNT=$(mktemp -d /tmp/hostname-fix-XXXX)
-    if ! mount "$ROOT_DEV" "$MNT"; then
-        echo "ERROR: mount $ROOT_DEV → $MNT failed — hostname not patched"
-        rmdir "$MNT"
-        exit "$FISH_RC"
-    fi
+    MAPPER="hostname-fix-$$"
+    MOUNTED=0
 
-    # Locate /etc in the deployment.
-    #   composefs/bootc layout: ostree/bootc/deploy/<stateroot>/<checksum>/etc
-    #   classic ostree layout:  ostree/deploy/<stateroot>/deploy/<checksum>/etc
-    DEPLOY_ETC=""
-    DEPLOY_ETC=$(find "$MNT/ostree/bootc/deploy" -maxdepth 3 -name etc -type d 2>/dev/null | head -1) \
-        || true
-    if [[ -z "$DEPLOY_ETC" ]]; then
-        DEPLOY_ETC=$(find "$MNT/ostree/deploy" -maxdepth 4 -name etc -type d 2>/dev/null | head -1) \
-            || true
-    fi
-
-    if [[ -n "$DEPLOY_ETC" ]]; then
-        echo "$HOSTNAME" > "$DEPLOY_ETC/hostname"
-        echo "==> hostname '$HOSTNAME' written to $DEPLOY_ETC/hostname"
+    if [[ -n "$LUKS_DEV" ]]; then
+        # LUKS install: extract passphrase from recipe JSON and unlock the container.
+        PASSPHRASE=$(python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(d.get('encryption', {}).get('passphrase', ''))
+" "$RECIPE" 2>/dev/null || echo "")
+        if [[ -z "$PASSPHRASE" ]]; then
+            echo "ERROR: could not extract LUKS passphrase from recipe — hostname not patched"
+        elif echo "$PASSPHRASE" | cryptsetup luksOpen "$LUKS_DEV" "$MAPPER" --batch-mode; then
+            if mount "/dev/mapper/$MAPPER" "$MNT"; then
+                MOUNTED=1
+            else
+                echo "ERROR: mount /dev/mapper/$MAPPER failed — hostname not patched"
+                cryptsetup luksClose "$MAPPER" || true
+            fi
+        else
+            echo "ERROR: cryptsetup luksOpen $LUKS_DEV failed — hostname not patched"
+        fi
+    elif [[ -n "$ROOT_DEV" ]]; then
+        # Plain install: mount the btrfs partition directly.
+        if mount "$ROOT_DEV" "$MNT"; then
+            MOUNTED=1
+        else
+            echo "ERROR: mount $ROOT_DEV failed — hostname not patched"
+        fi
     else
-        echo "WARNING: deployment etc/ not found under $MNT/ostree — hostname not set"
+        echo "ERROR: no btrfs or crypto_LUKS partition found on /dev/vda — hostname not patched"
     fi
 
-    umount -R "$MNT" && rmdir "$MNT" || true
+    if [[ $MOUNTED -eq 1 ]]; then
+        # Locate /etc in the deployment.
+        #   composefs/bootc layout: ostree/bootc/deploy/<stateroot>/<checksum>/etc
+        #   classic ostree layout:  ostree/deploy/<stateroot>/deploy/<checksum>/etc
+        DEPLOY_ETC=""
+        DEPLOY_ETC=$(find "$MNT/ostree/bootc/deploy" -maxdepth 3 -name etc -type d 2>/dev/null | head -1) \
+            || true
+        if [[ -z "$DEPLOY_ETC" ]]; then
+            DEPLOY_ETC=$(find "$MNT/ostree/deploy" -maxdepth 4 -name etc -type d 2>/dev/null | head -1) \
+                || true
+        fi
+
+        if [[ -n "$DEPLOY_ETC" ]]; then
+            echo "$HOSTNAME" > "$DEPLOY_ETC/hostname"
+            echo "==> hostname '$HOSTNAME' written to $DEPLOY_ETC/hostname"
+        else
+            echo "WARNING: deployment etc/ not found under $MNT/ostree — hostname not set"
+        fi
+
+        umount -R "$MNT" || true
+        if [[ -n "$LUKS_DEV" ]]; then
+            cryptsetup luksClose "$MAPPER" || true
+        fi
+    fi
+
+    rmdir "$MNT" || true
     echo "==> hostname patch complete"
 
 else
