@@ -839,6 +839,9 @@ luks-qemu-ssh-port := "2222"
 # ── Plain (no-encryption) install test paths ─────────────────────────────────
 # Uses port 2223 and separate socket/disk paths so both tests can run concurrently.
 plain-qemu-disk := "/var/tmp/dakota-plain-install.img"
+# Scratch disk for /var/tmp inside the live plain-install VM — prevents ENOSPC
+# during VFS→OCI blob export when the embedded OCI store is used.
+plain-scratch-disk := "/var/tmp/dakota-plain-scratch.img"
 plain-qemu-monitor-live := "/tmp/dakota-plain-qemu-live.sock"
 plain-qemu-monitor-installed := "/tmp/dakota-plain-qemu-installed.sock"
 plain-qemu-serial-live := "/tmp/dakota-plain-qemu-live-serial.log"
@@ -1144,7 +1147,8 @@ plain-e2e target:
     echo "=== Step 1/2: Building ISO (debug={{debug}}, installer_channel={{installer_channel}}) ==="
     just debug={{debug}} installer_channel={{installer_channel}} output_dir={{output_dir}} iso-sd-boot {{target}}
     echo "=== Step 2/2: Plain composefs install test (qemu-mem={{qemu-mem}} MiB) ==="
-    sudo rm -f "{{plain-qemu-disk}}" "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
+    sudo rm -f "{{plain-qemu-disk}}" "{{plain-scratch-disk}}" \
+               "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
                "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
     just qemu-mem={{qemu-mem}} plain-test-qemu {{target}}
 
@@ -1240,6 +1244,9 @@ plain-boot-qemu-live target:
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
     [[ -f "{{plain-qemu-disk}}" ]] || truncate -s 64G "{{plain-qemu-disk}}"
+    # Scratch disk: 16G sparse file mounted over /var/tmp in the live VM to
+    # give skopeo disk-backed space for VFS blob extraction (~9 GB blob).
+    [[ -f "{{plain-scratch-disk}}" ]] || truncate -s 16G "{{plain-scratch-disk}}"
     sudo rm -f "{{plain-qemu-monitor-live}}" "{{plain-qemu-serial-live}}"
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
@@ -1262,6 +1269,8 @@ plain-boot-qemu-live target:
         -device scsi-cd,drive=iso \
         -drive "if=none,id=disk,file={{plain-qemu-disk}},format=raw,cache=unsafe" \
         -device virtio-blk-pci,drive=disk \
+        -drive "if=none,id=scratch,file={{plain-scratch-disk}},format=raw,cache=unsafe" \
+        -device virtio-blk-pci,drive=scratch \
         -netdev "user,id=net0,hostfwd=tcp::{{plain-qemu-ssh-port}}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -monitor "unix:{{plain-qemu-monitor-live}},server,nowait" \
@@ -1322,6 +1331,18 @@ plain-install-qemu target:
     printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
         "${DISK}" "${INSTALL_IMAGE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json
+    # Mount scratch disk over /var/tmp before fisherman runs.
+    # When the VFS OCI store is embedded in the ISO, fisherman reads from
+    # containers-storage and writes blobs to /var/tmp, filling the live tmpfs
+    # (~3.2 GiB at 4 GiB RAM) before the ~9 GB blob copy completes.
+    # /dev/vdb is the 16G scratch disk passed by plain-boot-qemu-live.
+    echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
+    $SSH 'sudo bash -c "
+        mkfs.ext4 -F /dev/vdb >/dev/null
+        umount /var/tmp 2>/dev/null || true
+        mount /dev/vdb /var/tmp
+        echo \"/var/tmp is now disk-backed on /dev/vdb\"
+    "'
     echo "Uploaded recipe — running fisherman (this takes several minutes)..."
     # Use the wrapper script that patches the composefs hostname-write bug:
     # fisherman calls ostree admin --print-current-dir (live sysroot, not target)
