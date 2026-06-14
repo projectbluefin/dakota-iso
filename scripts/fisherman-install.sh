@@ -59,7 +59,7 @@ print(d.get('encryption', {}).get('passphrase', ''))
 " "$RECIPE" 2>/dev/null || echo "")
         if [[ -z "$PASSPHRASE" ]]; then
             echo "ERROR: could not extract LUKS passphrase from recipe — hostname not patched"
-        elif echo "$PASSPHRASE" | cryptsetup luksOpen --key-file=- --batch-mode "$LUKS_DEV" "$MAPPER" 2>/tmp/cryptsetup-err.log; then
+        elif printf '%s' "$PASSPHRASE" | cryptsetup luksOpen --key-file=- --batch-mode "$LUKS_DEV" "$MAPPER" 2>/tmp/cryptsetup-err.log; then
             if mount "/dev/mapper/$MAPPER" "$MNT"; then
                 MOUNTED=1
             else
