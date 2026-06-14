@@ -36,6 +36,7 @@ set -euo pipefail
 OCI_IMAGE=""
 TARGET=""
 OUTPUT_DIR=""
+DEBUG_ARG="0"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --target)            TARGET="${2:?--target requires a target name}"; shift 2 ;;
         --installer-channel) INSTALLER_CHANNEL="${2:?--installer-channel requires a value}"; export INSTALLER_CHANNEL; shift 2 ;;
         --output-dir)        OUTPUT_DIR="${2:?--output-dir requires a path}"; shift 2 ;;
+        --debug)             DEBUG_ARG="${2:?--debug requires 0 or 1}"; shift 2 ;;
         *) break ;;
     esac
 done
@@ -52,7 +54,7 @@ if [[ -n "${TARGET}" ]]; then
     [[ -z "${OUTPUT_DIR}" ]] && { echo "ERROR: --target requires --output-dir" >&2; exit 1; }
 
     LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
-    echo ">>> [live-squashfs] building live container: target=${TARGET} live_target=${LIVE_TARGET} channel=${INSTALLER_CHANNEL:-stable}"
+    echo ">>> [live-squashfs] building live container: target=${TARGET} live_target=${LIVE_TARGET} channel=${INSTALLER_CHANNEL:-stable} debug=${DEBUG_ARG}"
 
     podman build \
         --cap-add sys_admin \
@@ -60,6 +62,7 @@ if [[ -n "${TARGET}" ]]; then
         --layers \
         --build-arg INSTALLER_CHANNEL="${INSTALLER_CHANNEL:-stable}" \
         --build-arg TARGET="${LIVE_TARGET}" \
+        --build-arg DEBUG="${DEBUG_ARG}" \
         -t "${TARGET}-installer" \
         -f ./live/Containerfile ./live
 

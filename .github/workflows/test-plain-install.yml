@@ -93,6 +93,7 @@ jobs:
           sudo -E bash scripts/build-live-squashfs.sh \
             --target dakota \
             --installer-channel "$INSTALLER_CHANNEL" \
+            --debug 1 \
             --output-dir /var/iso-build
           sudo bash scripts/build-iso.sh \
             --squashfs /var/iso-build/dakota-live.squashfs \
