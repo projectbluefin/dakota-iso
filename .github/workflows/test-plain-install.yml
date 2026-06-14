@@ -89,6 +89,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             podman skopeo squashfs-tools xorriso dosfstools mtools
           sudo mkdir -p /var/iso-build
+          mkdir -p output
           sudo -E bash scripts/build-live-squashfs.sh \
             --target dakota \
             --installer-channel "$INSTALLER_CHANNEL" \
