@@ -40,9 +40,10 @@ if grep -q "writing hostname" /tmp/fish.log && \
 
     # Detect whether this is a LUKS install (crypto_LUKS partition on /dev/vda)
     # or a plain btrfs install.
-    LUKS_DEV=$(lsblk -npo NAME,FSTYPE /dev/vda \
+    # Use -r (raw) to suppress lsblk tree characters (├─/└─) in the NAME field.
+    LUKS_DEV=$(lsblk -nrpo NAME,FSTYPE /dev/vda \
                | awk '$2=="crypto_LUKS"{print $1;exit}')
-    ROOT_DEV=$(lsblk -npo NAME,FSTYPE /dev/vda \
+    ROOT_DEV=$(lsblk -nrpo NAME,FSTYPE /dev/vda \
                | awk '$2=="btrfs"{print $1;exit}')
 
     MNT=$(mktemp -d /tmp/hostname-fix-XXXX)
@@ -58,7 +59,7 @@ print(d.get('encryption', {}).get('passphrase', ''))
 " "$RECIPE" 2>/dev/null || echo "")
         if [[ -z "$PASSPHRASE" ]]; then
             echo "ERROR: could not extract LUKS passphrase from recipe — hostname not patched"
-        elif echo "$PASSPHRASE" | cryptsetup luksOpen --key-file=- "$LUKS_DEV" "$MAPPER"; then
+        elif echo "$PASSPHRASE" | cryptsetup luksOpen --key-file=- --batch-mode "$LUKS_DEV" "$MAPPER"; then
             if mount "/dev/mapper/$MAPPER" "$MNT"; then
                 MOUNTED=1
             else
