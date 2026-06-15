@@ -302,8 +302,6 @@ else
 fi
 BOOTLOADER=$(cat "$VARIANT_DIR/bootloader" 2>/dev/null || echo "systemd")
 COMPOSEFS=$(cat "$VARIANT_DIR/composefs" 2>/dev/null || echo "true")
-FLATPAK_VAR_PATH=$(cat "$VARIANT_DIR/flatpak_var_path" 2>/dev/null || echo "state/os/default/var/lib/flatpak")
-REGISTRY=$(cat "$VARIANT_DIR/registry" 2>/dev/null || echo "projectbluefin")
 
 mkdir -p /etc/bootc-installer
 # Use variant-specific images.json if present, otherwise use the shared one.
