@@ -180,11 +180,11 @@ cat > /etc/dconf/db/distro.d/locks/50-live-iso << 'LOCKSEOF'
 /org/gnome/settings-daemon/plugins/power/sleep-inactive-battery-timeout
 LOCKSEOF
 
-dconf update
+dconf update || echo 'Warning: dconf update failed (will compile on first boot)'
 
 # Mask systemd sleep/suspend targets so the kernel never suspends regardless
 # of what any userspace tool requests — belt-and-suspenders for the install.
-systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
 
 # ── GDM autologin ─────────────────────────────────────────────────────────────
 mkdir -p /etc/gdm
@@ -213,7 +213,7 @@ Options=size=80%,nr_inodes=1m
 [Install]
 WantedBy=local-fs.target
 UNITEOF
-systemctl enable var-tmp.mount
+systemctl enable var-tmp.mount || true
 
 # ── Live-ready marker service ─────────────────────────────────────────────────
 # Prints DAKOTA_LIVE_READY to the serial console after display-manager.service
@@ -240,7 +240,7 @@ TTYPath=/dev/ttyS0
 [Install]
 WantedBy=multi-user.target
 LREOF
-systemctl enable live-ready.service
+systemctl enable live-ready.service || true
 
 # fisherman (tuna-installer backend) creates /var/fisherman-tmp and bind-mounts
 # it to /var/tmp.  Pre-create the directory so it exists at boot time.
