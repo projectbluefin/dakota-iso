@@ -210,7 +210,6 @@ jobs:
           RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.RCLONE_CONFIG_R2_ACCESS_KEY_ID }}
           RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.RCLONE_CONFIG_R2_SECRET_ACCESS_KEY }}
           RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.RCLONE_CONFIG_R2_ENDPOINT }}
-          RCLONE_NO_CHECK_BUCKET: "true"
         run: |
           sudo apt-get install -y rclone -qq
           ISO="${{ steps.iso.outputs.path }}"
@@ -219,10 +218,10 @@ jobs:
           LATEST_CHECKSUM="${{ matrix.iso_name }}-latest.iso-CHECKSUM"
 
           # Upload dated ISO + checksum
-          rclone copyto -v "$ISO" "R2:testing/${DATED}"
-          rclone copyto -v "${{ steps.checksum.outputs.path }}" "R2:testing/${DATED}-CHECKSUM"
+          rclone copyto --log-level INFO --s3-no-check-bucket "$ISO" "R2:testing/${DATED}"
+          rclone copyto --log-level INFO --s3-no-check-bucket "${{ steps.checksum.outputs.path }}" "R2:testing/${DATED}-CHECKSUM"
 
-          # Update latest pointers
-          rclone copyto -v "R2:testing/${DATED}" "R2:testing/${LATEST}"
-          rclone copyto -v "R2:testing/${DATED}-CHECKSUM" "R2:testing/${LATEST_CHECKSUM}"
+          # Update latest pointers (server-side copy)
+          rclone copyto --log-level INFO --s3-no-check-bucket "R2:testing/${DATED}" "R2:testing/${LATEST}"
+          rclone copyto --log-level INFO --s3-no-check-bucket "R2:testing/${DATED}-CHECKSUM" "R2:testing/${LATEST_CHECKSUM}"
           echo "Published: ${DATED} → ${LATEST}"
