@@ -109,7 +109,6 @@ RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
     echo "Replaced initramfs for kernel ${kernel}"
 
 COPY src/flatpaks /tmp/flatpaks-list
-COPY src/installer-override.flatpak* /tmp/
 RUN --mount=type=bind,source=src,target=/src \
     --mount=type=cache,target=/var/cache/flatpak-dl,id=dakota-flatpak-${TARGET} \
     /src/install-flatpaks.sh
