@@ -33,6 +33,7 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         dracut \
         dmsetup \
+        systemd-boot-unsigned \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ref /usr/lib/modules /usr/lib/modules
@@ -60,6 +61,10 @@ ARG DEBUG=0
 ENV TARGET=${TARGET} INSTALLER_CHANNEL=${INSTALLER_CHANNEL} DEBUG=${DEBUG}
 
 COPY --from=initramfs-builder /tmp/initramfs.img /tmp/initramfs.img
+# Ensure systemd-boot EFI binary is present for the live ISO builder regardless
+# of whether the target distro ships it (e.g. bluefin uses GRUB, not systemd-boot,
+# so the binary is absent from the base image but still needed for the live ISO).
+COPY --from=initramfs-builder /usr/lib/systemd/boot /usr/lib/systemd/boot
 RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
     mv /tmp/initramfs.img "/usr/lib/modules/${kernel}/initramfs.img" && \
     echo "Replaced initramfs for kernel ${kernel}"
