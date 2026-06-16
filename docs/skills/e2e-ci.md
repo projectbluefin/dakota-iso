@@ -190,3 +190,31 @@ whether the target disk structure is correct after `bootc install to-filesystem`
 **`scripts/fisherman-install.sh` status:** Still present as a safety net but
 no longer load-bearing. Do not add new workaround logic to it — fix the root
 cause in fisherman instead.
+
+### XFS path not tested — broken ISO shipped to R2 (2026-06-16)
+
+**What failed:** `mkfs.xfs` was copied into the live container without its shared library
+dependencies (`libinih.so.1`, `liburcu.so.8`, `libblkid.so.1`, `libuuid.so.1`). The binary
+existed in the image but failed at runtime on every XFS install with:
+```
+mkfs.xfs: error while loading shared libraries: libinih.so.1
+```
+
+**Why CI didn't catch it:**
+1. `plain-install-qemu` hardcoded `"filesystem": "btrfs"` — `mkfs.xfs` was never called in CI
+2. The unit test (`TestXfsprogs`) only checked that the string `"mkfs.xfs"` appeared in the
+   Containerfile — not that its deps were also present
+3. No smoke test verified the binary executed inside the container before squashfs assembly
+
+**The fix (commit `3606cfc`):**
+- Copy all four shared lib deps alongside the binary in the Containerfile
+- `TestXfsprogs` now asserts all four libs are present in the COPY block
+- `build-iso.yml` runs `mkfs.xfs --version` inside the live container after build
+- `plain-install-qemu` changed from `btrfs` to `xfs` to match the interactive installer default
+
+**Rule:** The E2E filesystem must match the installer default. If `images.json` sets
+`"filesystem": "xfs"`, the E2E must use `xfs`. A test that passes on a different filesystem
+than users hit is a false signal, not a passing test.
+
+**Rule:** For every binary copied into a container, assert its shared library deps are also
+present. Use `ldd <binary>` on the source stage to enumerate them.
