@@ -233,6 +233,8 @@ Stop and request human input at these four gates. Never guess past them.
 | **CI trigger on release branch** | Triggering a CI build that will upload to R2 — confirm with user first |
 | **Merge** | PR ready for final review — always requires human `lgtm` |
 
+⛔ **Never use `rclone copyto` to manually overwrite `dakota-live-latest.iso` on R2.** The `latest` pointer is the production artifact users download. Only CI may write to it — after the E2E gate passes. Manual uploads bypass the gate and ship broken ISOs. See [#85](https://github.com/projectbluefin/dakota-iso/issues/85).
+
 See [`docs/skills/human-gates.md`](docs/skills/human-gates.md) for full evidence requirements.
 
 ## Verification Requirements
@@ -240,7 +242,8 @@ See [`docs/skills/human-gates.md`](docs/skills/human-gates.md) for full evidence
 Do not request PR review without evidence:
 
 - [ ] CI is passing (link the run in the PR description)
-- [ ] ISO built and booted (or container-only change — state this explicitly)
+- [ ] **Full install completed and installed system boots** — "ISO booted" alone is NOT sufficient. Run `just plain-e2e <target>` or equivalent and paste the result. A live session boot proves the initramfs works; only a completed install proves fisherman, partitioning, and post-install steps work.
+- [ ] If the change touches default filesystem, encryption, or bootloader: `plain-e2e` output is mandatory, not optional.
 - [ ] ISO size is ~5.3 GB (release compression, no double-embedded store)
 - [ ] Skill file update committed in **this same PR** (not a follow-up)
 - [ ] PR title follows Conventional Commits format

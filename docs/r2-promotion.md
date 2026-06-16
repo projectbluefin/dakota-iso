@@ -3,6 +3,20 @@
 Managing Dakota ISOs in Cloudflare R2: promoting builds, creating named releases,
 and maintaining the `latest` pointers.
 
+## ⛔ Critical rule: never manually overwrite `latest`
+
+**`dakota-live-latest.iso` is the production artifact users download. Only CI
+may write to it — after the E2E gate passes.**
+
+Manual `rclone copyto` to the `latest` pointer is prohibited. It bypasses
+the CI E2E test gate (`plain-e2e`) and ships untested ISOs to users.
+This caused a production outage in June 2026 (broken XFS install, issue [#85](https://github.com/projectbluefin/dakota-iso/issues/85)).
+
+✅ Allowed: `rclone copyto` to **dated slots** (`dakota-live-20260615-abc.iso`) for archival
+✅ Allowed: `rclone copyto` between dated slots to create **named releases** (`alpha3`) after CI E2E passed
+❌ Prohibited: overwriting `dakota-live-latest.iso` from a local build
+❌ Prohibited: overwriting `dakota-live-latest.iso-CHECKSUM` from a local build
+
 ## Bucket layout
 
 | Bucket | Purpose |
