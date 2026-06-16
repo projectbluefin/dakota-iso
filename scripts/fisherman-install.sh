@@ -28,9 +28,12 @@ cat /tmp/fish.log
 [[ $FISH_RC -eq 0 ]] && exit 0
 
 # Non-zero exit — check whether only the hostname write failed.
-# fisherman logs "writing hostname" as an info message just before the ostree call.
+# Match two patterns:
+# 1. Old fisherman: exits via ostree admin --print-current-dir on composefs sysroots
+# 2. New fisherman: exits with "reading composefs deploy base" when state/deploy not found
 if grep -q "writing hostname" /tmp/fish.log && \
-   grep -q "ostree admin --print-current-dir" /tmp/fish.log; then
+   { grep -q "ostree admin --print-current-dir" /tmp/fish.log || \
+     grep -q "composefs deploy\|state/deploy\|no such file or directory" /tmp/fish.log; }; then
 
     echo "==> fisherman hostname write failed (composefs/ostree compat bug) — patching manually"
 
@@ -72,7 +75,8 @@ print(d.get('encryption', {}).get('passphrase', ''))
             cat /tmp/cryptsetup-err.log 2>/dev/null || true
         fi
     elif [[ -n "$ROOT_DEV" ]]; then
-        # Plain install: mount the btrfs partition directly.
+        # Plain btrfs install: mount directly. No subvol=@ since we no longer
+        # use btrfs subvolumes — the OS is at the btrfs root.
         if mount "$ROOT_DEV" "$MNT"; then
             MOUNTED=1
         else

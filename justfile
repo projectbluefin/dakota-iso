@@ -187,6 +187,12 @@ iso-sd-boot target:
         df -h "${WORKDIR}"
     fi
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
+    # Write bootc install config override (injected into OCI payload before squash).
+    # root_mount_spec bypasses UUID auto-detect, which fails inside podman-in-podman
+    # because findmnt cannot read the udev database from the nested container.
+    # LABEL=root is always valid: fisherman formats every root partition with -L root.
+    # Uses TOML single-quoted string ('LABEL=root') to avoid shell quoting conflicts.
+    echo "root-mount-spec = 'LABEL=root'" > "${OUTPUT_DIR}/.bootc-root-mount.toml"
     _ns "
         set -euo pipefail
         echo '=== Disk space inside _ns block ==='
@@ -233,6 +239,12 @@ iso-sd-boot target:
         echo 'Exporting squashed OCI image to archive...'
         echo '=== Squashing '"${PAYLOAD_IMAGE}"' to single layer (avoids VFS explosion) ==='
         SQUASH_CTR=\$(buildah from --pull-never '"${PAYLOAD_IMAGE}"')
+        # Copy host-side bootc root_mount_spec override into the squashed image.
+        # LABEL=root always works: fisherman formats every root partition with -L root.
+        # root_mount_spec avoids UUID auto-detect which fails inside the nested container
+        # (findmnt cannot read the udev database from within a podman-in-podman context).
+        buildah copy \"\${SQUASH_CTR}\" '${OUTPUT_DIR}/.bootc-root-mount.toml' /tmp/.bootc-root-mount.toml
+        buildah run  \"\${SQUASH_CTR}\" -- sh -c 'cat /tmp/.bootc-root-mount.toml >> /usr/lib/bootc/install/00-defaults.toml'
         buildah commit --squash \"\${SQUASH_CTR}\" oci-archive:\${PAYLOAD_OCI}:'"${PAYLOAD_IMAGE}"'
         buildah rm \"\${SQUASH_CTR}\"
         podman rmi '"${PAYLOAD_IMAGE}"' || true
@@ -1339,7 +1351,6 @@ plain-install-qemu target:
     fi
     RECIPE_TMP=$(mktemp /tmp/plain-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    # ponytail: btrfs until xfs.ko lands in dakota-nvidia initramfs (issue #100)
     printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
         "${DISK}" "${INSTALL_IMAGE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json

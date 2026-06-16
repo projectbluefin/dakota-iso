@@ -9,13 +9,13 @@
       "desc": "Project Bluefin Prototype",
       "icon": "resource:///org/bootcinstaller/Installer/images/dakota.png",
       "bootloader": "systemd",
-      "filesystem": "xfs",
+      "filesystem": "btrfs",
       "composefs": true,
       "needs_user_creation": false,
       "flatpak_var_path": "state/os/default/var",
       "filesystems": [
-        "xfs",
-        "btrfs"
+        "btrfs",
+        "xfs"
       ]
     }
   ]
