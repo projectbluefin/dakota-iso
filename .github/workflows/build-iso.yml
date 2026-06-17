@@ -1,5 +1,9 @@
 name: Build and Publish Dakota Live ISO
 
+concurrency:
+  group: publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   schedule:
     - cron: '0 3 1 * *'
@@ -223,8 +227,9 @@ jobs:
       # detects the hostname-only failure, re-mounts the btrfs root, and writes
       # /etc/hostname directly into the deployment directory.
       # Upstream bug: https://github.com/tuna-os/fisherman/issues
-      # ISO upload is gated on the ENOSPC gate (step 2), not this step.
-      # A final "E2E status" step below re-fails the job if the install truly fails.
+      # ISO upload is gated on all three E2E checks: ENOSPC export, full install,
+      # and installed-boot verification. A final "E2E status" step below still
+      # re-fails the job if the install truly fails.
       - name: "E2E 3/4 — Full install composefs (8 GiB)"
         id: e2e_install
         timeout-minutes: 60
@@ -265,30 +270,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
-      - name: Upload ISO to Cloudflare R2
-        if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' }}
-        env:
-          RCLONE_CONFIG_R2_TYPE: s3
-          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
-          RCLONE_CONFIG_R2_REGION: auto
-          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.RCLONE_CONFIG_R2_ACCESS_KEY_ID }}
-          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.RCLONE_CONFIG_R2_SECRET_ACCESS_KEY }}
-          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.RCLONE_CONFIG_R2_ENDPOINT }}
-        run: |
-          sudo apt-get install -y rclone -qq
-          ISO="${{ steps.iso.outputs.path }}"
-          DATED="${{ steps.iso.outputs.dated }}"
-          rclone copyto --log-level INFO --s3-no-check-bucket \
-            "$ISO" "R2:testing/${DATED}"
-          rclone copyto --log-level INFO --s3-no-check-bucket \
-            "$ISO" "R2:testing/dakota-live-latest.iso"
-          rclone copyto --log-level INFO --s3-no-check-bucket \
-            "${{ steps.checksum.outputs.path }}" "R2:testing/${DATED}-CHECKSUM"
-          rclone copyto --log-level INFO --s3-no-check-bucket \
-            "${{ steps.checksum.outputs.latest_path }}" \
-            "R2:testing/dakota-live-latest.iso-CHECKSUM"
-
       - name: Boot verification (UEFI + serial)
+        id: boot_verify
+        continue-on-error: true
         timeout-minutes: 10
         run: |
           sudo apt-get install -y qemu-system-x86 ovmf socat imagemagick -qq
@@ -338,6 +322,29 @@ jobs:
             { echo "ERROR: live environment did not reach ready state"
               sudo tail -50 /tmp/serial.log; exit 1; }
 
+      - name: Upload ISO to Cloudflare R2
+        if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success' && steps.boot_verify.outcome == 'success' }}
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_REGION: auto
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.RCLONE_CONFIG_R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.RCLONE_CONFIG_R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.RCLONE_CONFIG_R2_ENDPOINT }}
+        run: |
+          sudo apt-get install -y rclone -qq
+          ISO="${{ steps.iso.outputs.path }}"
+          DATED="${{ steps.iso.outputs.dated }}"
+          rclone copyto --log-level INFO --s3-no-check-bucket \
+            "$ISO" "R2:testing/${DATED}"
+          rclone copyto --log-level INFO --s3-no-check-bucket \
+            "$ISO" "R2:testing/dakota-live-latest.iso"
+          rclone copyto --log-level INFO --s3-no-check-bucket \
+            "${{ steps.checksum.outputs.path }}" "R2:testing/${DATED}-CHECKSUM"
+          rclone copyto --log-level INFO --s3-no-check-bucket \
+            "${{ steps.checksum.outputs.latest_path }}" \
+            "R2:testing/dakota-live-latest.iso-CHECKSUM"
+
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
@@ -363,14 +370,19 @@ jobs:
           path: screenshot.png
           if-no-files-found: warn
 
-      # Re-fail the job if E2E full install failed (continue-on-error above allowed
-      # the upload to proceed; this step restores the visible red CI status).
+      # Re-fail the job if E2E full install failed (continue-on-error above keeps
+      # diagnostics and artifacts flowing; this step restores the visible red CI status).
       # Note: the fisherman hostname-write composefs bug is patched in
       # scripts/fisherman-install.sh; this step should not trigger for hostname
       # failures anymore.  If it fires, it is a real install failure.
       - name: E2E full-install status
-        if: always() && steps.e2e_install.outcome == 'failure'
+        if: always() && (steps.e2e_install.outcome == 'failure' || steps.boot_verify.outcome == 'failure')
         run: |
-          echo "::error::E2E 3/4 (full composefs install) failed — see step logs above"
-          echo "If this is the fisherman hostname-write composefs bug, check scripts/fisherman-install.sh"
+          if [ "${{ steps.e2e_install.outcome }}" = "failure" ]; then
+            echo "::error::E2E 3/4 (full composefs install) failed — see step logs above"
+            echo "If this is the fisherman hostname-write composefs bug, check scripts/fisherman-install.sh"
+          fi
+          if [ "${{ steps.boot_verify.outcome }}" = "failure" ]; then
+            echo "::error::Production ISO failed the UEFI smoke boot — upload was skipped"
+          fi
           exit 1

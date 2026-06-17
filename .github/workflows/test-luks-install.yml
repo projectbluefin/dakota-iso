@@ -49,6 +49,7 @@ jobs:
         run: just test
 
   luks-e2e:
+    needs: unit-tests
     name: LUKS E2E (${{ matrix.installer_channel }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120

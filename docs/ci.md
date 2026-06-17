@@ -6,8 +6,10 @@ How the GitHub Actions workflows build, test, and publish Dakota ISOs.
 
 | Workflow | File | Trigger |
 |---|---|---|
-| Build & Publish | `build-iso.yml` | 1st of month 03:00 UTC, `workflow_dispatch` |
+| Dakota Build & Publish | `build-iso.yml` | 1st of month 03:00 UTC, `workflow_dispatch` |
+| Bluefin Build & Publish | `build-iso-bluefin.yml` | 1st of month 05:00 UTC, `workflow_dispatch` |
 | LUKS E2E Test | `test-luks-install.yml` | PRs to main, weekly Mon 04:00 UTC, `workflow_dispatch` |
+| Plain Install E2E | `test-plain-install.yml` | PRs to main, weekly Tue 04:00 UTC, `workflow_dispatch` |
 | ShellCheck Lint | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
 
@@ -29,9 +31,9 @@ How the GitHub Actions workflows build, test, and publish Dakota ISOs.
 6. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `dakota-nvidia.rootfs.sfs` + `dakota-nvidia-boot.tar` (~5.3 GB)
 7. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (no `--store` flag — OCI already embedded in squashfs as VFS)
 8. **Generate checksum** — dated + latest variants
-9. **Upload to R2** — `dakota-live-YYYYMMDD-<sha>.iso` + `dakota-live-latest.iso` + checksums
-10. **Boot verification** — QEMU UEFI boot, wait for `DAKOTA_LIVE_READY` serial marker
-11. **Upload artifacts** — ISO + checksum + screenshot (7-day retention)
+9. **Plain-install E2E gates** — live boot, ENOSPC export gate, full install, installed-boot verification
+10. **Boot verification** — QEMU UEFI smoke boot on the production ISO
+11. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, and production boot smoke all succeed
 
 > ⚠️ **Do not add `--store` back or re-add the offline store squashfs step.**  
 > The OCI image is already embedded in the live squashfs via VFS containers-storage.
@@ -70,11 +72,21 @@ If both checks fail after 5 minutes, the job fails with `tail -50 /tmp/serial.lo
 
 ISOs are uploaded to the `testing` bucket as:
 - `dakota-live-YYYYMMDD-<sha>.iso` — permanent dated record
-- `dakota-live-latest.iso` — always points to the last successful build
+- `dakota-live-latest.iso` — points only to the last build whose ENOSPC gate, full install, installed-boot verification, and production ISO smoke boot all passed
 - Matching `-CHECKSUM` files for both
 
 ⚠️ Direct uploads from the local host hang (routing issue). Always use R2→R2
 server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
+
+## build-iso-bluefin.yml
+
+**Triggers:** 1st of each month 05:00 UTC, `workflow_dispatch`  
+**Matrix:** `bluefin`, `bluefin-lts`  
+**Runner:** `ubuntu-24.04`
+
+This workflow builds the Bluefin and Bluefin LTS live ISOs, runs a QEMU smoke boot,
+and uploads to R2 only when that smoke boot succeeds. It does **not** run the full
+Dakota install/verify E2E sequence because those workflows are Dakota-specific.
 
 ## test-luks-install.yml
 
@@ -101,8 +113,9 @@ server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
 `.github/scripts/configure_podman_storage.sh` — intelligently selects the storage
 driver based on the host filesystem:
 - Clears existing podman storage to avoid driver mismatch errors
-- On BTRFS: uses VFS driver (overlayfs is unreliable on BTRFS in CI)
-- On ext4/other: uses overlay driver
+- On BTRFS: uses the native `btrfs` driver
+- On ext4/xfs: uses `overlay`
+- Falls back to `vfs` for unknown filesystems
 
 ### Screenshots
 
@@ -112,10 +125,20 @@ comments. Key screenshots:
 - Plymouth LUKS passphrase prompt
 - Final boot (after passphrase unlock)
 
+## test-plain-install.yml
+
+**Matrix:** `installer_channel: [dev, stable]` (fail-fast: false)  
+**Timeout:** 120 minutes  
+**Triggers:** PRs to main, weekly schedule, `workflow_dispatch`
+
+This workflow builds a debug Dakota ISO and runs the full plain-install QEMU path
+(`just ... plain-test-qemu dakota`) to catch unencrypted installer regressions,
+including the tight-memory ENOSPC class.
+
 ## Adding a new workflow
 
 All workflow files go in `.github/workflows/`. Before adding:
-- Run `actionlint` (config in `.github/actionlint.yaml`)
+- Run `actionlint`
 - Check matrix `fail-fast: false` for variant builds
 - Do not use `installer_channel=dev` in scheduled/release builds
 
@@ -138,8 +161,8 @@ Runs `pytest tests/ -v` against Python 3.11.
 
 | File | Tests | What it checks |
 |---|---|---|
-| `tests/test_live_build_invariants.py` | 26 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, and variant config files. Catches text regressions in source files — not runtime behavior. |
-| `tests/test_luks_unlock.py` | 52 | `dakota/src/luks-unlock.py` routing, passphrase injection key sequences, and screenshot parsing. All subprocess calls are mocked — this tests Python logic, not actual virsh/QEMU behavior. |
+| `tests/test_live_build_invariants.py` | 32 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, publish workflows, E2E workflow wiring, and variant config files. Also pins the DEBUG-only SSH guard, publish gating/concurrency, and `live/src` vs `dakota/src` `luks-unlock.py` sync. |
+| `tests/test_luks_unlock.py` | 52 | `dakota/src/luks-unlock.py` routing, passphrase injection key sequences, and screenshot parsing. `tests/test_live_build_invariants.py` separately asserts the `live/src` helper stays byte-for-byte identical so local helpers and CI exercise the same logic. |
 | `tests/test_multi_arch_iso.py` | 2 | `live/src/build-iso.sh --arch` flag: single-arch backwards compat and two-arch assembly. **Skipped when `xorriso`/`mtools` are absent.** CI installs these tools so the tests run; they are skipped only in local environments lacking them — and the skip message names the exact apt packages to install. |
 
 Run locally with:
@@ -150,6 +173,20 @@ pytest tests/ -v
 ```
 
 ### Lessons
+
+### Publish workflows must gate `latest` on the last real safety check (2026-06-16)
+
+If a workflow updates `*-latest.iso`, the publish step must come **after** the last
+release-significant gate for that artifact — not before it. In practice:
+
+- `build-iso.yml` must wait for ENOSPC, full install, installed-boot verification,
+  **and** the final production ISO smoke boot before updating `dakota-live-latest.iso`
+- `build-iso-bluefin.yml` must wait for its QEMU smoke boot before updating
+  `bluefin-live-latest.iso` / `bluefin-lts-live-latest.iso`
+- Publish workflows define workflow-level `concurrency` so overlapping manual/scheduled
+  runs cannot race each other on the `latest` pointers
+- Expensive E2E jobs (`plain-e2e`, `luks-e2e`) depend on `unit-tests` so cheap failures
+  stop before QEMU burns runner time
 
 ### Double-embedded OCI store inflates ISO to 8 GB (2026-06)
 

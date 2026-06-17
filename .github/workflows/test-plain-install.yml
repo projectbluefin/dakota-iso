@@ -51,6 +51,7 @@ jobs:
       - run: just test
 
   plain-e2e:
+    needs: unit-tests
     name: Plain Install E2E (${{ matrix.installer_channel }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120

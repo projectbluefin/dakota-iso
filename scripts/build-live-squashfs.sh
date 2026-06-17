@@ -7,10 +7,12 @@
 #      sudo -E bash scripts/build-live-squashfs.sh \
 #          --target <name> \
 #          [--installer-channel dev|stable] \
+#          [--oci-image ghcr.io/projectbluefin/dakota-nvidia:stable] \
 #          --output-dir <dir>
 #    Builds the live container from live/Containerfile for the given target,
-#    then exports it to squashfs.  No offline OCI store is embedded;
-#    fisherman pulls the payload from the network at install time.
+#    then exports it to squashfs.  When --oci-image is given, the referenced
+#    payload is embedded into VFS containers-storage for offline installs;
+#    otherwise fisherman pulls the payload from the network at install time.
 #    Outputs: <dir>/<target>-live.squashfs  and  <dir>/<target>-boot-files.tar
 #
 # 2. Positional mode (used by build-iso.yml):

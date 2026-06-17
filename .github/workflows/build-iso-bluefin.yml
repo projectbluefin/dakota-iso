@@ -1,5 +1,9 @@
 name: Build and Publish Bluefin Live ISOs
 
+concurrency:
+  group: publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   schedule:
     - cron: '0 5 1 * *'   # 1st of month, 05:00 UTC (after dakota at 03:00)
@@ -152,8 +156,9 @@ jobs:
           echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
 
       - name: Boot verification (QEMU serial)
+        id: boot_verify
         if: steps.should_build.outputs.build == 'true'
-        continue-on-error: true  # smoke test; full E2E is in build-iso.yml (dakota)
+        continue-on-error: true  # keep artifacts flowing; re-fail below if this fails
         timeout-minutes: 10
         env:
           ISO_PATH: ${{ steps.iso.outputs.path }}
@@ -202,7 +207,8 @@ jobs:
         if: >
           steps.should_build.outputs.build == 'true' &&
           inputs.skip_upload != true &&
-          github.event_name != 'pull_request'
+          github.event_name != 'pull_request' &&
+          steps.boot_verify.outcome == 'success'
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -225,3 +231,9 @@ jobs:
           rclone copyto --log-level INFO --s3-no-check-bucket "R2:testing/${DATED}" "R2:testing/${LATEST}"
           rclone copyto --log-level INFO --s3-no-check-bucket "R2:testing/${DATED}-CHECKSUM" "R2:testing/${LATEST_CHECKSUM}"
           echo "Published: ${DATED} → ${LATEST}"
+
+      - name: Boot verification status
+        if: always() && steps.should_build.outputs.build == 'true' && steps.boot_verify.outcome == 'failure'
+        run: |
+          echo "::error::Bluefin live ISO failed the boot verification smoke test — see logs above"
+          exit 1

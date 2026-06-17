@@ -14,6 +14,9 @@ Covered invariants
    GnomeOS images that have no package manager).
 4. configure-live.sh shell syntax is valid for all target distros.
 5. Variant config files are complete and consistent for known variants.
+6. Release builds keep debug-only SSH/password config inside the DEBUG guard.
+7. build-iso.yml uploads to R2 only after the full install + verify gates pass.
+8. live/src/luks-unlock.py stays in sync with dakota/src/luks-unlock.py.
 """
 
 import re
@@ -26,6 +29,12 @@ LIVE_BUILD_ISO = REPO / "live" / "src" / "build-iso.sh"
 DAKOTA_BUILD_ISO = REPO / "dakota" / "src" / "build-iso.sh"
 CONTAINERFILE = REPO / "live" / "Containerfile"
 CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
+BUILD_ISO_WORKFLOW = REPO / ".github" / "workflows" / "build-iso.yml"
+BUILD_ISO_BLUEFIN_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-bluefin.yml"
+TEST_LUKS_WORKFLOW = REPO / ".github" / "workflows" / "test-luks-install.yml"
+TEST_PLAIN_WORKFLOW = REPO / ".github" / "workflows" / "test-plain-install.yml"
+LIVE_LUKS_UNLOCK = REPO / "live" / "src" / "luks-unlock.py"
+DAKOTA_LUKS_UNLOCK = REPO / "dakota" / "src" / "luks-unlock.py"
 
 # Variant directories that must be fully configured.
 KNOWN_VARIANTS = ["dakota", "bluefin", "bluefin-lts"]
@@ -299,6 +308,144 @@ class TestConfigureLiveSyntax(unittest.TestCase):
             "on Fedora Silverblue /usr/local is a dangling symlink to "
             "/var/usrlocal which doesn't exist at container build time. "
             "Use /usr/share/applications/ instead.",
+        )
+
+
+class TestReleaseSafetyInvariants(unittest.TestCase):
+    """Release-only security and CI gate invariants."""
+
+    def test_configure_live_debug_only_ssh_bits_do_not_leak_past_debug_block(self):
+        """Release builds must keep SSH/password helpers inside DEBUG=1.
+
+        The live ISO may enable SSH/password auth for local E2E, but those
+        release-sensitive markers must stay inside the DEBUG guard rather than
+        leaking into the always-on section below it.
+        """
+        content = CONFIGURE_LIVE.read_text()
+        split_marker = "\n# Give liveuser passwordless sudo so the live session is fully manageable\n"
+        self.assertIn(
+            split_marker,
+            content,
+            "configure-live.sh moved the post-debug boundary comment; update this test.",
+        )
+        debug_section, release_section = content.split(split_marker, 1)
+
+        debug_only_markers = [
+            'echo "liveuser:live" | chpasswd',
+            'echo "root:root" | chpasswd',
+            'PasswordAuthentication yes',
+            'PermitRootLogin yes',
+            'debug-ssh-banner.service',
+        ]
+
+        for marker in debug_only_markers:
+            self.assertIn(
+                marker,
+                debug_section,
+                f"Missing expected DEBUG-only marker in guarded section: {marker!r}",
+            )
+            self.assertNotIn(
+                marker,
+                release_section,
+                f"DEBUG-only marker leaked past the DEBUG guard: {marker!r}",
+            )
+
+    def test_build_iso_upload_waits_for_full_install_and_verify(self):
+        """R2 upload must wait for the real plain-install and boot gates."""
+        content = BUILD_ISO_WORKFLOW.read_text()
+        self.assertIn(
+            'steps.e2e_install.outcome == \'success\'',
+            content,
+            "build-iso.yml must gate R2 upload on a successful full install.",
+        )
+        self.assertIn(
+            'steps.e2e_verify.outcome == \'success\'',
+            content,
+            "build-iso.yml must gate R2 upload on installed-boot verification.",
+        )
+
+        upload_block = content.split("- name: Upload ISO to Cloudflare R2", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        self.assertIn(
+            "steps.e2e_enospc.conclusion == 'success'",
+            upload_block,
+            "Upload step must still require the ENOSPC export gate.",
+        )
+        self.assertIn(
+            "steps.e2e_install.outcome == 'success'",
+            upload_block,
+            "Upload step must wait for full install success.",
+        )
+        self.assertIn(
+            "steps.e2e_verify.outcome == 'success'",
+            upload_block,
+            "Upload step must wait for installed-boot verification.",
+        )
+        self.assertIn(
+            "steps.boot_verify.outcome == 'success'",
+            upload_block,
+            "Upload step must wait for the production ISO smoke boot.",
+        )
+        self.assertLess(
+            content.index("- name: Boot verification (UEFI + serial)"),
+            content.index("- name: Upload ISO to Cloudflare R2"),
+            "Dakota boot verification must run before the publish step.",
+        )
+
+    def test_build_iso_bluefin_upload_waits_for_boot_verification(self):
+        """Bluefin uploads must wait for the smoke-boot gate to pass."""
+        content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
+        upload_block = content.split("- name: Upload ISO to Cloudflare R2", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        self.assertIn(
+            "steps.boot_verify.outcome == 'success'",
+            upload_block,
+            "build-iso-bluefin.yml must gate R2 upload on successful boot verification.",
+        )
+        self.assertIn(
+            "- name: Boot verification status",
+            content,
+            "build-iso-bluefin.yml must restore a red CI status when boot verification fails.",
+        )
+        self.assertIn(
+            "steps.boot_verify.outcome == 'failure'",
+            content,
+            "build-iso-bluefin.yml must explicitly fail the job when boot verification fails.",
+        )
+
+    def test_publish_workflows_define_concurrency(self):
+        """Monthly publishers must not race each other on latest pointers."""
+        for workflow in [BUILD_ISO_WORKFLOW, BUILD_ISO_BLUEFIN_WORKFLOW]:
+            content = workflow.read_text()
+            self.assertIn(
+                "\nconcurrency:\n",
+                content,
+                f"{workflow.name} must define workflow-level concurrency.",
+            )
+
+    def test_e2e_workflows_wait_for_unit_tests(self):
+        """Expensive QEMU E2E jobs should not run after cheap test failures."""
+        self.assertIn(
+            "\n  plain-e2e:\n    needs: unit-tests\n",
+            TEST_PLAIN_WORKFLOW.read_text(),
+            "test-plain-install.yml must gate plain-e2e on unit-tests.",
+        )
+        self.assertIn(
+            "\n  luks-e2e:\n    needs: unit-tests\n",
+            TEST_LUKS_WORKFLOW.read_text(),
+            "test-luks-install.yml must gate luks-e2e on unit-tests.",
+        )
+
+    def test_luks_unlock_copies_are_identical(self):
+        """live/ and dakota/ luks-unlock helpers must stay byte-for-byte aligned."""
+        self.assertEqual(
+            LIVE_LUKS_UNLOCK.read_text(),
+            DAKOTA_LUKS_UNLOCK.read_text(),
+            "live/src/luks-unlock.py and dakota/src/luks-unlock.py diverged. "
+            "Keep them identical so CI/build logic and local helpers exercise "
+            "the same unlock behavior.",
         )
 
 
