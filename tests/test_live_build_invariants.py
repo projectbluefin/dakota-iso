@@ -5,8 +5,14 @@ These tests ensure that changes made to support Fedora/CentOS-based images
 
 Covered invariants
 ------------------
-1. Boot cmdline uses /dev/sr0, NOT CDLABEL= (CDLABEL udev detection is
-   unreliable with Debian-built initramfs on GnomeOS native kernels).
+1. Boot cmdline uses LABEL=DAKOTA_LIVE, NOT CDLABEL= (cdrom_id-based) or
+   /dev/sr0 (optical-only).
+   - CDLABEL= requires the cdrom_id udev helper, which fails with the
+     Debian-built initramfs on GnomeOS native kernels.
+   - /dev/sr0 only exists for optical drives; USB flash drive boots
+     present the ISO as /dev/sdX and silently black-screen when /dev/sr0
+     is not found (regression introduced post-alpha2).
+   - LABEL= uses blkid (any block device) and works on USB, optical, QEMU.
 2. xfsprogs (mkfs.xfs) is present in the Containerfile's build stage so
    fisherman's XFS preflight check passes on images that don't ship it.
 3. Initramfs selection logic: Containerfile tries native dracut first
@@ -55,44 +61,53 @@ LIVE_SRC_VARIANT_FILES = [
 
 
 class TestBootCmdline(unittest.TestCase):
-    """Ensure /dev/sr0 is used, not CDLABEL."""
+    """Ensure LABEL=DAKOTA_LIVE is used (not CDLABEL= or /dev/sr0).
 
-    def _check_no_cdlabel(self, path: Path):
+    /dev/sr0 is optical-only and silently fails on USB flash drive boots
+    (regression post-alpha2). CDLABEL= requires cdrom_id which is broken
+    in the Debian-built initramfs on GnomeOS kernels. LABEL= uses blkid
+    and works on any block device.
+    """
+
+    def _check_boot_root(self, path: Path):
         content = path.read_text()
-        # CDLABEL in the options/linux lines (not in comments) must not appear
         for line in content.splitlines():
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
             self.assertNotIn(
-                "CDLABEL=",
-                stripped,
-                f"{path.name}: found CDLABEL= in non-comment line: {stripped!r}\n"
-                "Use root=live:/dev/sr0 — CDLABEL udev detection is unreliable "
-                "with Debian-built initramfs on GnomeOS native kernels.",
+                "CDLABEL=", stripped,
+                f"{path.name}: found CDLABEL= — use LABEL= (blkid-based, works on USB): {stripped!r}",
+            )
+            self.assertNotIn(
+                "root=live:/dev/sr0", stripped,
+                f"{path.name}: found root=live:/dev/sr0 — breaks USB flash drive boots, "
+                f"use root=live:LABEL=DAKOTA_LIVE: {stripped!r}",
             )
 
-    def test_live_build_iso_uses_dev_sr0_not_cdlabel(self):
-        """live/src/build-iso.sh must not use root=live:CDLABEL=."""
-        self._check_no_cdlabel(LIVE_BUILD_ISO)
-
-    def test_dakota_build_iso_uses_dev_sr0_not_cdlabel(self):
-        """dakota/src/build-iso.sh must not use root=live:CDLABEL=."""
-        self._check_no_cdlabel(DAKOTA_BUILD_ISO)
-
-    def test_live_build_iso_contains_dev_sr0(self):
-        """live/src/build-iso.sh boot entries must include root=live:/dev/sr0."""
-        content = LIVE_BUILD_ISO.read_text()
-        # Count options/linux lines that set root=live:/dev/sr0
-        sr0_lines = [
+    def _check_has_label(self, path: Path):
+        content = path.read_text()
+        label_lines = [
             ln for ln in content.splitlines()
-            if "root=live:/dev/sr0" in ln and not ln.strip().startswith("#")
+            if "root=live:LABEL=DAKOTA_LIVE" in ln and not ln.strip().startswith("#")
         ]
         self.assertGreaterEqual(
-            len(sr0_lines), 2,
-            "Expected at least 2 boot entry lines with root=live:/dev/sr0 "
-            f"(BLS + PXE), found {len(sr0_lines)}.",
+            len(label_lines), 2,
+            f"{path.name}: expected ≥2 boot entries with root=live:LABEL=DAKOTA_LIVE "
+            f"(BLS + loopback), found {len(label_lines)}.",
         )
+
+    def test_live_build_iso_uses_label_not_cdlabel_or_sr0(self):
+        """live/src/build-iso.sh must use LABEL=, not CDLABEL= or /dev/sr0."""
+        self._check_boot_root(LIVE_BUILD_ISO)
+
+    def test_dakota_build_iso_uses_label_not_cdlabel_or_sr0(self):
+        """dakota/src/build-iso.sh must use LABEL=, not CDLABEL= or /dev/sr0."""
+        self._check_boot_root(DAKOTA_BUILD_ISO)
+
+    def test_live_build_iso_contains_label_root(self):
+        """live/src/build-iso.sh boot entries must use root=live:LABEL=DAKOTA_LIVE."""
+        self._check_has_label(LIVE_BUILD_ISO)
 
 
     def _check_nvidia_modeset(self, path):
@@ -100,7 +115,7 @@ class TestBootCmdline(unittest.TestCase):
         boot_lines = [
             ln for ln in content.splitlines()
             if ("options " in ln or "linux " in ln)
-            and "root=live:/dev/sr0" in ln
+            and "root=live:" in ln
             and not ln.strip().startswith("#")
         ]
         missing = [ln for ln in boot_lines if "nvidia-drm.modeset=1" not in ln]

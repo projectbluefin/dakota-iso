@@ -39,7 +39,7 @@
 #
 # Live boot flow:
 #   UEFI firmware → El Torito → FAT ESP → systemd-boot → kernel+initramfs
-#   dmsquash-live: scans for CDLABEL=DAKOTA_LIVE → mounts ISO → squashfs → overlayfs
+#   dmsquash-live: scans for LABEL=DAKOTA_LIVE → mounts ISO → squashfs → overlayfs
 #
 # Validation: serial console output on ttyS0 should show gdm.service starting.
 
@@ -178,7 +178,7 @@ if [[ "${MULTI_ARCH}" == "true" ]]; then
 title   Dakota Live (${arch})
 linux   /images/pxeboot/${arch}/vmlinuz
 initrd  /images/pxeboot/${arch}/initrd.img
-options root=live:/dev/sr0 rd.live.image rd.live.overlay.overlayfs=1 rd.live.squashimg=squashfs-${arch}.img enforcing=0 quiet nvidia-drm.modeset=1 console=${local_console},115200n8
+options root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 rd.live.squashimg=squashfs-${arch}.img enforcing=0 quiet nvidia-drm.modeset=1 console=${local_console},115200n8
 EOF
 
         # Per-arch squashfs
@@ -212,7 +212,7 @@ EOF
             local_console="${SERIAL_CONSOLE[${arch}]:-ttyS0}"
             cat << EOF
 menuentry "Dakota Live (${arch})" {
-    linux /images/pxeboot/${arch}/vmlinuz root=live:/dev/sr0 rd.live.image rd.live.overlay.overlayfs=1 rd.live.squashimg=squashfs-${arch}.img enforcing=0 quiet nvidia-drm.modeset=1 console=${local_console},115200n8 rd.dakota.isofile=\${iso_path}
+    linux /images/pxeboot/${arch}/vmlinuz root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 rd.live.squashimg=squashfs-${arch}.img enforcing=0 quiet nvidia-drm.modeset=1 console=${local_console},115200n8 rd.dakota.isofile=\${iso_path}
     initrd /images/pxeboot/${arch}/initrd.img
 }
 EOF
@@ -265,7 +265,11 @@ default dakota-live.conf
 EOF
 
     # Kernel cmdline for dmsquash-live live boot:
-    #   root=live:CDLABEL=...       dmsquash-live: find the ISO by volume label
+    #   root=live:LABEL=...         dmsquash-live: find the ISO by volume label (blkid-based;
+    #                                works on USB flash drives, optical drives, and QEMU virtio-scsi;
+    #                                CDLABEL= requires cdrom_id which fails with the Debian-built
+    #                                initramfs on GnomeOS kernels; /dev/sr0 only exists for optical
+    #                                drives, breaking USB flash drive boots silently with quiet)
     #   rd.live.image               enable dmsquash-live mode
     #   rd.live.overlay.overlayfs=1 use overlayfs (not device mapper) for the rw layer
     #   enforcing=0                 disable SELinux enforcement (GNOME OS ships it)
@@ -277,7 +281,7 @@ EOF
 title   Dakota Live
 linux   /images/pxeboot/vmlinuz
 initrd  /images/pxeboot/initrd.img
-options root=live:/dev/sr0 rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 quiet nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8
+options root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 quiet nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8
 EOF
 
     # EFI fallback path on the ISO9660 root
@@ -291,7 +295,7 @@ EOF
     cp "${INITRD}"  "${ISO_ROOT}/images/pxeboot/initrd.img"
     cat > "${ISO_ROOT}/boot/grub/loopback.cfg" << EOF
 menuentry "Dakota Live" {
-    linux /images/pxeboot/vmlinuz root=live:/dev/sr0 rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 quiet nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8 rd.dakota.isofile=\${iso_path}
+    linux /images/pxeboot/vmlinuz root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 quiet nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8 rd.dakota.isofile=\${iso_path}
     initrd /images/pxeboot/initrd.img
 }
 EOF
