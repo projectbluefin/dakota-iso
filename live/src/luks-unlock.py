@@ -12,8 +12,9 @@ Plymouth prompt by analysing QEMU screendumps (PPM files):
   - Then inject keystrokes via virsh send-key (libvirt) or QEMU HMP sendkey.
 
 Usage:
-  libvirt mode:  luks-unlock.py libvirt <vm-name> <passphrase> <mac-address>
-  qemu mode:     luks-unlock.py qemu    <monitor-sock> <passphrase> <serial-log>
+  libvirt mode:   luks-unlock.py libvirt   <vm-name> <passphrase> <mac-address>
+  qemu mode:      luks-unlock.py qemu      <monitor-sock> <passphrase> <serial-log>
+  wait-live mode: luks-unlock.py wait-live <monitor-sock> <screenshot-path>
 
 Exit codes:
   0 — passphrase sent and boot succeeded (display re-stabilised after unlock)
@@ -420,6 +421,68 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
     sys.exit(2)
 
 
+def run_wait_live(monitor_sock: str, screenshot_path: str):
+    """Wait for the live boot screen to become bright and stable.
+
+    This ensures that when we capture the live-boot screenshot for CI/PR
+    diagnostics, the installer GUI (or at least a fully rendered desktop)
+    is actually loaded and visible, rather than just a black screen or
+    a transitional boot logo.
+    """
+    print(f"[luks-unlock] wait-live mode — watching monitor {monitor_sock}...", flush=True)
+
+    CONTENT_THRESHOLD = 1.5
+    STABLE_POLLS      = 2
+    POLL_INTERVAL     = 3
+    # Wait up to 5 minutes (300 seconds) for the GUI to load and stabilize
+    timeout = time.time() + 300
+
+    stable_count = 0
+    prev_hash = ""
+    snap = "/tmp/luks-live-boot-snap.ppm"
+
+    while time.time() < timeout:
+        brightness, md5 = qemu_screendump(monitor_sock, snap)
+        print(f"[luks-unlock] wait-live: brightness={brightness:.2f} hash={md5[:8]}", flush=True)
+
+        if brightness < 0:
+            # Screendump failed (socket not ready, etc.)
+            stable_count = 0
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        # Is the screen bright enough?
+        if brightness >= CONTENT_THRESHOLD:
+            # Yes! Save the md5 and let's check stability.
+            if md5 == prev_hash:
+                stable_count += 1
+            else:
+                stable_count = 0
+            prev_hash = md5
+
+            # Keep a backup of the latest bright screenshot in case we time out
+            try:
+                import shutil
+                shutil.copy2(snap, screenshot_path)
+            except OSError:
+                pass
+
+            if stable_count >= STABLE_POLLS:
+                print(f"[luks-unlock] Live boot GUI stable (brightness={brightness:.2f}, {stable_count} identical polls)", flush=True)
+                return
+        else:
+            # Screen is dark/black (boot splash, blank screen, or screen saver)
+            stable_count = 0
+            prev_hash = ""
+
+        time.sleep(POLL_INTERVAL)
+
+    if prev_hash:
+        print("[luks-unlock] WARNING: wait-live timed out — screen never stabilized. Using last captured bright frame.", file=sys.stderr)
+    else:
+        print("[luks-unlock] WARNING: wait-live timed out — screen never reached brightness threshold. No screenshot captured.", file=sys.stderr)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -441,8 +504,14 @@ def main():
             sys.exit(1)
         run_qemu(sys.argv[2], sys.argv[3], sys.argv[4])
 
+    elif mode == "wait-live":
+        if len(sys.argv) < 4:
+            print("Usage: luks-unlock.py wait-live <monitor-sock> <screenshot-path>", file=sys.stderr)
+            sys.exit(1)
+        run_wait_live(sys.argv[2], sys.argv[3])
+
     else:
-        print(f"Unknown mode: {mode!r}. Use 'libvirt' or 'qemu'.", file=sys.stderr)
+        print(f"Unknown mode: {mode!r}. Use 'libvirt', 'qemu', or 'wait-live'.", file=sys.stderr)
         sys.exit(1)
 
 

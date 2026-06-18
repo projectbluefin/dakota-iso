@@ -95,6 +95,31 @@ class TestBootCmdline(unittest.TestCase):
         )
 
 
+    def _check_nvidia_modeset(self, path):
+        content = path.read_text()
+        boot_lines = [
+            ln for ln in content.splitlines()
+            if ("options " in ln or "linux " in ln)
+            and "root=live:/dev/sr0" in ln
+            and not ln.strip().startswith("#")
+        ]
+        missing = [ln for ln in boot_lines if "nvidia-drm.modeset=1" not in ln]
+        self.assertEqual(
+            missing, [],
+            f"{path.name}: boot entries missing nvidia-drm.modeset=1 "
+            "(causes black screen on NVIDIA hardware):\n"
+            + "\n".join(missing),
+        )
+
+    def test_live_build_iso_has_nvidia_drm_modeset(self):
+        """All live/src/build-iso.sh boot entries must include nvidia-drm.modeset=1."""
+        self._check_nvidia_modeset(LIVE_BUILD_ISO)
+
+    def test_dakota_build_iso_has_nvidia_drm_modeset(self):
+        """All dakota/src/build-iso.sh boot entries must include nvidia-drm.modeset=1."""
+        self._check_nvidia_modeset(DAKOTA_BUILD_ISO)
+
+
 class TestXfsprogs(unittest.TestCase):
     """Ensure mkfs.xfs is present in the live environment."""
 

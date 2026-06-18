@@ -509,3 +509,22 @@ fully installed.
 **Fix:** `fisherman-install.sh` now matches `"writing hostname"` AND any of:
 - `"ostree admin --print-current-dir"` (old fisherman)
 - `"composefs deploy"` or `"state/deploy"` or `"no such file or directory"` (new fisherman)
+
+---
+
+### Lesson: nvidia-drm.modeset=1 required in all boot entries (2026-06)
+
+**Symptom:** Black screen on boot on all NVIDIA hardware. Live ISO appears to hang
+after BIOS handoff with no display output.
+
+**Root cause:** `nvidia-drm.modeset=1` was never set in any of the four boot entry
+locations in `live/src/build-iso.sh` and `dakota/src/build-iso.sh`. Without KMS
+enabled, the NVIDIA proprietary driver cannot take over the framebuffer from the
+BIOS, leaving the screen dark even though the system is running fine.
+
+**Fix:** Added `nvidia-drm.modeset=1` to all 4 boot cmdline entries in both files
+(BLS entries, loopback GRUB entries, single-arch and multi-arch paths).
+
+**Regression test:** `TestBootCmdline::test_live_build_iso_has_nvidia_drm_modeset`
+and `test_dakota_build_iso_has_nvidia_drm_modeset` in `tests/test_live_build_invariants.py`
+assert every boot entry line with `root=live:/dev/sr0` contains this parameter.
