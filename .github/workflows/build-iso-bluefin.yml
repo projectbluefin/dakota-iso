@@ -180,9 +180,9 @@ jobs:
             -machine q35 -cpu qemu64 -m 4096 -smp 2 \
             -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
             -drive "if=pflash,format=raw,file=/tmp/efi-vars.fd" \
+            -device ich9-ahci,id=ahci0 \
             -drive "if=none,id=iso,file=${ISO_PATH},media=cdrom,readonly=on,format=raw" \
-            -device virtio-scsi-pci,id=scsi0 \
-            -device scsi-cd,drive=iso,bus=scsi0.0 \
+            -device ide-cd,drive=iso,bus=ahci0.1 \
             -drive "if=none,id=disk,file=/tmp/install.img,format=raw" \
             -device virtio-blk-pci,drive=disk \
             -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
