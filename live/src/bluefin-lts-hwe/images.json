@@ -9,7 +9,7 @@
       "desc": "Bluefin LTS HWE — long-term support with hardware enablement kernel",
       "icon": "resource:///org/bootcinstaller/Installer/images/bluefin-lts.png",
       "bootloader": "grub2",
-      "filesystem": "xfs",
+      "filesystem": "btrfs",
       "composefs": false,
       "needs_user_creation": true,
       "flatpak_var_path": "var/lib/flatpak",

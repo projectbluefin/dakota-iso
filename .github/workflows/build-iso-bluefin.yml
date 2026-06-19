@@ -45,13 +45,12 @@ jobs:
             registry: ublue-os
             tag: lts
             iso_name: bluefin-lts-live
-          # bluefin-lts-hwe: disabled until ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable is published
-          # - variant: bluefin-lts-hwe
-          #   payload_image: ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable
-          #   live_target: bluefin-lts-hwe-nvidia
-          #   registry: projectbluefin
-          #   tag: stable
-          #   iso_name: bluefin-lts-hwe-live
+          - variant: bluefin-lts-hwe
+            payload_image: ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable
+            live_target: bluefin-lts-hwe-nvidia
+            registry: projectbluefin
+            tag: stable
+            iso_name: bluefin-lts-hwe-live
 
     steps:
       - name: Checkout
