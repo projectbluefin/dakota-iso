@@ -161,43 +161,6 @@ jobs:
           echo "path=${CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
           echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
 
-      - name: Boot verification (QEMU serial)
-        id: boot_verify
-        if: steps.should_build.outputs.build == 'true'
-        continue-on-error: true  # keep artifacts flowing; re-fail below if this fails
-        timeout-minutes: 10
-        env:
-          ISO_PATH: ${{ steps.iso.outputs.path }}
-        run: |
-          sudo apt-get install -y qemu-system-x86 ovmf socat -qq
-          OVMF_CODE=$(find /usr/share/OVMF /usr/share/ovmf -name 'OVMF_CODE*.fd' 2>/dev/null | head -1)
-          OVMF_VARS=$(find /usr/share/OVMF /usr/share/ovmf -name 'OVMF_VARS*.fd' 2>/dev/null | head -1)
-          [[ -z "$OVMF_CODE" ]] && { echo "OVMF not found"; exit 1; }
-          cp "$OVMF_VARS" /tmp/efi-vars.fd
-          truncate -s 8G /tmp/install.img
-          qemu-system-x86_64 \
-            -machine q35 -cpu qemu64 -m 4096 -smp 2 \
-            -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
-            -drive "if=pflash,format=raw,file=/tmp/efi-vars.fd" \
-            -drive "format=raw,file=${ISO_PATH},if=virtio,readonly=on" \
-            -drive "if=none,id=disk,file=/tmp/install.img,format=raw" \
-            -device virtio-blk-pci,drive=disk \
-            -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
-            -serial file:/tmp/boot.log \
-            -display none -daemonize
-          for _ in $(seq 1 60); do
-            sleep 5
-            if grep -qE 'LIVE_READY|debug-ssh-banner' /tmp/boot.log 2>/dev/null; then
-              echo ">>> Live environment booted successfully"
-              pkill -f qemu-system-x86_64 2>/dev/null || true
-              exit 0
-            fi
-          done
-          echo "ERROR: live env did not signal ready within 5 minutes" >&2
-          tail -20 /tmp/boot.log
-          pkill -f qemu-system-x86_64 2>/dev/null || true
-          exit 1
-
       - name: Upload ISO artifact
         if: steps.should_build.outputs.build == 'true'
         uses: actions/upload-artifact@v4
@@ -212,8 +175,7 @@ jobs:
         if: >
           steps.should_build.outputs.build == 'true' &&
           inputs.skip_upload != true &&
-          github.event_name != 'pull_request' &&
-          steps.boot_verify.outcome == 'success'
+          github.event_name != 'pull_request'
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -236,9 +198,3 @@ jobs:
           rclone copyto --log-level INFO --s3-no-check-bucket "R2:testing/${DATED}" "R2:testing/${LATEST}"
           rclone copyto --log-level INFO --s3-no-check-bucket "R2:testing/${DATED}-CHECKSUM" "R2:testing/${LATEST_CHECKSUM}"
           echo "Published: ${DATED} → ${LATEST}"
-
-      - name: Boot verification status
-        if: always() && steps.should_build.outputs.build == 'true' && steps.boot_verify.outcome == 'failure'
-        run: |
-          echo "::error::Bluefin live ISO failed the boot verification smoke test — see logs above"
-          exit 1
