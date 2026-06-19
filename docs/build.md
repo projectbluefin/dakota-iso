@@ -219,3 +219,55 @@ If you see `No filesystem uuid found in target root` — check that:
 1. The `.bootc-root-mount.toml` was created in `output/`
 2. The `buildah copy` + `buildah run` steps ran (look for `Squashing` line in build log)
 3. The injected config has no duplicate `[install]` section headers
+
+### ostree.final-diffid: composefs vs ostree-native images (2026-06)
+
+`buildah commit --squash` produces a **regular filesystem tar** (the merged OS files), not
+an ostree commit blob.
+
+- **Composefs images** (Dakota): `ostree.final-diffid` must be updated to point to the
+  new squashed layer's diff_id — bootc reads it to locate the composefs commit layer.
+- **Ostree-native images** (bluefin/Silverblue): the annotation must be **removed**.
+  If it stays, bootc uses the "ostree-encapsulation" install path and fails with
+  `Expected commit object, not File` — it's looking for an ostree commit blob but the
+  squashed layer is a filesystem tar.
+
+The `iso-sd-boot` recipe detects composefs mode from `live/src/<target>/composefs` and
+either updates or removes the annotation accordingly.
+
+### /run overlay size: 28 GB RAM needed for bluefin offline install (2026-06)
+
+The live environment's `/run` tmpfs defaults to 20% of VM RAM (e.g. 5.6 GB on a 28 GB VM).
+When fisherman runs `podman run containers-storage:bluefin-nvidia`, the VFS storage driver
+creates a full 8.8 GB copy of the image in `/var/lib/containers/storage/vfs/dir/` (the
+overlay upper dir at `/run/overlayfs`). With a 5.6 GB /run, the copy immediately fails
+with "no space left on device".
+
+Fix: `sudo mount -o remount,size=24G /run` before running fisherman. This is automated
+in `configure-live.sh` for bluefin (adds a systemd dropin that remounts /run at boot).
+Alternatively, set `rd.live.overlay.size=24576` in boot entries.
+
+For QEMU testing of bluefin installs: use at least 28 GB RAM (`-m 28672`).
+With 16 GB, the VFS container creation runs out of memory on the RAM-backed overlay.
+
+### Ghost lab: remote build machine for ISOs (2026-06)
+
+`ghost` is an SSH host with all required tools (podman, buildah, skopeo, mksquashfs,
+xorriso, just) and large disk space. Use it for parallel or background ISO builds:
+
+```bash
+# sync repo to ghost (first time or after changes)
+rsync -a --exclude='.git' --exclude='output/' --exclude='workdir/' \
+  ~/src/dakota-iso/ ghost:~/src/dakota-iso/
+
+# background build on ghost
+ssh ghost 'cd ~/src/dakota-iso && nohup just iso-sd-boot bluefin \
+  > output/build.log 2>&1 &'
+
+# watch progress
+ssh ghost 'tail -f ~/src/dakota-iso/output/build.log'
+```
+
+**Do NOT manually push ghost-built ISOs to R2.** Let CI handle all R2 uploads.
+The `latest` pointer is the production artifact — only CI may write it after
+passing the boot verification gate. See `docs/r2-promotion.md`.

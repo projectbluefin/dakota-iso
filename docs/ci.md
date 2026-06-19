@@ -81,12 +81,41 @@ server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
 ## build-iso-bluefin.yml
 
 **Triggers:** 1st of each month 05:00 UTC, `workflow_dispatch`  
-**Matrix:** `bluefin`, `bluefin-lts`  
+**Matrix:** `bluefin`, `bluefin-lts` (bluefin-lts-hwe commented out — pending image publish)  
 **Runner:** `ubuntu-24.04`
 
 This workflow builds the Bluefin and Bluefin LTS live ISOs, runs a QEMU smoke boot,
 and uploads to R2 only when that smoke boot succeeds. It does **not** run the full
 Dakota install/verify E2E sequence because those workflows are Dakota-specific.
+
+### Boot verification: use AHCI, not SCSI CD (2026-06)
+
+The smoke boot uses OVMF + QEMU. GitHub Actions runners have no KVM — they run
+`-cpu qemu64` (software emulation). Without KVM, the SCSI bus enumeration in OVMF
+is too slow: OVMF never discovers the SCSI CD and falls straight through to PXE boot,
+failing with `BdsDxe: No bootable option or device was found`.
+
+**Do not use:**
+```yaml
+-device virtio-scsi-pci,id=scsi0
+-device scsi-cd,drive=iso,bus=scsi0.0
+```
+
+**Use instead:**
+```yaml
+-device ich9-ahci,id=ahci0
+-device ide-cd,drive=iso,bus=ahci0.1
+```
+
+OVMF reliably auto-discovers AHCI optical drives on q35 regardless of CPU speed.
+The local `boot-iso-serial` justfile recipe uses SCSI + KVM (`-accel kvm -cpu host`)
+which works, but CI cannot use KVM.
+
+### Adding a new Bluefin variant to the matrix
+
+When a new image (e.g. `bluefin-lts-hwe`) is ready to publish:
+1. Uncomment the matrix entry in `build-iso-bluefin.yml`
+2. The variant files in `bluefin-lts-hwe/` and `live/src/bluefin-lts-hwe/` are already committed
 
 ## test-luks-install.yml
 
