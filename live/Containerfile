@@ -102,12 +102,14 @@ COPY --from=initramfs-builder /tmp/initramfs.img /tmp/initramfs.img
 #   - Copy to BOTH lib paths so both toolchains find it:
 #     /usr/lib/x86_64-linux-gnu/ → Debian-compiled binaries
 #     /usr/lib64/                → Fedora-compiled binaries
-# liburcu/libblkid/libuuid are already present in Fedora but harmless to have twice.
+# liburcu is already present in Fedora but harmless to have twice.
+# libblkid and libuuid must NOT be copied from Debian — the target base image
+# (freedesktop-sdk for dakota, Fedora for bluefin) ships a newer version that
+# sfdisk/libfdisk requires (BLKID_2_40+). Overwriting with Debian bookworm's
+# older libblkid (only BLKID_2_21) breaks sfdisk with "version BLKID_2_40 not found".
 COPY --from=initramfs-builder \
     /usr/lib/x86_64-linux-gnu/libinih.so.1 \
     /usr/lib/x86_64-linux-gnu/liburcu.so.8 \
-    /usr/lib/x86_64-linux-gnu/libblkid.so.1 \
-    /usr/lib/x86_64-linux-gnu/libuuid.so.1 \
     /usr/lib/x86_64-linux-gnu/
 COPY --from=initramfs-builder /usr/lib/x86_64-linux-gnu/libinih.so.1 /usr/lib64/libinih.so.1
 COPY --from=initramfs-builder /usr/lib/x86_64-linux-gnu/liburcu.so.8 /usr/lib64/liburcu.so.8
