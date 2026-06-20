@@ -81,7 +81,7 @@ server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
 ## build-iso-bluefin.yml
 
 **Triggers:** 1st of each month 05:00 UTC, `workflow_dispatch`  
-**Matrix:** `bluefin`, `bluefin-lts` (bluefin-lts-hwe commented out — pending image publish)  
+**Matrix:** `bluefin`, `bluefin-lts-hwe`  
 **Runner:** `ubuntu-24.04`
 
 This workflow builds the Bluefin and Bluefin LTS live ISOs, runs a QEMU smoke boot,
@@ -113,9 +113,9 @@ which works, but CI cannot use KVM.
 
 ### Adding a new Bluefin variant to the matrix
 
-When a new image (e.g. `bluefin-lts-hwe`) is ready to publish:
-1. Uncomment the matrix entry in `build-iso-bluefin.yml`
-2. The variant files in `bluefin-lts-hwe/` and `live/src/bluefin-lts-hwe/` are already committed
+When a new image is ready to publish:
+1. Add the matrix entry to `build-iso-bluefin.yml`
+2. Commit the variant files in `<variant>/` and `live/src/<variant>/` in the same PR
 
 ## test-luks-install.yml
 
@@ -211,7 +211,7 @@ release-significant gate for that artifact — not before it. In practice:
 - `build-iso.yml` must wait for ENOSPC, full install, installed-boot verification,
   **and** the final production ISO smoke boot before updating `dakota-live-latest.iso`
 - `build-iso-bluefin.yml` must wait for its QEMU smoke boot before updating
-  `bluefin-live-latest.iso` / `bluefin-lts-live-latest.iso`
+  `bluefin-live-latest.iso` / `bluefin-lts-hwe-live-latest.iso`
 - Publish workflows define workflow-level `concurrency` so overlapping manual/scheduled
   runs cannot race each other on the `latest` pointers
 - Expensive E2E jobs (`plain-e2e`, `luks-e2e`) depend on `unit-tests` so cheap failures
@@ -619,7 +619,7 @@ same injection. They must stay in sync.
 ### Non-composefs variants use OCI layout, not VFS squash (2026-06)
 
 Dakota (composefs) embeds the payload as VFS containers-storage inside the squashfs.
-This path does not work for Fedora/Silverblue images (bluefin, bluefin-lts, bluefin-lts-hwe)
+This path does not work for Fedora/Silverblue images (bluefin, bluefin-lts-hwe)
 because squashing destroys the ostree commit structure bootc requires, producing:
 ```
 Expected commit object, not File
@@ -654,13 +654,9 @@ do **not** automatically land in released installer builds.
 
 `build-iso-bluefin.yml` has a `strategy.matrix` that hardcodes `payload_image`,
 `live_target`, `registry`, and `tag` per variant. These same values live in the
-variant config files (`bluefin-lts/payload_ref`, `bluefin-lts/registry`, etc.).
+variant config files (`bluefin-lts-hwe/payload_ref`, `bluefin-lts-hwe/registry`, etc.).
 
 **They can and do drift independently.**
-
-When `dc5489d` fixed `bluefin-lts/payload_ref` → `projectbluefin/bluefin-lts-hwe-nvidia:stable`,
-the corresponding matrix entry (`ghcr.io/ublue-os/bluefin-gdx:lts`) was not updated.
-Any `bluefin-lts` build that ran after that commit would silently pull the stale `ublue-os` image.
 
 **Rule:** Every change to a variant config file (`payload_ref`, `registry`, `live_target`)
 must be accompanied by the matching matrix update in `build-iso-bluefin.yml` in the same commit.

@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       variant:
-        description: 'Which variant to build (bluefin, bluefin-lts, or all)'
+        description: 'Which variant to build (bluefin, bluefin-lts-hwe, or all)'
         required: false
         default: all
         type: string
@@ -39,12 +39,6 @@ jobs:
             registry: projectbluefin
             tag: stable
             iso_name: bluefin-live
-          - variant: bluefin-lts
-            payload_image: ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable
-            live_target: bluefin-lts-hwe-nvidia
-            registry: projectbluefin
-            tag: stable
-            iso_name: bluefin-lts-live
           - variant: bluefin-lts-hwe
             payload_image: ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable
             live_target: bluefin-lts-hwe-nvidia

@@ -8,8 +8,7 @@ How the Dakota ISO build target works.
 |---|---|---|---|---|---|
 | `dakota` | `projectbluefin/dakota-nvidia:stable` | same | systemd-boot | yes | btrfs |
 | `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs |
-| `bluefin-lts` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | xfs |
-| `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | xfs | — *pending image publish* |
+| `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | xfs |
 
 There is one unified ISO: `dakota-live.iso`.
 
@@ -91,17 +90,8 @@ to fail with an invalid reference error. Always strip when reading payload_ref:
 
 ### Templating a variant for an unpublished image (2026-06)
 
-Create all variant files (`bluefin-lts-hwe/`, `live/src/bluefin-lts-hwe/`) and commit
-them, but add the CI matrix entry **commented out** in `build-iso-bluefin.yml`:
-
-```yaml
-# bluefin-lts-hwe: disabled until ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable is published
-# - variant: bluefin-lts-hwe
-#   payload_image: ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable
-#   ...
-```
-
-This keeps the variant files reviewable and mergeable without breaking CI.
+Create all variant files and commit them, but add the CI matrix entry **commented out**
+in `build-iso-bluefin.yml`. This keeps files reviewable without breaking CI.
 When the image is published, enabling it is a single-line uncomment.
 
 ### Fedora/Silverblue-based variants: grub2 + no composefs (2026-06)
@@ -116,28 +106,16 @@ Bluefin and bluefin-lts-hwe are Fedora Silverblue bootc images. Key differences 
 cat <variant>/payload_ref | tr -d '[:space:]'
 ```
 
-### bluefin-lts payload_ref was pointing at ublue-os org (2026-06)
+### Dead image refs — ublue-os org (2026-06)
 
-The `bluefin-lts` variant was created with stale `ublue-os/bluefin-gdx` refs from before
-the migration to `projectbluefin`. The correct images are:
-
-```
-bluefin-lts/payload_ref             → ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable
-bluefin-lts/registry                → projectbluefin
-live/src/bluefin-lts/base_imgref    → ghcr.io/projectbluefin/bluefin-lts:stable
-live/src/bluefin-lts/nvidia_imgref  → ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable
-```
-
-`projectbluefin/bluefin-lts` publishes no standalone `-nvidia` image — the nvidia/HWE
-variant is `bluefin-lts-hwe-nvidia:stable`. Always verify published images with:
+`ublue-os` image names are legacy. All active images live under `ghcr.io/projectbluefin/`.
+`bluefin-gdx` does not exist in `projectbluefin` — never use it.
+`projectbluefin/bluefin-lts` publishes no standalone `-nvidia` image; the nvidia/HWE
+variant is `bluefin-lts-hwe-nvidia:stable`. Always verify with:
 ```bash
 skopeo list-tags docker://ghcr.io/projectbluefin/<image>
 ```
-or read the `execute-release.yml` workflow in `projectbluefin/bluefin-lts` to see
-what images are actually promoted to `:stable`.
-
-`bluefin-gdx` is a legacy `ublue-os` image name and does not exist in `projectbluefin`.
-Never use it.
+or read `execute-release.yml` in the source repo.
 
 ### systemd-boot title is controlled by live_title file (2026-06)
 
@@ -146,7 +124,6 @@ as the boot menu entry in systemd-boot and loopback.cfg:
 
 ```
 bluefin/live_title          → Bluefin Live
-bluefin-lts/live_title      → Bluefin LTS Live
 bluefin-lts-hwe/live_title  → Bluefin LTS HWE Live
 dakota/live_title            → Dakota Live
 ```

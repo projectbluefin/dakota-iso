@@ -123,7 +123,7 @@ fi
 #     Fisherman exports VFS → OCI at install time and passes
 #     --source-imgref oci:... --composefs-backend to bootc.
 #
-#   standard-ostree / non-composefs (e.g. bluefin, bluefin-lts):
+#   standard-ostree / non-composefs (e.g. bluefin, bluefin-lts-hwe):
 #     Store as OCI layout directly — NO squash.
 #     Squashing flattens the ostree commit structure and breaks bootc's
 #     ostree-ext unencapsulation ("Expected commit object, not File").

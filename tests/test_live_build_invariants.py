@@ -1,7 +1,7 @@
 """Tests for live ISO build correctness — regression guards for cross-distro support.
 
 These tests ensure that changes made to support Fedora/CentOS-based images
-(bluefin, bluefin-lts) do not break the existing GnomeOS/dakota pipeline.
+(bluefin, bluefin-lts-hwe) do not break the existing GnomeOS/dakota pipeline.
 
 Covered invariants
 ------------------
@@ -43,7 +43,7 @@ LIVE_LUKS_UNLOCK = REPO / "live" / "src" / "luks-unlock.py"
 DAKOTA_LUKS_UNLOCK = REPO / "dakota" / "src" / "luks-unlock.py"
 
 # Variant directories that must be fully configured.
-KNOWN_VARIANTS = ["dakota", "bluefin", "bluefin-lts"]
+KNOWN_VARIANTS = ["dakota", "bluefin", "bluefin-lts-hwe"]
 
 # Required files in every variant directory.
 VARIANT_REQUIRED_FILES = ["payload_ref", "live_target", "tag", "registry"]
@@ -202,7 +202,7 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
             "AS initramfs-native",
             self.content,
             "Missing 'AS initramfs-native' stage. Native dracut build is "
-            "required for Fedora-based images (bluefin/bluefin-lts) to get "
+            "required for Fedora-based images (bluefin/bluefin-lts-hwe) to get "
             "correct udev rules matching the Fedora kernel.",
         )
 
@@ -510,8 +510,8 @@ class TestVariantConfig(unittest.TestCase):
                 )
 
     def test_non_dakota_variants_have_live_src_config(self):
-        """bluefin and bluefin-lts must have live/src/<variant>/ config dirs."""
-        for variant in ["bluefin", "bluefin-lts"]:
+        """bluefin and bluefin-lts-hwe must have live/src/<variant>/ config dirs."""
+        for variant in ["bluefin", "bluefin-lts-hwe"]:
             live_src_dir = REPO / "live" / "src" / variant
             for filename in LIVE_SRC_VARIANT_FILES:
                 path = live_src_dir / filename
@@ -537,8 +537,8 @@ class TestVariantConfig(unittest.TestCase):
         )
 
     def test_fedora_variants_use_grub_bootloader(self):
-        """bluefin and bluefin-lts must specify bootloader=grub."""
-        for variant in ["bluefin", "bluefin-lts"]:
+        """bluefin and bluefin-lts-hwe must specify bootloader=grub."""
+        for variant in ["bluefin", "bluefin-lts-hwe"]:
             bootloader_file = REPO / "live" / "src" / variant / "bootloader"
             if bootloader_file.exists():
                 bootloader = bootloader_file.read_text().strip()
@@ -550,8 +550,8 @@ class TestVariantConfig(unittest.TestCase):
                 )
 
     def test_fedora_variants_disable_composefs(self):
-        """bluefin and bluefin-lts must set composefs=false."""
-        for variant in ["bluefin", "bluefin-lts"]:
+        """bluefin and bluefin-lts-hwe must set composefs=false."""
+        for variant in ["bluefin", "bluefin-lts-hwe"]:
             composefs_file = REPO / "live" / "src" / variant / "composefs"
             if composefs_file.exists():
                 composefs = composefs_file.read_text().strip()
