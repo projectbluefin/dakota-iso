@@ -297,3 +297,21 @@ There is no `bluefin-lts-nvidia` without `-hwe`. There is no `bluefin-gdx` in pr
 
 Each variant directory has a `live_title` file. `build-iso.sh` reads it via `--title`.
 To change what users see in the boot menu, edit that file — do not touch `build-iso.sh`.
+
+### libblkid/libuuid must come from base image, not Debian stage (2026-06)
+
+`live/Containerfile` stage 3 copies some libs from Debian bookworm for `mkfs.xfs`:
+`libinih.so.1` and `liburcu.so.8` genuinely must come from Debian (wrong version in Fedora / absent in GNOME OS).
+
+**Do NOT copy `libblkid.so.1` or `libuuid.so.1` from Debian.** Both the freedesktop-sdk
+(dakota) and Fedora (bluefin) base images ship their own newer versions at
+`/usr/lib/x86_64-linux-gnu/`. Overwriting them with Debian bookworm's older copy
+(only BLKID_2_21) breaks `sfdisk` which requires `BLKID_2_40` via `libfdisk.so.1`:
+
+```
+sfdisk: /usr/lib/x86_64-linux-gnu/libblkid.so.1: version `BLKID_2_40' not found
+```
+
+`mkfs.xfs` (Debian-compiled) works fine with the newer system `libblkid` because it
+is backward-compatible with all earlier symbol versions. Only copy what is genuinely
+missing from the target base image.
