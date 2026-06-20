@@ -228,12 +228,21 @@ SFS_LEVEL=3; SFS_BLOCK=131072
 echo ">>> [live-squashfs] mksquashfs -> ${OUTPUT_SFS} (zstd-${SFS_LEVEL}) ..."
 mkdir -p "$(dirname "${OUTPUT_SFS}")"
 
+# dmsquash-live-root (Debian bookworm dracut) uses the squashfs directly as the
+# live rootfs when it finds a /proc directory at the squashfs root.  Without it,
+# it falls through to die "Failed to find a root filesystem".
+# Ensure proc exists as an empty directory and exclude only its CONTENTS.
+# NOTE: do not use "-e proc" — newer mksquashfs (4.7+) removes the directory
+# itself when given a bare "-e proc", while older versions kept an empty dir.
+mkdir -p "${SFS_ROOT}/proc"
+
 mksquashfs "${SFS_ROOT}" "${OUTPUT_SFS}" \
     -noappend -comp zstd \
     -Xcompression-level "${SFS_LEVEL}" \
     -b "${SFS_BLOCK}" \
     -processors 4 \
-    -e proc -e sys -e dev -e run -e tmp
+    -wildcards \
+    -e "proc/*" -e sys -e dev -e run -e tmp
 echo ">>> [live-squashfs] squashfs: $(du -sh "${OUTPUT_SFS}" | cut -f1)"
 
 echo ">>> [live-squashfs] exporting boot files tar ..."
