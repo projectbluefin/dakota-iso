@@ -217,6 +217,30 @@ WantedBy=local-fs.target
 UNITEOF
 systemctl enable var-tmp.mount || true
 
+# ── /run overlay expansion ────────────────────────────────────────────────────
+# The live root overlay's upper dir lives under /run (as /run/overlayfs).  The
+# VFS storage driver creates a full copy of the squashed image here when podman
+# creates a container from it — this copy can be 8–9 GB for large images like
+# bluefin-nvidia.  The default /run tmpfs is 20% of RAM (~5.6 GB on a 28 GB
+# machine), which is too small.  Expand it to 70% so offline installs succeed
+# on machines with 16 GB+ RAM (min recommended for bluefin).
+cat > /usr/lib/systemd/system/live-run-expand.service << 'UNITEOF'
+[Unit]
+Description=Expand /run tmpfs for large VFS offline installs
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=basic.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/mount -o remount,size=70% /run
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
+UNITEOF
+systemctl enable live-run-expand.service || true
+
 # ── Live-ready marker service ─────────────────────────────────────────────────
 # Prints DAKOTA_LIVE_READY to the serial console after display-manager.service
 # starts.  CI boot verification greps for this token in the serial log.

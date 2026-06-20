@@ -208,21 +208,37 @@ iso-sd-boot target:
     podman unshare buildah run  "${INJECT_CTR}" -- sh -c 'cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
     podman unshare buildah run  "${INJECT_CTR}" -- mkdir -p /etc/containers
     podman unshare buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.vfs-storage.conf" /etc/containers/storage.conf
-    echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
+    # Detect whether this variant uses composefs (affects how annotations are handled post-squash).
+    COMPOSEFS_BACKEND=$(cat "live/src/{{target}}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "false")
+    echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion, composefs=${COMPOSEFS_BACKEND}) ==="
     podman unshare buildah commit --squash "${INJECT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
-    # Fix ostree.final-diffid: buildah --squash preserves the original annotation
-    # pointing to the old final layer.  bootc reads from config.Labels; update to
-    # the new squashed layer's diff_id.
-    SQUASHED_DIFFID=$(podman unshare skopeo inspect --config "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}" 2>/dev/null | \
-        python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)
-    if [[ -n "${SQUASHED_DIFFID}" ]]; then
-        echo "Updating ostree.final-diffid to ${SQUASHED_DIFFID}"
-        ANNOT_CTR=$(podman unshare buildah from --pull-never "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}")
-        podman unshare buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-        podman unshare buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-        podman unshare buildah commit --squash "${ANNOT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
-        podman unshare buildah rm "${ANNOT_CTR}"
+    ANNOT_CTR=$(podman unshare buildah from --pull-never "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}")
+    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
+        # Composefs images: update ostree.final-diffid to point to the new single squashed
+        # layer's diff_id.  bootc reads this to locate the composefs commit layer.
+        SQUASHED_DIFFID=$(podman unshare skopeo inspect --config "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}" 2>/dev/null | \
+            python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)
+        if [[ -n "${SQUASHED_DIFFID}" ]]; then
+            echo "Updating ostree.final-diffid to ${SQUASHED_DIFFID} (composefs mode)"
+            podman unshare buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
+            podman unshare buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
+        fi
+    else
+        # Ostree-native images (e.g. Fedora Silverblue / bluefin): buildah --squash
+        # produces a regular filesystem tar layer, NOT an ostree commit blob.  If
+        # ostree.final-diffid / ostree.commit are present, bootc tries the
+        # ostree-encapsulation install path and fails with "Expected commit object, not File".
+        # Remove them so bootc uses the native filesystem-layer install path instead.
+        echo "Removing ostree.final-diffid and ostree.commit (ostree-native image — annotations invalid after squash)"
+        podman unshare buildah config --unsetlabel "ostree.final-diffid" "${ANNOT_CTR}" 2>/dev/null || true
+        podman unshare buildah config --unsetlabel "ostree.commit" "${ANNOT_CTR}" 2>/dev/null || true
+        podman unshare buildah config --unsetlabel "rpmostree.inputhash" "${ANNOT_CTR}" 2>/dev/null || true
+        podman unshare buildah config --unsetannotation "ostree.final-diffid" "${ANNOT_CTR}" 2>/dev/null || true
+        podman unshare buildah config --unsetannotation "ostree.commit" "${ANNOT_CTR}" 2>/dev/null || true
+        podman unshare buildah config --unsetannotation "rpmostree.inputhash" "${ANNOT_CTR}" 2>/dev/null || true
     fi
+    podman unshare buildah commit --squash "${ANNOT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
+    podman unshare buildah rm "${ANNOT_CTR}"
     podman unshare buildah rm "${INJECT_CTR}"
     podman rmi "${PAYLOAD_IMAGE}" || true
 

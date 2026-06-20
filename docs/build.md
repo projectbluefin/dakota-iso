@@ -250,24 +250,26 @@ Alternatively, set `rd.live.overlay.size=24576` in boot entries.
 For QEMU testing of bluefin installs: use at least 28 GB RAM (`-m 28672`).
 With 16 GB, the VFS container creation runs out of memory on the RAM-backed overlay.
 
-### Ghost lab: remote build machine for ISOs (2026-06)
+### Ghost lab: ISO testing via Argo Workflows (2026-06)
 
-`ghost` is an SSH host with all required tools (podman, buildah, skopeo, mksquashfs,
-xorriso, just) and large disk space. Use it for parallel or background ISO builds:
+`ghost` is the k3s control-plane + KubeVirt compute node. All ISO builds and
+install testing run as **local ad-hoc Argo Workflows** submitted via the argo-mcp
+pi extension. Direct SSH builds are forbidden — they bypass cluster scheduling,
+consume untracked resources, and have crashed the node.
 
-```bash
-# sync repo to ghost (first time or after changes)
-rsync -a --exclude='.git' --exclude='output/' --exclude='workdir/' \
-  ~/src/dakota-iso/ ghost:~/src/dakota-iso/
+⛔ **NEVER `ssh ghost` to run builds.**
+⛔ **NEVER `rsync` code to ghost and run `just` directly.**
 
-# background build on ghost
-ssh ghost 'cd ~/src/dakota-iso && nohup just iso-sd-boot bluefin \
-  > output/build.log 2>&1 &'
+Every workload must be submitted as an Argo Workflow. Always inspect what
+WorkflowTemplates exist in the cluster before submitting:
 
-# watch progress
-ssh ghost 'tail -f ~/src/dakota-iso/output/build.log'
+```
+k8s_nodes_top                                   # check headroom first
+argo_list_workflow_templates namespace=argo     # find the right template
+argo_submit_workflow namespace=argo manifest=<yaml>
+argo_logs_workflow name=<name> namespace=argo tailLines=100
 ```
 
-**Do NOT manually push ghost-built ISOs to R2.** Let CI handle all R2 uploads.
+**Do NOT manually push ISOs to R2.** Let CI handle all R2 uploads.
 The `latest` pointer is the production artifact — only CI may write it after
 passing the boot verification gate. See `docs/r2-promotion.md`.
