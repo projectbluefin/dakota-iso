@@ -315,3 +315,15 @@ sfdisk: /usr/lib/x86_64-linux-gnu/libblkid.so.1: version `BLKID_2_40' not found
 `mkfs.xfs` (Debian-compiled) works fine with the newer system `libblkid` because it
 is backward-compatible with all earlier symbol versions. Only copy what is genuinely
 missing from the target base image.
+
+### mksquashfs -e proc removes empty dir in 4.7+ (2026-06)
+
+`dmsquash-live-root` (Debian bookworm dracut) needs a `proc/` directory at the squashfs root to use the squashfs directly as the live rootfs. Without it: `FATAL: Failed to find a root filesystem in squashfs.img`.
+
+Old mksquashfs (≤4.6, Ubuntu 22.04/24.04 system package) with `-e proc` excluded proc's CONTENTS but kept the empty directory. mksquashfs ≥4.7 (homebrew, newer distros) removes the directory itself.
+
+Fix in `scripts/build-live-squashfs.sh`:
+```bash
+mkdir -p "${SFS_ROOT}/proc"   # ensure empty proc/ exists
+mksquashfs ... -wildcards -e "proc/*" ...  # exclude contents only
+```
