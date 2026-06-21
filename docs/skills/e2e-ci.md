@@ -1,6 +1,30 @@
+---
+name: e2e-ci
+description: "E2E CI for dakota-iso plain composefs install gate. Load when debugging a boot failure, install failure, dracut emergency shell, ENOSPC during install, or sshd connectivity issues during QEMU testing. Use when adding a new E2E step or interpreting a CI failure."
+metadata:
+  type: reference
+  context7-sources: []
+---
+
 # E2E CI — Plain Install Test
 
 Skill for the plain composefs install E2E gate in `build-iso.yml`.
+
+---
+
+## When to Use
+
+- Debugging a live ISO boot failure (dracut emergency shell, no rootfs layout)
+- Diagnosing ENOSPC during skopeo copy or fisherman install
+- Investigating sshd connectivity issues in QEMU E2E
+- Adding or modifying a CI E2E step
+- Interpreting a CI failure in `build-iso.yml` or `test-plain-install.yml`
+
+## When NOT to Use
+
+- For R2 promotion — use `docs/r2-promotion.md`
+- For LUKS-specific failures — use `docs/luks-testing.md`
+- For build-time container failures — use `docs/build.md`
 
 ---
 
@@ -229,7 +253,7 @@ as default — E2E uses `btrfs`. If this ever changes, update the E2E recipe too
 
 ---
 
-## QEMU resources — use 8 GiB RAM / 8 vCPUs for local testing (2026-06)
+## QEMU resources — use 8 GiB RAM / 8 vCPUs for local testing
 
 **Symptom:** Local E2E installs take 30–60 min or time out.
 
@@ -244,7 +268,7 @@ Do not hardcode `-m 4096 -smp 4` in any new QEMU command — use `{{qemu-mem}}` 
 
 ---
 
-## Live boot drops to dracut emergency shell — "no proper rootfs layout" (2026-06)
+## Live boot drops to dracut emergency shell — "no proper rootfs layout"
 
 **Symptom:** QEMU boots ISO, dracut mounts squashfs, then immediately drops to `dracut:/#` with:
 ```
@@ -264,3 +288,27 @@ mksquashfs ... -wildcards -e "proc/*" -e "sys/*" -e "dev/*" ...
 ```
 
 **Never use bare `-e sys -e dev -e proc`** on mksquashfs 4.7+. Always exclude with `-wildcards -e "dir/*"` to keep the empty directory.
+
+---
+
+## Red Flags
+
+- Claiming "tests pass" without specifying which gate (`plain-e2e`, `luks-test-qemu`, or unit tests)
+- Testing with a QEMU instance that predates the current build
+- Using `-smp 4 -m 4096` in a QEMU command (too slow; use `{{qemu-smp}}` / `{{qemu-mem}}` justfile vars)
+- Using bare `-e sys` or `-e dev` in mksquashfs (4.7+ removes the dir; use `-wildcards -e "sys/*"`)
+- Declaring an install verified without booting the installed disk
+- Using `installer_channel=dev` in CI or production builds (active fisherman regression)
+- SSH connecting to a production ISO that has sshd disabled (build with `debug=1` for testing)
+
+## Verification
+
+Before marking any E2E work complete:
+
+- [ ] Live ISO boots to `DAKOTA_LIVE_READY` on serial + SSH responds
+- [ ] fisherman install exits `EXIT:0` in install.log
+- [ ] Installed system boots to Graphical target (not just QEMU started)
+- [ ] `just plain-test-qemu <target>` completed with `✅ Installed system boot verified`
+- [ ] ISO size ~5.3 GB (release) or ~6.5 GB (fast) — not 8+ GB (double-embedded store)
+- [ ] squashfs root contains `proc/`, `sys/`, `dev/` as empty dirs
+- [ ] GPT type GUID = `28732ac1...` (EFI System Partition, not Basic Data)
