@@ -165,15 +165,18 @@ jobs:
 
           # Re-squashfs with fast compression (debug-only, not production)
           echo ">>> Re-squashing debug rootfs (zstd-1)..."
-          # Ensure proc/ exists as empty dir: mksquashfs removes it entirely with
-          # plain -e proc (both 4.6.x and 4.7+). dmsquash-live-root requires proc/
-          # at the squashfs root to recognise the squashfs as a direct live rootfs.
-          sudo mkdir -p /var/iso-build/debug-rootfs/proc
+          # dracut's usable_root() requires proc/, sys/, and dev/ as empty dirs at
+          # the squashfs root. With -wildcards, "-e sys" removes the dir entry
+          # entirely on both mksquashfs 4.6.x and 4.7+; use "-e sys/*" to exclude
+          # only contents while preserving the empty directory node.
+          sudo mkdir -p /var/iso-build/debug-rootfs/proc \
+                        /var/iso-build/debug-rootfs/sys \
+                        /var/iso-build/debug-rootfs/dev
           sudo mksquashfs /var/iso-build/debug-rootfs \
             /var/iso-build/dakota-debug.rootfs.sfs \
             -noappend -comp zstd -Xcompression-level 1 -b 1M -processors 4 \
             -wildcards \
-            -e "proc/*" -e sys -e dev -e run -e tmp
+            -e "proc/*" -e "sys/*" -e "dev/*" -e run -e tmp
           sudo rm -rf /var/iso-build/debug-rootfs
 
           # Assemble debug ISO (reuse boot tar from production build)

@@ -133,9 +133,12 @@ fi
 #     directly (no podman run, no ENOSPC).
 #
 # Detect composefs from the recipe.json baked into the live container.
+# Run python3 directly (not via sh -c) to avoid nested double-quote parsing
+# failures: sh -c 'python3 -c "...open("...")"' breaks because the inner
+# double-quotes terminate the outer sh argument prematurely.
 COMPOSEFS_BACKEND=false
 if podman run --rm --entrypoint="" "${IMAGE}" \
-       sh -c 'python3 -c "import json; print(json.load(open("/etc/bootc-installer/recipe.json")).get(\"composeFsBackend\", False))"' \
+       python3 -c 'import json; d=json.load(open("/etc/bootc-installer/recipe.json")); print(d.get("composeFsBackend", False))' \
        2>/dev/null | grep -qi true; then
     COMPOSEFS_BACKEND=true
 fi
