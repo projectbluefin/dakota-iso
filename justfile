@@ -105,6 +105,7 @@ container target:
         --build-arg TARGET="${LIVE_TARGET}" \
         --build-arg TAG="${LIVE_TAG}" \
         --build-arg REGISTRY="${LIVE_REGISTRY}" \
+        --build-arg CACHE_BUST="$(date +%Y%m%d)" \
         -t {{target}}-installer -f ./live/Containerfile ./live
 
 # Build a systemd-boot UEFI live ISO for the given target.
@@ -187,35 +188,41 @@ iso-sd-boot target:
         df -h "${WORKDIR}"
     fi
     echo "Building squashfs and boot tar from localhost/{{target}}-installer..."
-    # Write bootc install config override (injected into OCI payload before squash).
-    # root_mount_spec bypasses UUID auto-detect, which fails inside podman-in-podman
-    # because findmnt cannot read the udev database from the nested container.
+    # Write bootc install config override (root_mount_spec bypasses UUID auto-detect).
     # LABEL=root is always valid: fisherman formats every root partition with -L root.
-    # Note: newer bootc (>=1.0) requires the [install] section wrapper.
     printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${OUTPUT_DIR}/.bootc-root-mount.toml"
-    # Write VFS storage.conf: Fedora images default to overlay which cannot read
-    # VFS-format layers in the squashfs offline store.  This file forces VFS
-    # inside the install container without affecting the installed system's /usr.
-    printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > "${OUTPUT_DIR}/.vfs-storage.conf"
 
     # ── OCI archive creation (buildah) ───────────────────────────────────────
-    # Run buildah via 'podman unshare buildah' so each command gets the correct
-    # user-namespace UID mapping for rootless operation.  All quoting happens in
-    # the OUTER recipe shell — no _ns "..." quoting complexity needed here.
+    # Strategy depends on composefs vs. standard-ostree — must branch BEFORE squash:
+    #
+    #   composefs (dakota): squash all layers to one, import into VFS containers-storage.
+    #     Fedora images default to overlay; vfs-storage.conf forces VFS inside the
+    #     install container.  ostree.final-diffid must point to the squashed layer.
+    #
+    #   standard-ostree / non-composefs (bluefin, bluefin-lts-hwe): preserve original
+    #     layer blobs, store as OCI layout.  No squash — squashing destroys the ostree
+    #     layer structure and produces a single oversized blob.  Mirrors CI script:
+    #     scripts/build-live-squashfs.sh non-composefs path.
+    #
+    # All buildah/skopeo runs via 'podman unshare' for correct rootless UID mapping.
+    COMPOSEFS_BACKEND=$(cat "live/src/{{target}}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
+    echo "=== Building offline OCI store (composefs=${COMPOSEFS_BACKEND}) for ${PAYLOAD_IMAGE} ==="
+
     PAYLOAD_OCI="${OUTPUT_DIR}/{{target}}-payload.oci.tar"
     INJECT_CTR=$(podman unshare buildah from --pull-never "${PAYLOAD_IMAGE}")
     podman unshare buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
-    podman unshare buildah run  "${INJECT_CTR}" -- sh -c 'cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
-    podman unshare buildah run  "${INJECT_CTR}" -- mkdir -p /etc/containers
-    podman unshare buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.vfs-storage.conf" /etc/containers/storage.conf
-    # Detect whether this variant uses composefs (affects how annotations are handled post-squash).
-    COMPOSEFS_BACKEND=$(cat "live/src/{{target}}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "false")
-    echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion, composefs=${COMPOSEFS_BACKEND}) ==="
-    podman unshare buildah commit --squash "${INJECT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
-    ANNOT_CTR=$(podman unshare buildah from --pull-never "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}")
+    podman unshare buildah run  "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
+
     if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
-        # Composefs images: update ostree.final-diffid to point to the new single squashed
-        # layer's diff_id.  bootc reads this to locate the composefs commit layer.
+        # Write VFS storage.conf: forces VFS driver inside the install container.
+        printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > "${OUTPUT_DIR}/.vfs-storage.conf"
+        podman unshare buildah run  "${INJECT_CTR}" -- mkdir -p /etc/containers
+        podman unshare buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.vfs-storage.conf" /etc/containers/storage.conf
+        echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
+        podman unshare buildah commit --squash "${INJECT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
+        podman unshare buildah rm "${INJECT_CTR}"
+        # Update ostree.final-diffid to point to the new squashed layer's diff_id.
+        ANNOT_CTR=$(podman unshare buildah from --pull-never "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}")
         SQUASHED_DIFFID=$(podman unshare skopeo inspect --config "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}" 2>/dev/null | \
             python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)
         if [[ -n "${SQUASHED_DIFFID}" ]]; then
@@ -223,23 +230,19 @@ iso-sd-boot target:
             podman unshare buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
             podman unshare buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
         fi
+        podman unshare buildah commit --squash "${ANNOT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
+        podman unshare buildah rm "${ANNOT_CTR}"
     else
-        # Ostree-native images (e.g. Fedora Silverblue / bluefin): buildah --squash
-        # produces a regular filesystem tar layer, NOT an ostree commit blob.  If
-        # ostree.final-diffid / ostree.commit are present, bootc tries the
-        # ostree-encapsulation install path and fails with "Expected commit object, not File".
-        # Remove them so bootc uses the native filesystem-layer install path instead.
-        echo "Removing ostree.final-diffid and ostree.commit (ostree-native image — annotations invalid after squash)"
-        podman unshare buildah config --unsetlabel "ostree.final-diffid" "${ANNOT_CTR}" 2>/dev/null || true
-        podman unshare buildah config --unsetlabel "ostree.commit" "${ANNOT_CTR}" 2>/dev/null || true
-        podman unshare buildah config --unsetlabel "rpmostree.inputhash" "${ANNOT_CTR}" 2>/dev/null || true
-        podman unshare buildah config --unsetannotation "ostree.final-diffid" "${ANNOT_CTR}" 2>/dev/null || true
-        podman unshare buildah config --unsetannotation "ostree.commit" "${ANNOT_CTR}" 2>/dev/null || true
-        podman unshare buildah config --unsetannotation "rpmostree.inputhash" "${ANNOT_CTR}" 2>/dev/null || true
+        # Non-composefs (bluefin, lts-hwe): preserve original layer structure.
+        # Squashing creates a single oversized blob; original layers are already
+        # compressed and copy directly into OCI layout without size explosion.
+        # Mirrors scripts/build-live-squashfs.sh non-composefs path exactly.
+        OCI_INJECTED="${OUTPUT_DIR}/{{target}}-payload-injected.oci"
+        rm -rf "${OCI_INJECTED}"
+        podman unshare buildah commit --format oci "${INJECT_CTR}" "oci:${OCI_INJECTED}:${PAYLOAD_IMAGE}"
+        podman unshare buildah rm "${INJECT_CTR}"
     fi
-    podman unshare buildah commit --squash "${ANNOT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
-    podman unshare buildah rm "${ANNOT_CTR}"
-    podman unshare buildah rm "${INJECT_CTR}"
+
     podman rmi "${PAYLOAD_IMAGE}" || true
 
     _ns "
@@ -256,55 +259,64 @@ iso-sd-boot target:
         OVERLAY_WORK=\$(mktemp -d \"\${SQUASHFS_ROOT}_work_XXXXXX\")
 
         ns_cleanup() {
-            umount \"\${SQUASHFS_ROOT}/var/lib/containers/storage\" 2>/dev/null || true
-            umount \"\${SQUASHFS_ROOT}\"                            2>/dev/null || true
-            podman image unmount localhost/{{target}}-installer     2>/dev/null || true
-            rm -rf \"\${OVERLAY_UPPER}\" \"\${OVERLAY_WORK}\"       2>/dev/null || true
-            rm -rf \"\${CS_STAGING}\" \"\${SQUASHFS_ROOT}\"         2>/dev/null || true
+            umount \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"  2>/dev/null || true
+            umount \"\${SQUASHFS_ROOT}/var/lib/containers/oci-store\" 2>/dev/null || true
+            umount \"\${SQUASHFS_ROOT}\"                              2>/dev/null || true
+            podman image unmount localhost/{{target}}-installer       2>/dev/null || true
+            rm -rf \"\${OVERLAY_UPPER}\" \"\${OVERLAY_WORK}\"         2>/dev/null || true
+            rm -rf \"\${CS_STAGING}\" \"\${SQUASHFS_ROOT}\"           2>/dev/null || true
         }
         trap ns_cleanup EXIT
 
         MOUNT=\$(podman image mount localhost/{{target}}-installer)
         PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH
 
-        # Populate containers-storage in a staging dir on /var (197G free).
-        # Two-step skopeo copy decouples source and destination storage configs.
+        # Populate the offline OCI store in a staging dir.
+        # Strategy mirrors scripts/build-live-squashfs.sh:
+        #   composefs (dakota): import as VFS containers-storage → /var/lib/containers/storage
+        #   non-composefs (bluefin, lts): copy as OCI layout → /var/lib/containers/oci-store
         PAYLOAD_OCI='${OUTPUT_DIR}/{{target}}-payload.oci.tar'
-        SQUASHFS_STORAGE=\"\${CS_STAGING}/var/lib/containers/storage\"
-        # Storage conf for skopeo running inside the installer container.
-        # Paths are container-relative: /vfs-storage is the bind-mounted SQUASHFS_STORAGE.
-        STORAGE_CONF=\"\$(mktemp '${OUTPUT_DIR}'/live-storage-XXXXXX.conf)\"
-        mkdir -p \"\${SQUASHFS_STORAGE}\"
-        printf '[storage]\ndriver = \"vfs\"\nrunroot = \"/tmp/cs-runroot\"\ngraphroot = \"/vfs-storage\"\n' \
-            > \"\${STORAGE_CONF}\"
+        OCI_INJECTED='${OUTPUT_DIR}/{{target}}-payload-injected.oci'
+        COMPOSEFS='${COMPOSEFS_BACKEND}'
 
-        # ── VFS import ────────────────────────────────────────────────────────
-        # The OCI archive was created by the outer recipe (buildah, above).
-        # skopeo runs inside the installer container so the VFS tar-split
-        # metadata is written in the JSON format the live ISO can read.
-        echo 'Importing OCI image into squashfs containers-storage...'
-        echo '=== Disk space before VFS import ==='
+        echo '=== Disk space before OCI store embed ==='
         df -h '${OUTPUT_DIR}'
         if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
             df -h '${WORKDIR}'
         fi
-        # Run skopeo from inside the installer image so the VFS tar-split metadata is
-        # written in a format the live ISO can read.  The build host links a newer
-        # containers/storage that emits a binary tar-split format; the installer image
-        # carries the same containers/storage version as the live ISO and writes the
-        # JSON-based format it expects.
-        podman run --rm \
-            --privileged \
-            -v \"\${PAYLOAD_OCI}:/payload.oci.tar:ro\" \
-            -v \"\${SQUASHFS_STORAGE}:/vfs-storage\" \
-            -v \"\${STORAGE_CONF}:/tmp/st.conf:ro\" \
-            localhost/{{target}}-installer \
-            sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:'"${PAYLOAD_IMAGE}"' containers-storage:'"${PAYLOAD_IMAGE}"''
 
+        if [[ \"\${COMPOSEFS}\" == \"true\" ]]; then
+            # ── composefs path: VFS containers-storage ───────────────────────
+            # skopeo runs inside the installer container so tar-split metadata
+            # is written in the JSON format the live ISO can read (the build host
+            # containers/storage emits binary tar-split; installer uses JSON).
+            SQUASHFS_STORAGE=\"\${CS_STAGING}/var/lib/containers/storage\"
+            STORAGE_CONF=\"\$(mktemp '${OUTPUT_DIR}'/live-storage-XXXXXX.conf)\"
+            mkdir -p \"\${SQUASHFS_STORAGE}\"
+            printf '[storage]\ndriver = \"vfs\"\nrunroot = \"/tmp/cs-runroot\"\ngraphroot = \"/vfs-storage\"\n' \
+                > \"\${STORAGE_CONF}\"
+            echo 'Importing OCI image into squashfs VFS containers-storage...'
+            podman run --rm \
+                --privileged \
+                -v \"\${PAYLOAD_OCI}:/payload.oci.tar:ro\" \
+                -v \"\${SQUASHFS_STORAGE}:/vfs-storage\" \
+                -v \"\${STORAGE_CONF}:/tmp/st.conf:ro\" \
+                localhost/{{target}}-installer \
+                sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:'"${PAYLOAD_IMAGE}"' containers-storage:'"${PAYLOAD_IMAGE}"''
+            rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
+        else
+            # ── non-composefs path: OCI layout ────────────────────────────────
+            # configure-live.sh sets local_imgref="oci:/var/lib/containers/oci-store"
+            # for bluefin/lts-hwe. OCI_INJECTED is an oci: directory (not a tar)
+            # with original layers preserved — no squash. Mirrors CI script exactly.
+            OCI_STORE=\"\${CS_STAGING}/var/lib/containers/oci-store\"
+            mkdir -p \"\${OCI_STORE}\"
+            echo 'Copying OCI layout into squashfs OCI store (original layers preserved)...'
+            podman unshare skopeo copy \"oci:\${OCI_INJECTED}:${PAYLOAD_IMAGE}\" \"oci:\${OCI_STORE}\"
+            rm -rf \"\${OCI_INJECTED}\"
+        fi
 
-        rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
-
-        echo '=== Disk space after VFS import ==='
+        echo '=== Disk space after OCI store embed ==='
         df -h '${OUTPUT_DIR}'
         if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
             df -h '${WORKDIR}'
@@ -331,10 +343,14 @@ iso-sd-boot target:
             cp -a \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\"
         fi
 
-        # Bind mount the container storage into the squashfs at the correct path
-        mkdir -p \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
-
-        mount --bind \"\${CS_STAGING}/var/lib/containers/storage\" \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
+        # Bind mount the OCI store into the squashfs at the correct path for this variant
+        if [[ \"\${COMPOSEFS}\" == \"true\" ]]; then
+            mkdir -p \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
+            mount --bind \"\${CS_STAGING}/var/lib/containers/storage\" \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
+        else
+            mkdir -p \"\${SQUASHFS_ROOT}/var/lib/containers/oci-store\"
+            mount --bind \"\${CS_STAGING}/var/lib/containers/oci-store\" \"\${SQUASHFS_ROOT}/var/lib/containers/oci-store\"
+        fi
         echo '=== Disk space after creation of squashfs root ==='
         df -h '${OUTPUT_DIR}'
         if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
@@ -342,16 +358,16 @@ iso-sd-boot target:
         fi
         du -sh \"\${SQUASHFS_ROOT}\" 2>/dev/null || true
 
-        # Build squashfs from the unified source tree.
-        # dedup removes blocks shared between live rootfs and OCI layers (same base image).
-        # -processors 4: caps parallelism to avoid OOM (32 workers exhausts RAM).
-        # Compression preset: fast=zstd/3/128K (quick), release=zstd/15/1M (~20% smaller)
+        # mksquashfs >= 4.7 removes directories with plain -e; use -wildcards -e "dir/*"
+        # to exclude only contents, keeping the empty dir. dmsquash-live-root requires
+        # proc/ to exist at the squashfs root to recognise it as a live rootfs.
+        mkdir -p \"\${SQUASHFS_ROOT}/proc\"
         SFS_LEVEL=3; SFS_BLOCK=131072
         [[ '{{compression}}' == 'release' ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
         mksquashfs \"\${SQUASHFS_ROOT}\" '${SQUASHFS}' \
             -noappend -comp zstd -Xcompression-level \${SFS_LEVEL} -b \${SFS_BLOCK} \
             -processors 4 \
-            -e proc -e sys -e dev -e run -e tmp
+            -wildcards -e "proc/*" -e sys -e dev -e run -e tmp
 
         # Export only boot files needed for ESP assembly
         tar -C \"\$MOUNT\" \

@@ -369,3 +369,23 @@ recipe["filesystem"] = "btrfs"
 **Rule: never test recipe changes with CI only.** Build the container locally, run
 `podman run --rm <image> cat /etc/bootc-installer/recipe.json` to verify the recipe,
 then do a local QEMU install test before pushing to CI.
+
+### justfile `iso-sd-boot` must branch on composefs for OCI store embed (2026-06)
+
+`configure-live.sh` sets `local_imgref` differently per variant type:
+- composefs (dakota): `containers-storage:<NVIDIA_IMGREF>` → VFS store at `/var/lib/containers/storage`
+- non-composefs (bluefin, lts): `oci:/var/lib/containers/oci-store` → OCI layout
+
+The justfile `iso-sd-boot` recipe previously always used the VFS containers-storage path
+regardless of composefs setting. For bluefin/lts-hwe, the installer looked for
+`oci:/var/lib/containers/oci-store` but found nothing there — causing:
+```
+fisherman: fatal: bootc install: pulling image: podman pull oci:/var/lib/containers/oci-store: exit status 125
+```
+
+**Fix:** `iso-sd-boot` now reads `live/src/<target>/composefs` and branches:
+- `composefs=true` → VFS import via skopeo inside the installer container
+- `composefs=false` → `skopeo copy oci-archive:... oci:<oci-store-dir>`
+
+This mirrors what `scripts/build-live-squashfs.sh` already does correctly for CI.
+`live/src/<target>/composefs` is the single source of truth — both scripts read it.

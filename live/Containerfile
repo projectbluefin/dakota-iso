@@ -134,6 +134,9 @@ RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
     mv /tmp/initramfs.img "/usr/lib/modules/${kernel}/initramfs.img" && \
     echo "Replaced initramfs for kernel ${kernel}"
 
+# CACHE_BUST invalidates the flatpak download layer when changed (e.g. daily via date).
+# Passed as --build-arg CACHE_BUST=$(date +%Y%m%d) in the justfile.
+ARG CACHE_BUST=0
 COPY src/flatpaks /tmp/flatpaks-list
 RUN --mount=type=bind,source=src,target=/src \
     --mount=type=cache,target=/var/cache/flatpak-dl,id=dakota-flatpak-${TARGET} \

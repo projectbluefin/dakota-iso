@@ -113,14 +113,14 @@ jobs:
       - name: Verify offline OCI store is embedded
         if: steps.should_build.outputs.build == 'true'
         run: |
-          COUNT=$(sudo unsquashfs -lc /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
-            var/lib/containers/storage/vfs-images 2>/dev/null | \
-            grep -c "squashfs-root" || true)
-          if [[ "${COUNT}" -eq 0 ]]; then
-            echo "ERROR: VFS containers-storage missing vfs-images — OCI embedding failed" >&2
+          # bluefin/lts-hwe use composeFsBackend=false; build-live-squashfs.sh embeds the
+          # OCI store as an OCI layout at var/lib/containers/oci-store (not VFS).
+          if ! sudo unsquashfs -lc /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
+              var/lib/containers/oci-store/index.json 2>/dev/null | grep -q "squashfs-root"; then
+            echo "ERROR: OCI layout store missing index.json — OCI embedding failed" >&2
             exit 1
           fi
-          echo ">>> OCI store assertion passed (vfs-images has ${COUNT} entries)"
+          echo ">>> OCI store assertion passed (oci-store/index.json present)"
 
       - name: Assemble ISO
         if: steps.should_build.outputs.build == 'true'
