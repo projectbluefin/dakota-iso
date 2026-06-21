@@ -1,7 +1,7 @@
 # dakota-iso — Copilot Instructions
 
-> This repo builds bootable UEFI live ISOs from Dakota (GNOME OS / bootc / composefs) images.
-> Two variants: `dakota` and `dakota-nvidia`.
+> This repo builds bootable UEFI live ISOs from projectbluefin images (GNOME OS / bootc / composefs).
+> Variants: `dakota`, `bluefin`, `bluefin-lts-hwe` — all NVIDIA-unified.
 
 ## Fast path
 
@@ -39,8 +39,15 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 Changes to these require maintainer review:
 - `.github/workflows/` — CI pipeline
 - `justfile` — canonical build interface
-- `dakota/src/build-iso.sh` — ISO assembly
-- `dakota/src/configure-live.sh` — live environment setup
+- `live/src/build-iso.sh` — ISO assembly
+- `live/src/configure-live.sh` — live environment setup
+- `scripts/build-live-squashfs.sh` — squashfs + OCI embed
+
+## Pre-commit
+
+```bash
+just check   # run before every commit (agentic-model hard rule)
+```
 
 ## Human gates
 
