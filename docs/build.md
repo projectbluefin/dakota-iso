@@ -383,9 +383,35 @@ regardless of composefs setting. For bluefin/lts-hwe, the installer looked for
 fisherman: fatal: bootc install: pulling image: podman pull oci:/var/lib/containers/oci-store: exit status 125
 ```
 
-**Fix:** `iso-sd-boot` now reads `live/src/<target>/composefs` and branches:
-- `composefs=true` → VFS import via skopeo inside the installer container
-- `composefs=false` → `skopeo copy oci-archive:... oci:<oci-store-dir>`
+**Fix:** `iso-sd-boot` now reads `live/src/<target>/composefs` and branches **before** squash:
+- `composefs=true` → squash to 1 layer → VFS import via skopeo inside installer container
+- `composefs=false` → `buildah commit --format oci` (NO squash, preserves original layers) →
+  `skopeo copy oci:... oci:<oci-store-dir>`
 
-This mirrors what `scripts/build-live-squashfs.sh` already does correctly for CI.
+**Critical: branch before squash.** Squashing a non-composefs image (bluefin) to one layer
+then storing as OCI layout produces a single ~9 GB uncompressed blob → ~11 GB ISO.
+Original layers are already gzip-compressed and copy cleanly to OCI layout at expected size.
+
+This mirrors `scripts/build-live-squashfs.sh` exactly.
 `live/src/<target>/composefs` is the single source of truth — both scripts read it.
+
+### Installer layer cache busting (2026-06)
+
+The `COPY src/flatpaks` + `RUN install-flatpaks.sh` stage in the Containerfile is cached
+by podman's layer cache. If neither file changes between builds, the old installer Flatpak
+stays in the image indefinitely — even though `install-flatpaks.sh` calls curl to download
+`releases/latest/download/`.
+
+**Fix:** `ARG CACHE_BUST=0` before the flatpak stage; justfile passes
+`--build-arg CACHE_BUST=$(date +%Y%m%d)` to invalidate the layer once per calendar day.
+
+To verify installer version: the metainfo XML in the flatpak may say an old version (not
+updated by upstream). The real check is the fisherman binary at
+`var/lib/flatpak/app/org.bootcinstaller.Installer/.../files/bin/fisherman` — v3.x is a
+Go binary containing `[fisherman] version:` strings and LUKS/flatpak/composefs logic.
+
+### CI bluefin OCI store verification (2026-06)
+
+`build-iso-bluefin.yml` previously checked `var/lib/containers/storage/vfs-images` (VFS path).
+Bluefin/lts-hwe use `composeFsBackend=false` and embed at `var/lib/containers/oci-store`.
+Fixed to check `var/lib/containers/oci-store/index.json` instead.
