@@ -204,34 +204,34 @@ iso-sd-boot target:
     #     layer structure and produces a single oversized blob.  Mirrors CI script:
     #     scripts/build-live-squashfs.sh non-composefs path.
     #
-    # All buildah/skopeo runs via 'podman unshare' for correct rootless UID mapping.
+    # All buildah/skopeo runs go through _ns() for correct root/rootless UID mapping.
     COMPOSEFS_BACKEND=$(cat "live/src/{{target}}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
     echo "=== Building offline OCI store (composefs=${COMPOSEFS_BACKEND}) for ${PAYLOAD_IMAGE} ==="
 
     PAYLOAD_OCI="${OUTPUT_DIR}/{{target}}-payload.oci.tar"
-    INJECT_CTR=$(podman unshare buildah from --pull-never "${PAYLOAD_IMAGE}")
-    podman unshare buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
-    podman unshare buildah run  "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
+    INJECT_CTR=$(_ns "buildah from --pull-never '${PAYLOAD_IMAGE}'")
+    _ns "buildah copy '${INJECT_CTR}' '${OUTPUT_DIR}/.bootc-root-mount.toml' /tmp/.bootc-root-mount.toml"
+    _ns "buildah run '${INJECT_CTR}' -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'"
 
     if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
         # Write VFS storage.conf: forces VFS driver inside the install container.
         printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > "${OUTPUT_DIR}/.vfs-storage.conf"
-        podman unshare buildah run  "${INJECT_CTR}" -- mkdir -p /etc/containers
-        podman unshare buildah copy "${INJECT_CTR}" "${OUTPUT_DIR}/.vfs-storage.conf" /etc/containers/storage.conf
+        _ns "buildah run '${INJECT_CTR}' -- mkdir -p /etc/containers"
+        _ns "buildah copy '${INJECT_CTR}' '${OUTPUT_DIR}/.vfs-storage.conf' /etc/containers/storage.conf"
         echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
-        podman unshare buildah commit --squash "${INJECT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
-        podman unshare buildah rm "${INJECT_CTR}"
+        _ns "buildah commit --squash '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
+        _ns "buildah rm '${INJECT_CTR}'"
         # Update ostree.final-diffid to point to the new squashed layer's diff_id.
-        ANNOT_CTR=$(podman unshare buildah from --pull-never "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}")
-        SQUASHED_DIFFID=$(podman unshare skopeo inspect --config "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}" 2>/dev/null | \
+        ANNOT_CTR=$(_ns "buildah from --pull-never 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'")
+        SQUASHED_DIFFID=$(_ns "skopeo inspect --config 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}' 2>/dev/null" | \
             python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)
         if [[ -n "${SQUASHED_DIFFID}" ]]; then
             echo "Updating ostree.final-diffid to ${SQUASHED_DIFFID} (composefs mode)"
-            podman unshare buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-            podman unshare buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
+            _ns "buildah config --label 'ostree.final-diffid=${SQUASHED_DIFFID}' '${ANNOT_CTR}'"
+            _ns "buildah config --annotation 'ostree.final-diffid=${SQUASHED_DIFFID}' '${ANNOT_CTR}'"
         fi
-        podman unshare buildah commit --squash "${ANNOT_CTR}" "oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}"
-        podman unshare buildah rm "${ANNOT_CTR}"
+        _ns "buildah commit --squash '${ANNOT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
+        _ns "buildah rm '${ANNOT_CTR}'"
     else
         # Non-composefs (bluefin, lts-hwe): MUST squash to 1 layer before embedding.
         # bluefin-nvidia has ~120 OCI layers; embedding without squashing writes all
@@ -241,8 +241,8 @@ iso-sd-boot target:
         # local_imgref="oci:/var/lib/containers/oci-store".
         OCI_INJECTED="${OUTPUT_DIR}/{{target}}-payload-injected.oci"
         rm -rf "${OCI_INJECTED}"
-        podman unshare buildah commit --squash --format oci "${INJECT_CTR}" "oci:${OCI_INJECTED}:${PAYLOAD_IMAGE}"
-        podman unshare buildah rm "${INJECT_CTR}"
+        _ns "buildah commit --squash --format oci '${INJECT_CTR}' 'oci:${OCI_INJECTED}:${PAYLOAD_IMAGE}'"
+        _ns "buildah rm '${INJECT_CTR}'"
     fi
 
     podman rmi "${PAYLOAD_IMAGE}" || true
@@ -314,7 +314,7 @@ iso-sd-boot target:
             OCI_STORE=\"\${CS_STAGING}/var/lib/containers/oci-store\"
             mkdir -p \"\${OCI_STORE}\"
             echo 'Copying OCI layout into squashfs OCI store (original layers preserved)...'
-            podman unshare skopeo copy \"oci:\${OCI_INJECTED}:${PAYLOAD_IMAGE}\" \"oci:\${OCI_STORE}\"
+            skopeo copy \"oci:\${OCI_INJECTED}:${PAYLOAD_IMAGE}\" \"oci:\${OCI_STORE}\"
             rm -rf \"\${OCI_INJECTED}\"
         fi
 
