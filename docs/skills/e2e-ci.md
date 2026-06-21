@@ -194,27 +194,35 @@ cause in fisherman instead.
 ### XFS path not tested — broken ISO shipped to R2 (2026-06-16)
 
 **What failed:** `mkfs.xfs` was copied into the live container without its shared library
-dependencies (`libinih.so.1`, `liburcu.so.8`, `libblkid.so.1`, `libuuid.so.1`). The binary
-existed in the image but failed at runtime on every XFS install with:
+dependencies (`libinih.so.1`, `liburcu.so.8`). The binary existed in the image but
+failed at runtime on every XFS install with:
 ```
 mkfs.xfs: error while loading shared libraries: libinih.so.1
 ```
 
-**Why CI didn't catch it:**
+Also: `dakota-nvidia:stable` initramfs has `btrfs.ko` but **not** `xfs.ko`. An XFS
+install would complete but the installed system drops to emergency mode on first boot
+(`sysroot.mount` fails — cannot load XFS driver).
+
+**Current state:** All variants (`dakota`, `bluefin`, `bluefin-lts-hwe`) default to
+`filesystem: btrfs` in `images.json` and all E2E recipes. XFS is available only as a
+user-selectable option in the installer UI. `plain-install-qemu` uses `btrfs`.
+
+**Why CI didn't catch it initially:**
 1. `plain-install-qemu` hardcoded `"filesystem": "btrfs"` — `mkfs.xfs` was never called in CI
 2. The unit test (`TestXfsprogs`) only checked that the string `"mkfs.xfs"` appeared in the
    Containerfile — not that its deps were also present
 3. No smoke test verified the binary executed inside the container before squashfs assembly
 
 **The fix (commit `3606cfc`):**
-- Copy all four shared lib deps alongside the binary in the Containerfile
-- `TestXfsprogs` now asserts all four libs are present in the COPY block
-- `build-iso.yml` runs `mkfs.xfs --version` inside the live container after build
-- `plain-install-qemu` changed from `btrfs` to `xfs` to match the interactive installer default
-
-**Rule:** The E2E filesystem must match the installer default. If `images.json` sets
-`"filesystem": "xfs"`, the E2E must use `xfs`. A test that passes on a different filesystem
-than users hit is a false signal, not a passing test.
+- Copy shared lib deps `libinih.so.1` and `liburcu.so.8` alongside the binary in the Containerfile
+- Do **not** copy `libblkid.so.1` or `libuuid.so.1` from Debian — the base image ships newer
+  versions; overwriting with Debian's breaks `sfdisk` (see `docs/build.md` — libblkid lesson)
+- `TestXfsprogs` now asserts all required libs are present in the COPY block
+- `build-iso.yml` runs `mkfs.xfs -V` inside the live container after build
 
 **Rule:** For every binary copied into a container, assert its shared library deps are also
 present. Use `ldd <binary>` on the source stage to enumerate them.
+
+**Rule:** The E2E filesystem must match the installer default. `images.json` sets `btrfs`
+as default — E2E uses `btrfs`. If this ever changes, update the E2E recipe too.

@@ -197,6 +197,13 @@ just --list        # verify justfile is parseable (no just check target yet)
 - **`sudo` is not available** in automated agent bash sessions (no TTY). Never call
   `sudo dd`, `sudo modprobe`, `sudo nbd-client`, etc. If an operation requires root,
   provide the exact command for the user to run in their terminal instead.
+- **`just build-bg` fails in agent sessions** — it calls `setsid sudo just ...` which
+  requires a TTY for `sudo`. Use direct backgrounding instead:
+  ```bash
+  LOG=output/build.log; mkdir -p output
+  setsid bash -c "just output_dir=output iso-sd-boot <target> > '${LOG}' 2>&1" &
+  disown $!
+  ```
 - **Block device writes** (USB burning, disk inspection via nbd) always require root.
   Use `udisksctl` for unmounting; provide `dd` / `qemu-nbd` commands for the user to run.
 

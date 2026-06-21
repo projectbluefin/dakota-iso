@@ -101,7 +101,7 @@ When the image is published, enabling it is a single-line uncomment.
 Bluefin and bluefin-lts-hwe are Fedora Silverblue bootc images. Key differences from Dakota:
 - `bootloader: grub2` — fisherman skips `--bootloader` flag (grub2 is the default; only `systemd` needs explicit flag)
 - `composefs: false` — ostree-native path; `ostree.final-diffid` annotation must be **removed** after squash (not updated)
-- `filesystem: btrfs` for bluefin stable; `xfs` for LTS variants
+- `filesystem: btrfs` for ALL variants (bluefin, bluefin-lts-hwe, dakota)
 - `flatpak_var_path: var/lib/flatpak` — Silverblue stores flatpaks at the root, not in a deployment subdir
 - `/usr/local` is a dangling symlink on Silverblue at build time — always write installer files to `/usr/share/`, not `/usr/local/`
 ```bash

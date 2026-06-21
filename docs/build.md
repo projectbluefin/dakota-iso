@@ -63,7 +63,21 @@ just installer_channel=dev build-bg dakota
 # Check progress: tail -f output/build.log
 ```
 
-Uses `setsid ... & disown` internally so the build survives terminal closure.
+Uses `setsid sudo just ... & disown` internally so the build survives terminal closure.
+
+⚠️ **`build-bg` requires `sudo` and a TTY.** In agent/headless sessions (no TTY), `sudo`
+fails silently with `a terminal is required to read the password`. Use direct backgrounding
+instead:
+
+```bash
+LOG=output/build.log
+mkdir -p output
+setsid bash -c "just output_dir=output iso-sd-boot dakota > '${LOG}' 2>&1" &
+disown $!
+echo "Build started → ${LOG}"
+# Monitor:
+tail -f output/build.log
+```
 
 ## Compression presets
 

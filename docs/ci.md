@@ -432,15 +432,15 @@ boot-installed, verify) was the bottleneck.
 
 | Step | Timeout | RAM | Purpose |
 |---|---|---|---|
-| `E2E 1/4 — Boot live ISO` | 10 min | 4 GiB | Live env ready + SSH confirmed |
-| `E2E 2/4 — Install composefs` | 30 min | 4 GiB | ENOSPC regression gate (tight tmpfs) |
-| `E2E 3/4 — Boot installed disk` | 10 min | 8 GiB | Installed system POSTs correctly |
-| `E2E 4/4 — Verify Graphical target` | 10 min | 8 GiB | systemd Graphical target reached |
+| `E2E 1/4 — Boot live ISO (4 GiB)` | 10 min | 4 GiB | Live env boots, sshd responds |
+| `E2E 2/4 — ENOSPC gate: OCI export only (4 GiB)` | 10 min | 4 GiB | skopeo copies blob without ENOSPC (tight ~2 GiB overlay tmpfs) |
+| `E2E 3/4 — Full install composefs (8 GiB)` | 60 min | 8 GiB | btrfs+composefs install completes |
+| `E2E 4/4 — Boot installed + verify Graphical target (8 GiB)` | 20 min | 8 GiB | Installed system reaches systemd Graphical target |
 
-Total worst-case ceiling: **60 min** (vs. 90 min monolithic), with precise attribution.
+Total worst-case ceiling: **100 min** (vs. 90 min monolithic), with precise attribution.
 
-Gate 1+2 use 4 GiB to keep the overlay tmpfs tight (~2 GiB) for ENOSPC testing.
-Gate 2 switches to 8 GiB for realistic boot performance.
+Gates 1+2 use 4 GiB to keep the overlay tmpfs tight (~2 GiB) for ENOSPC testing.
+Gate 3 switches to 8 GiB for realistic btrfs+composefs install performance.
 
 ### Build trigger reduced to monthly + on-demand to cap R2 bucket growth (2026-06)
 
