@@ -4,7 +4,7 @@
 
 - **Upstream repo:** `git@github.com:projectbluefin/dakota-iso.git`
 - **Purpose:** Builds bootable UEFI live ISOs from Dakota/GNOME OS bootc images
-- **Variants:** `dakota` and `dakota-nvidia` (each has a `<variant>/payload_ref` file)
+- **Variants:** `dakota`, `dakota-nvidia`, `bluefin`, `bluefin-lts-hwe`, `stable`, `lts` (each has a `<variant>/payload_ref` file)
 
 > ⚠️ This repo's remote is `projectbluefin/dakota-iso` (upstream). Pushes go to upstream.
 > If working from a castrojo fork, push to `castrojo/dakota-iso` only.
@@ -231,20 +231,29 @@ the serial marker but SSH still works).
 
 ## Variants
 
-Each variant is a directory with one file:
+Each variant is a directory with a `payload_ref` file and optional metadata:
 
-| Variant | `payload_ref` | ISO output |
-|---|---|---|
-| `dakota` | `ghcr.io/projectbluefin/dakota:latest` | `dakota-live.iso` |
-| `dakota-nvidia` | `ghcr.io/projectbluefin/dakota-nvidia:latest` | `dakota-nvidia-live.iso` |
+| Variant | `payload_ref` | Live target | ISO output |
+|---|---|---|---|
+| `dakota` | `ghcr.io/projectbluefin/dakota-nvidia:stable` | `dakota-nvidia` | `dakota-live.iso` |
+| `dakota-nvidia` | `ghcr.io/projectbluefin/dakota-nvidia:latest` | `dakota-nvidia` | `dakota-nvidia-live.iso` |
+| `bluefin` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | `bluefin-nvidia` | `bluefin-live.iso` |
+| `bluefin-lts-hwe` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | `bluefin-lts-hwe-nvidia` | `bluefin-lts-hwe-live.iso` |
+| `stable` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | `bluefin-nvidia` | `stable-live.iso` |
+| `lts` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | `bluefin-lts-hwe-nvidia` | `lts-live.iso` |
 
-All variants share `dakota/Containerfile`, `dakota/src/`, and `dakota/Containerfile.builder`.
-The `BASE_IMAGE` build-arg is set automatically from `<variant>/payload_ref`.
+All variants share `live/Containerfile` and `live/src/`. The `TARGET` build-arg is set
+from `<variant>/live_target`. Per-variant config in `live/src/<variant>/` controls
+images.json, composefs, and bootloader settings.
 
 To add a new variant:
 ```bash
 mkdir my-variant
 echo 'ghcr.io/projectbluefin/my-variant:latest' > my-variant/payload_ref
+echo 'my-variant-nvidia' > my-variant/live_target
+echo 'My Variant Live' > my-variant/live_title
+echo 'projectbluefin' > my-variant/registry
+echo 'stable' > my-variant/tag
 just iso-sd-boot my-variant
 ```
 

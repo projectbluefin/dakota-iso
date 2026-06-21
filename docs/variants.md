@@ -9,6 +9,8 @@ How the Dakota ISO build target works.
 | `dakota` | `projectbluefin/dakota-nvidia:stable` | same | systemd-boot | yes | btrfs |
 | `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs |
 | `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs |
+| `stable` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs |
+| `lts` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs |
 
 **All variants default to btrfs. XFS is available as a user-selectable option in the installer UI only.**
 
@@ -128,6 +130,8 @@ as the boot menu entry in systemd-boot and loopback.cfg:
 bluefin/live_title          → Bluefin Live
 bluefin-lts-hwe/live_title  → Bluefin LTS HWE Live
 dakota/live_title            → Dakota Live
+stable/live_title            → Bluefin Stable Live
+lts/live_title               → Bluefin LTS Live
 ```
 
 `build-iso.sh` accepts `--title <string>`; the justfile reads `<target>/live_title`

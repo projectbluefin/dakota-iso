@@ -4,12 +4,27 @@
 
 | Download | Checksum |
 |----------|----------|
-| [⬇ dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) |
+| Variant | Download | Checksum |
+|---------|----------|----------|
+| `dakota` | [⬇ dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) |
+| `stable` | [⬇ stable-live-latest.iso](https://projectbluefin.dev/stable-live-latest.iso) | [checksum](https://projectbluefin.dev/stable-live-latest.iso-CHECKSUM) |
+| `lts` | [⬇ lts-live-latest.iso](https://projectbluefin.dev/lts-live-latest.iso) | [checksum](https://projectbluefin.dev/lts-live-latest.iso-CHECKSUM) |
 
-Builds a bootable UEFI live ISO from [Dakota](https://github.com/projectbluefin/dakota) images — GNOME OS-based workstations using composefs and systemd-boot. The live environment boots straight to GDM with a full GNOME session and launches the Dakota installer automatically.
+Builds bootable UEFI live ISOs from [Dakota](https://github.com/projectbluefin/dakota) and [Bluefin](https://github.com/projectbluefin/bluefin) images.
 
-The ISO boots the **NVIDIA** variant live and embeds the OCI image in a VFS containers-storage
-store inside the squashfs so Dakota can be installed on any hardware without a network pull.
+The ISO boots the **NVIDIA** variant live and embeds the OCI image in an offline store
+inside the squashfs so the target OS can be installed on any hardware without a network pull.
+
+## Variants
+
+| Variant | Base image | Bootloader | Composefs | Description |
+|---------|-----------|------------|-----------|-------------|
+| `dakota` | `ghcr.io/projectbluefin/dakota-nvidia:stable` | systemd-boot | yes | GNOME OS-based prototype with composefs |
+| `stable` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | grub2 | no | Bluefin stable release (Fedora Silverblue) |
+| `lts` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | grub2 | no | Bluefin long-term support with HWE kernel |
+
+All ISOs embed the NVIDIA variant as the offline store. Non-NVIDIA hardware auto-rebases
+on the first `bootc upgrade` after installation.
 
 ## How it works
 
