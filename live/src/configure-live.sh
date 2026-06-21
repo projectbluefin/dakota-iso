@@ -348,11 +348,14 @@ with open("$SCRIPT_DIR/etc/bootc-installer/recipe.json") as f:
 # For non-composefs (bluefin, lts): oci: path to the OCI layout in squashfs
 if "$COMPOSEFS" == "true":
     recipe["image"] = "containers-storage:$NVIDIA_IMGREF"
+    recipe["local_imgref"] = "containers-storage:$NVIDIA_IMGREF"
 else:
     recipe["image"] = "oci:/var/lib/containers/oci-store"
+    recipe["local_imgref"] = "oci:/var/lib/containers/oci-store"
 recipe["targetImgref"] = "$BASE_IMGREF"
 recipe["imgref"] = "$BASE_IMGREF"
-recipe["local_imgref"] = "containers-storage:$NVIDIA_IMGREF"
+# All variants default to btrfs. XFS is available as a UI option only.
+recipe["filesystem"] = "btrfs"
 # Variant-specific bootloader and composefs backend
 # Normalise "grub" → "grub2": the bootloader file uses the short form but
 # fisherman's recipe validator requires "grub2" or "systemd".
