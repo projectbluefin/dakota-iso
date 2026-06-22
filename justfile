@@ -208,10 +208,10 @@ iso-sd-boot target:
     #     Fedora images default to overlay; vfs-storage.conf forces VFS inside the
     #     install container.  ostree.final-diffid must point to the squashed layer.
     #
-    #   standard-ostree / non-composefs (bluefin, bluefin-lts-hwe): preserve original
-    #     layer blobs, store as OCI layout.  No squash — squashing destroys the ostree
-    #     layer structure and produces a single oversized blob.  Mirrors CI script:
-    #     scripts/build-live-squashfs.sh non-composefs path.
+    #   standard-ostree / non-composefs (bluefin, bluefin-lts-hwe): squash to 1 layer,
+    #     import into overlay containers-storage at /usr/lib/containers/storage
+    #     (additionalimagestore).  bootcDirect resolves containers-storage:<ref>
+    #     from the read-only squashfs store.  Mirrors projectbluefin/iso.
     #
     # All buildah/skopeo runs go through _ns() for correct root/rootless UID mapping.
     LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
@@ -246,13 +246,11 @@ iso-sd-boot target:
     else
         # Non-composefs (bluefin, lts-hwe): MUST squash to 1 layer before embedding.
         # bluefin-nvidia has ~120 OCI layers; embedding without squashing writes all
-        # ~120 layer blobs into the squashfs OCI layout → ~8 GB OCI store → 12 GB ISO.
-        # Squashing to 1 layer first reduces OCI store to ~4 GB → ~6 GB final ISO.
-        # Store as OCI layout (not VFS) so fisherman can use
-        # local_imgref="oci:/var/lib/containers/oci-store".
-        OCI_INJECTED="${OUTPUT_DIR}/{{target}}-payload-injected.oci"
-        rm -rf "${OCI_INJECTED}"
-        _ns "buildah commit --squash --format oci '${INJECT_CTR}' 'oci:${OCI_INJECTED}:${PAYLOAD_IMAGE}'"
+        # ~120 layer blobs into the squashfs → ~8 GB store → 12 GB ISO.
+        # Squashing to 1 layer first reduces store to ~4 GB → ~6 GB final ISO.
+        # Store as oci-archive tar, then import into overlay containers-storage at
+        # /usr/lib/containers/storage (additionalimagestore). Mirrors projectbluefin/iso.
+        _ns "buildah commit --squash '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
         _ns "buildah rm '${INJECT_CTR}'"
     fi
 
@@ -273,7 +271,7 @@ iso-sd-boot target:
 
         ns_cleanup() {
             umount \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"  2>/dev/null || true
-            umount \"\${SQUASHFS_ROOT}/var/lib/containers/oci-store\" 2>/dev/null || true
+            umount \"\${SQUASHFS_ROOT}/usr/lib/containers/storage\"   2>/dev/null || true
             umount \"\${SQUASHFS_ROOT}\"                              2>/dev/null || true
             podman image unmount localhost/{{target}}-installer       2>/dev/null || true
             rm -rf \"\${OVERLAY_UPPER}\" \"\${OVERLAY_WORK}\"         2>/dev/null || true
@@ -287,9 +285,8 @@ iso-sd-boot target:
         # Populate the offline OCI store in a staging dir.
         # Strategy mirrors scripts/build-live-squashfs.sh:
         #   composefs (dakota): import as VFS containers-storage → /var/lib/containers/storage
-        #   non-composefs (bluefin, lts): copy as OCI layout → /var/lib/containers/oci-store
+        #   non-composefs (bluefin, lts): import as overlay containers-storage → /usr/lib/containers/storage
         PAYLOAD_OCI='${OUTPUT_DIR}/{{target}}-payload.oci.tar'
-        OCI_INJECTED='${OUTPUT_DIR}/{{target}}-payload-injected.oci'
         COMPOSEFS='${COMPOSEFS_BACKEND}'
 
         echo '=== Disk space before OCI store embed ==='
@@ -318,16 +315,23 @@ iso-sd-boot target:
                 sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:'"${PAYLOAD_IMAGE}"' containers-storage:'"${PAYLOAD_IMAGE}"''
             rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
         else
-            # ── non-composefs path: OCI layout ────────────────────────────────
-            # configure-live.sh sets local_imgref="oci:/var/lib/containers/oci-store"
-            # for bluefin/lts-hwe. OCI_INJECTED is an oci: directory (not a tar)
-            # with original layers preserved — no squash. Mirrors CI script exactly.
-            OCI_STORE=\"\${CS_STAGING}/var/lib/containers/oci-store\"
-            mkdir -p \"\${OCI_STORE}\"
-            echo 'Copying OCI layout into squashfs OCI store (original layers preserved)...'
-            skopeo copy \"oci:\${OCI_INJECTED}:${PAYLOAD_IMAGE}\" \"oci:\${OCI_STORE}\"
-            rm -rf \"\${OCI_INJECTED}\"
-        fi
+            # ── non-composefs path: overlay containers-storage ───────────────
+            # Import squashed oci-archive into overlay containers-storage at
+            # /usr/lib/containers/storage (additionalimagestore). Mirrors projectbluefin/iso.
+            STORAGE_CONF="\$(mktemp '${OUTPUT_DIR}'/live-storage-XXXXXX.conf)"
+            SQUASHFS_STORAGE="\${CS_STAGING}/usr/lib/containers/storage"
+            mkdir -p "\${SQUASHFS_STORAGE}"
+            printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
+                > "\${STORAGE_CONF}"
+            echo 'Importing squashed OCI into overlay containers-storage (non-composefs)...'
+            podman run --rm \
+                --privileged \
+                -v "\${PAYLOAD_OCI}:/payload.oci.tar:ro" \
+                -v "\${SQUASHFS_STORAGE}:/vfs-storage" \
+                -v "\${STORAGE_CONF}:/tmp/st.conf:ro" \
+                localhost/{{target}}-installer \
+                sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:'"${PAYLOAD_IMAGE}"' containers-storage:'"${PAYLOAD_IMAGE}"''
+            rm -f "\${PAYLOAD_OCI}" "\${STORAGE_CONF}"
 
         echo '=== Disk space after OCI store embed ==='
         df -h '${OUTPUT_DIR}'
@@ -361,8 +365,8 @@ iso-sd-boot target:
             mkdir -p \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
             mount --bind \"\${CS_STAGING}/var/lib/containers/storage\" \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
         else
-            mkdir -p \"\${SQUASHFS_ROOT}/var/lib/containers/oci-store\"
-            mount --bind \"\${CS_STAGING}/var/lib/containers/oci-store\" \"\${SQUASHFS_ROOT}/var/lib/containers/oci-store\"
+            mkdir -p \"\${SQUASHFS_ROOT}/usr/lib/containers/storage\"
+            mount --bind \"\${CS_STAGING}/usr/lib/containers/storage\" \"\${SQUASHFS_ROOT}/usr/lib/containers/storage\"
         fi
         echo '=== Disk space after creation of squashfs root ==='
         df -h '${OUTPUT_DIR}'
