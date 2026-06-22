@@ -96,6 +96,18 @@ jobs:
       - name: Configure podman storage (intelligent driver selection)
         run: bash .github/scripts/configure_podman_storage.sh
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Clone patched fisherman
+        run: |
+          git clone https://github.com/projectbluefin/fisherman.git \
+            --branch fix/overlay-driver-for-ostree-bootc-install \
+            --depth 1 \
+            /tmp/fisherman
+
       - name: Build ISO
         id: build
         env:
@@ -131,6 +143,7 @@ jobs:
         timeout-minutes: 60
         env:
           INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
+          FISHER_REPO: /tmp/fisherman/fisherman
         run: |
           START=$SECONDS
           # 4096 MiB: tight overlay tmpfs to expose ENOSPC-class bugs

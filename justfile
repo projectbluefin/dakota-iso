@@ -24,11 +24,20 @@ installer_channel := "stable"
 # Example: just luks-passphrase=MySecret luks-install dakota
 luks-passphrase := "testpassphrase"
 
+# Path to the projectbluefin/fisherman repo for building the patched fisherman binary
+# used in bootcDirect mode (ostree variants: stable, lts).
+# Override with: just fisher_repo=/path/to/fisherman/fisherman luks-test-qemu stable
+fisher_repo := "../fisherman/fisherman"
+
 # Squashfs compression preset:
 #   fast    (default) — zstd level 3,  128K blocks — quick local builds/CI
 #   release           — zstd level 15, 1M blocks   — ~20% smaller, ~5× slower
 # Example: just compression=release iso-sd-boot dakota
 compression := "fast"
+
+# Map target to filesystem: dakota/stable=btrfs, lts=btrfs. Default=btrfs.
+_filesystem_for target:
+    @echo "btrfs"
 
 # Create an XFS loopback mount at /mnt for faster VFS import.
 #
@@ -1085,42 +1094,64 @@ luks-install-qemu target:
     BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
     # Normalise "grub" → "grub2" for fisherman's recipe validator.
     if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
-        "${DISK}" "${INSTALL_IMAGE}" "$([ "${COMPOSEFS_BACKEND}" == "true" ] && echo "true" || echo "false")" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
-    $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
-    # Mount scratch disk over /var/tmp before fisherman runs.
-    # fisherman bind-mounts /var/tmp → target scratch for plain installs but not
-    # LUKS targets, leaving /var/tmp as a small RAM tmpfs (~3.2 GiB at 4 GiB RAM).
-    # The VFS blob extraction writes ~9 GB to /var/tmp and hits ENOSPC.
-    # /dev/vdb is the 16G scratch disk passed by luks-boot-qemu-live.
-    echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
-    $SSH 'sudo bash -c "
-        mkfs.ext4 -F /dev/vdb >/dev/null
-        umount /var/tmp 2>/dev/null || true
-        mount /dev/vdb /var/tmp
-        echo \"/var/tmp is now disk-backed on /dev/vdb\"
-    "'
-    echo "Uploaded recipe — running fisherman (takes several minutes)..."
-    # Use wrapper to patch the composefs hostname-write bug (same as plain install).
-    $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
-    $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/luks-recipe.json'
-    echo "Patching BLS entries to enable dual serial+VT console..."
-    $SSH 'sudo bash -c "
-        set -euo pipefail
-        TMP=$(mktemp -d)
-        trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
-        mount /dev/vda1 \$TMP
-        COUNT=0
-        for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
-            [[ -f \"\$entry\" ]] || continue
-            if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
-                sed -i \"s|^options .*|& console=tty0 console=ttyS0|\" \"\$entry\"
-                COUNT=\$((COUNT+1))
-                echo \"  patched: \$(basename \$entry)\"
-            fi
-        done
-        echo \"BLS patch: \$COUNT entries updated\"
-    "'
+    FILESYSTEM=$(just _filesystem_for "{{target}}")
+    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
+        # Composefs path (dakota): podman-based install with VFS containers-storage.
+        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+            "${DISK}" "${FILESYSTEM}" "${INSTALL_IMAGE}" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+        $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
+        echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
+        $SSH 'sudo bash -c "
+            mkfs.ext4 -F /dev/vdb >/dev/null
+            umount /var/tmp 2>/dev/null || true
+            mount /dev/vdb /var/tmp
+            echo \"/var/tmp is now disk-backed on /dev/vdb\"
+        "'
+        echo "Uploaded recipe — running fisherman (takes several minutes)..."
+        $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
+        $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/luks-recipe.json'
+        echo "Patching BLS entries to enable dual serial+VT console..."
+        $SSH 'sudo bash -c "
+            set -euo pipefail
+            TMP=$(mktemp -d)
+            trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
+            mount /dev/vda1 \$TMP
+            COUNT=0
+            for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
+                [[ -f \"\$entry\" ]] || continue
+                if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
+                    sed -i \"s|^options .*|& console=tty0 console=ttyS0|\" \"\$entry\"
+                    COUNT=\$((COUNT+1))
+                    echo \"  patched: \$(basename \$entry)\"
+                fi
+            done
+            echo \"BLS patch: \$COUNT entries updated\"
+        "'
+    else
+        # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
+        # Empty image triggers bootcDirect; targetImgref sets day-2 update tracking.
+        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "",\n  "targetImgref": "%s",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+            "${DISK}" "${FILESYSTEM}" "${PAYLOAD_IMAGE}" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+        $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
+        echo "Uploaded recipe — building patched fisherman for bootcDirect..."
+        FISHER_REPO="${FISHER_REPO:-{{fisher_repo}}}"
+        FISHERMAN_BIN=$(mktemp /tmp/fisherman-XXXXXX)
+        trap "rm -f '${RECIPE_TMP}' '${FISHERMAN_BIN}'" EXIT
+        (cd "${FISHER_REPO}" && CGO_ENABLED=0 go build -o "${FISHERMAN_BIN}" ./cmd/fisherman/)
+        $SCP "${FISHERMAN_BIN}" liveuser@127.0.0.1:/tmp/fisherman
+        $SSH 'chmod +x /tmp/fisherman'
+        echo "Running fisherman (bootcDirect, takes several minutes)..."
+        if ! $SSH 'sudo /tmp/fisherman /tmp/luks-recipe.json'; then
+            echo "=== INSTALL FAILURE DIAGNOSTICS ==="
+            echo "--- dmesg ---"
+            $SSH 'sudo dmesg | tail -n 100' || true
+            echo "--- journalctl ---"
+            $SSH 'sudo journalctl -n 100 --no-pager' || true
+            echo "--- systemd-oomd status ---"
+            $SSH 'sudo systemctl status systemd-oomd --no-pager' || true
+            exit 1
+        fi
+    fi
     echo "Install complete. Shutting down live QEMU..."
     echo "system_powerdown" | socat - "UNIX-CONNECT:{{luks-qemu-monitor-live}}" 2>/dev/null || true
     sleep 5
@@ -1427,51 +1458,66 @@ plain-install-qemu target:
     COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
     BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
     if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
+    FILESYSTEM=$(just _filesystem_for "{{target}}")
     RECIPE_TMP=$(mktemp /tmp/plain-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
-        "${DISK}" "${INSTALL_IMAGE}" "$([ "${COMPOSEFS_BACKEND}" == "true" ] && echo "true" || echo "false")" "${BOOTLOADER}" > "${RECIPE_TMP}"
-    $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json
-    # Mount scratch disk over /var/tmp before fisherman runs.
-    # When the VFS OCI store is embedded in the ISO, fisherman reads from
-    # containers-storage and writes blobs to /var/tmp, filling the live tmpfs
-    # (~3.2 GiB at 4 GiB RAM) before the ~9 GB blob copy completes.
-    # /dev/vdb is the 16G scratch disk passed by plain-boot-qemu-live.
-    echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
-    $SSH 'sudo bash -c "
-        mkfs.ext4 -F /dev/vdb >/dev/null
-        umount /var/tmp 2>/dev/null || true
-        mount /dev/vdb /var/tmp
-        echo \"/var/tmp is now disk-backed on /dev/vdb\"
-    "'
-    echo "Uploaded recipe — running fisherman (this takes several minutes)..."
-    # Use the wrapper script that patches the composefs hostname-write bug:
-    # fisherman calls ostree admin --print-current-dir (live sysroot, not target)
-    # after unmounting, which fails on composefs/bootc deployments.
-    # scripts/fisherman-install.sh detects hostname-only failures and patches directly.
-    $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
-    $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/plain-recipe.json'
-    echo "Patching BLS entries to add serial console..."
-    $SSH 'sudo bash -c "
-        set -euo pipefail
-        TMP=\$(mktemp -d)
-        trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
-        mount /dev/vda1 \$TMP
-        COUNT=0
-        for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
-            [[  -f \"\$entry\" ]] || continue
-            echo \"=== BLS entry before patch: \$(basename \$entry) ===\"
-            cat \"\$entry\"
-            if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
-                # Also add rd.info so bootc-root-setup output is visible on serial
-                sed -i \"s|^options .*|& console=tty0 console=ttyS0 rd.info systemd.journald.forward_to_console=yes|\" \"\$entry\"
-                COUNT=\$((COUNT+1))
-            fi
-            echo \"=== BLS entry after patch ===\"
-            cat \"\$entry\"
-        done
-        echo \"BLS patch: \$COUNT entries updated\"
-    "'
+    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
+        # Composefs path (dakota): podman-based install with VFS containers-storage.
+        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "%s",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
+            "${DISK}" "${FILESYSTEM}" "${INSTALL_IMAGE}" "${BOOTLOADER}" > "${RECIPE_TMP}"
+        $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json
+        echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
+        $SSH 'sudo bash -c "
+            mkfs.ext4 -F /dev/vdb >/dev/null
+            umount /var/tmp 2>/dev/null || true
+            mount /dev/vdb /var/tmp
+            echo \"/var/tmp is now disk-backed on /dev/vdb\"
+        "'
+        echo "Uploaded recipe — running fisherman (this takes several minutes)..."
+        $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
+        $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/plain-recipe.json'
+        echo "Patching BLS entries to add serial console..."
+        $SSH 'sudo bash -c "
+            set -euo pipefail
+            TMP=\$(mktemp -d)
+            trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
+            mount /dev/vda1 \$TMP
+            COUNT=0
+            for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
+                [[  -f \"\$entry\" ]] || continue
+                echo \"=== BLS entry before patch: \$(basename \$entry) ===\"
+                cat \"\$entry\"
+                if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
+                    sed -i \"s|^options .*|& console=tty0 console=ttyS0 rd.info systemd.journald.forward_to_console=yes|\" \"\$entry\"
+                    COUNT=\$((COUNT+1))
+                fi
+                echo \"=== BLS entry after patch ===\"
+                cat \"\$entry\"
+            done
+            echo \"BLS patch: \$COUNT entries updated\"
+        "'
+    else
+        # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
+        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "",\n  "targetImgref": "%s",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
+            "${DISK}" "${FILESYSTEM}" "${PAYLOAD_IMAGE}" "${BOOTLOADER}" > "${RECIPE_TMP}"
+        $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json
+        echo "Uploaded recipe — building patched fisherman for bootcDirect..."
+        FISHER_REPO="${FISHER_REPO:-{{fisher_repo}}}"
+        FISHERMAN_BIN=$(mktemp /tmp/fisherman-XXXXXX)
+        trap "rm -f '${RECIPE_TMP}' '${FISHERMAN_BIN}'" EXIT
+        (cd "${FISHER_REPO}" && CGO_ENABLED=0 go build -o "${FISHERMAN_BIN}" ./cmd/fisherman/)
+        $SCP "${FISHERMAN_BIN}" liveuser@127.0.0.1:/tmp/fisherman
+        $SSH 'chmod +x /tmp/fisherman'
+        echo "Running fisherman (bootcDirect, takes several minutes)..."
+        if ! $SSH 'sudo /tmp/fisherman /tmp/plain-recipe.json'; then
+            echo "=== INSTALL FAILURE DIAGNOSTICS ==="
+            echo "--- dmesg ---"
+            $SSH 'sudo dmesg | tail -n 100' || true
+            echo "--- journalctl ---"
+            $SSH 'sudo journalctl -n 100 --no-pager' || true
+            exit 1
+        fi
+    fi
     echo "Install complete. Shutting down live QEMU..."
     echo "system_powerdown" | socat - "UNIX-CONNECT:{{plain-qemu-monitor-live}}" 2>/dev/null || true
     sleep 5
