@@ -205,7 +205,9 @@ iso-sd-boot target:
     #     scripts/build-live-squashfs.sh non-composefs path.
     #
     # All buildah/skopeo runs go through _ns() for correct root/rootless UID mapping.
-    COMPOSEFS_BACKEND=$(cat "live/src/{{target}}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
+    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
+    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
+    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
     echo "=== Building offline OCI store (composefs=${COMPOSEFS_BACKEND}) for ${PAYLOAD_IMAGE} ==="
 
     PAYLOAD_OCI="${OUTPUT_DIR}/{{target}}-payload.oci.tar"
@@ -787,8 +789,13 @@ luks-install target:
     # just's parser (it sees the closing ) at column 0 as a delimiter).
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:'"${PAYLOAD_IMAGE}"'",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
-        "${DISK}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
+    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
+    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
+    BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
+    if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
+    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:'"${PAYLOAD_IMAGE}"'",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+        "${DISK}" "$([ "${COMPOSEFS_BACKEND}" == "true" ] && echo "true" || echo "false")" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@"$GUEST_IP":/tmp/luks-recipe.json
     echo "Uploaded recipe to /tmp/luks-recipe.json"
 
@@ -1072,8 +1079,14 @@ luks-install-qemu target:
 
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
-        "${DISK}" "${INSTALL_IMAGE}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
+    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
+    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
+    BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
+    # Normalise "grub" → "grub2" for fisherman's recipe validator.
+    if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
+    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+        "${DISK}" "${INSTALL_IMAGE}" "$([ "${COMPOSEFS_BACKEND}" == "true" ] && echo "true" || echo "false")" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
     # Mount scratch disk over /var/tmp before fisherman runs.
     # fisherman bind-mounts /var/tmp → target scratch for plain installs but not
@@ -1248,8 +1261,13 @@ plain-enospc-gate target:
     fi
     RECIPE_TMP=$(mktemp /tmp/plain-enospc-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    printf '{\n  "disk": "/dev/vda",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-enospc-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
-        "${INSTALL_IMAGE}" > "${RECIPE_TMP}"
+    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
+    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
+    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
+    BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
+    if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
+    printf '{\n  "disk": "/dev/vda",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-enospc-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
+        "${INSTALL_IMAGE}" "$([ "${COMPOSEFS_BACKEND}" == "true" ] && echo "true" || echo "false")" "${BOOTLOADER}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/enospc-recipe.json
     echo "Running fisherman (watching for OCI export completion)..."
     # Run fisherman via process substitution (not a pipe) so that exit 0/1
@@ -1404,10 +1422,15 @@ plain-install-qemu target:
         INSTALL_IMAGE="docker://${PAYLOAD_IMAGE}"
         echo "Image not in local store — fisherman will pull from network."
     fi
+    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
+    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
+    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
+    BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
+    if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
     RECIPE_TMP=$(mktemp /tmp/plain-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "systemd",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
-        "${DISK}" "${INSTALL_IMAGE}" > "${RECIPE_TMP}"
+    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
+        "${DISK}" "${INSTALL_IMAGE}" "$([ "${COMPOSEFS_BACKEND}" == "true" ] && echo "true" || echo "false")" "${BOOTLOADER}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json
     # Mount scratch disk over /var/tmp before fisherman runs.
     # When the VFS OCI store is embedded in the ISO, fisherman reads from
