@@ -97,17 +97,15 @@ ARG DEBUG=0
 ENV TARGET=${TARGET} INSTALLER_CHANNEL=${INSTALLER_CHANNEL} DEBUG=${DEBUG}
 
 # For ostree-based images (bluefin, bluefin-lts): install systemd-boot and
-# fuse-overlayfs via rpm-ostree so the live system remains a valid bootc
-# deployment for bootcDirect installs.  Dakota (freedesktop-sdk) images lack
-# rpm-ostree; they use the composefs podman-based install path instead.
+# fuse-overlayfs with dnf so the live system remains a valid bootc deployment
+# for bootcDirect installs.  Dakota (freedesktop-sdk) images lack dnf; they use
+# the composefs podman-based install path instead.
 # The systemd-boot EFI binary is needed by build-iso.sh for the live ISO's ESP;
 # fuse-overlayfs supports overlay-on-overlay for kernels without native support
 # (e.g. CentOS Stream 10 in bluefin-lts).
-RUN if command -v rpm-ostree >/dev/null 2>&1; then \
-        rpm-ostree install --apply-live --allow-inactive \
-            systemd-boot-unsigned fuse-overlayfs \
-        && rpm-ostree cleanup -m \
-        && rm -rf /var/cache/rpm-ostree; \
+RUN if command -v dnf >/dev/null 2>&1; then \
+        dnf install -y systemd-boot-unsigned fuse-overlayfs \
+        && dnf clean all; \
     fi
 
 COPY --from=initramfs-builder /tmp/initramfs.img /tmp/initramfs.img
