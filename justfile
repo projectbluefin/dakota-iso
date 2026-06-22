@@ -321,8 +321,12 @@ iso-sd-boot target:
             STORAGE_CONF=\"\$(mktemp '${OUTPUT_DIR}'/live-storage-XXXXXX.conf)\"
             SQUASHFS_STORAGE=\"\${CS_STAGING}/usr/lib/containers/storage\"
             mkdir -p \"\${SQUASHFS_STORAGE}\"
-            printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
-                > \"\${STORAGE_CONF}\"
+            cat > \"\${STORAGE_CONF}\" << 'SCEOF'
+[storage]
+driver = "overlay"
+runroot = "/tmp/cs-runroot"
+graphroot = "/vfs-storage"
+SCEOF
             echo 'Importing squashed OCI into overlay containers-storage (non-composefs)...'
             podman run --rm \
                 --privileged \
