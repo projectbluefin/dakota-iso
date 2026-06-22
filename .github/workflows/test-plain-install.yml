@@ -133,6 +133,8 @@ jobs:
             --boot-tar /var/iso-build/${{ matrix.variant }}-boot-files.tar \
             --output /var/iso-build/${{ matrix.variant }}-live.iso
           sudo cp /var/iso-build/${{ matrix.variant }}-live.iso output/
+          # The E2E test runs as the unprivileged user; make the ISO user-owned.
+          sudo chown -R "$USER:$(id -gn)" output/
           ISO_SIZE=$(stat -c%s output/${{ matrix.variant }}-live.iso 2>/dev/null || echo 0)
           echo "iso_size=$ISO_SIZE" >> "$GITHUB_OUTPUT"
           echo "duration=$((SECONDS - START))" >> "$GITHUB_OUTPUT"
@@ -147,7 +149,12 @@ jobs:
         run: |
           START=$SECONDS
           # 4096 MiB: tight overlay tmpfs to expose ENOSPC-class bugs
-          sudo env PATH="$PATH" just qemu-mem=4096 installer_channel="$INSTALLER_CHANNEL" plain-test-qemu ${{ matrix.variant }}
+          # Run as the unprivileged runner user (not sudo): the bootcDirect path
+          # builds the patched fisherman with `go build`, which needs Go on PATH
+          # and runs VCS stamping against the user-owned /tmp/fisherman clone — both
+          # break under sudo. QEMU/KVM access uses an internal sudo fallback in the
+          # recipe, and all guest-side install steps run via ssh with guest sudo.
+          just qemu-mem=4096 installer_channel="$INSTALLER_CHANNEL" plain-test-qemu ${{ matrix.variant }}
           echo "duration=$((SECONDS - START))" >> "$GITHUB_OUTPUT"
 
       - name: Capture serial logs and screenshot

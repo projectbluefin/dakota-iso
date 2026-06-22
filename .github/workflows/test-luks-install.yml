@@ -148,7 +148,12 @@ jobs:
           FISHER_REPO: /tmp/fisherman/fisherman
         run: |
           START=$(date +%s)
-          sudo "$(command -v just)" luks-test-qemu ${{ matrix.variant }}
+          # Run as the unprivileged runner user (not sudo): the bootcDirect path
+          # builds the patched fisherman with `go build`, which needs Go on PATH
+          # and runs VCS stamping against the user-owned /tmp/fisherman clone — both
+          # break under sudo. QEMU/KVM access uses an internal sudo fallback in the
+          # recipe, and all guest-side install steps run via ssh with guest sudo.
+          just luks-test-qemu ${{ matrix.variant }}
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
