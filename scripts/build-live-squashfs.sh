@@ -213,6 +213,18 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         buildah commit --squash "${INJECT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
         buildah rm "${INJECT_CTR}"
 
+        # Update ostree.final-diffid to the squashed layer's diff_id.
+        ANNOT_CTR="$(buildah from --pull-never "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}")"
+        SQUASHED_DIFFID="$(skopeo inspect --config "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}" 2>/dev/null | \
+            python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)"
+        if [[ -n "${SQUASHED_DIFFID}" ]]; then
+            echo ">>> [live-squashfs] updating ostree.final-diffid to ${SQUASHED_DIFFID} (non-composefs) ..."
+            buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
+            buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
+        fi
+        buildah commit --squash "${ANNOT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
+        buildah rm "${ANNOT_CTR}"
+
         # Import into overlay containers-storage at staging dir, then copy to squashfs root.
         CS_STAGING="${WORK}/cs-staging"
         STORAGE_CONF="${WORK}/st.conf"

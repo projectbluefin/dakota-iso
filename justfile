@@ -252,6 +252,17 @@ iso-sd-boot target:
         # /usr/lib/containers/storage (additionalimagestore). Mirrors projectbluefin/iso.
         _ns "buildah commit --squash '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
         _ns "buildah rm '${INJECT_CTR}'"
+        # Update ostree.final-diffid to point to the new squashed layer's diff_id.
+        ANNOT_CTR=$(_ns "buildah from --pull-never 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'")
+        SQUASHED_DIFFID=$(_ns "skopeo inspect --config 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}' 2>/dev/null" | \
+            python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)
+        if [[ -n "${SQUASHED_DIFFID}" ]]; then
+            echo "Updating ostree.final-diffid to ${SQUASHED_DIFFID} (non-composefs mode)"
+            _ns "buildah config --label 'ostree.final-diffid=${SQUASHED_DIFFID}' '${ANNOT_CTR}'"
+            _ns "buildah config --annotation 'ostree.final-diffid=${SQUASHED_DIFFID}' '${ANNOT_CTR}'"
+        fi
+        _ns "buildah commit --squash '${ANNOT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
+        _ns "buildah rm '${ANNOT_CTR}'"
     fi
 
     podman rmi "${PAYLOAD_IMAGE}" || true
