@@ -912,6 +912,7 @@ qemu-mem := "8192"
 qemu-smp := "8"
 
 # QEMU install disk path (override with: just luks-qemu-disk=/path/to/disk.qcow2 ...)
+# Default includes the target variant so parallel CI jobs don't contend.
 luks-qemu-disk := "/var/tmp/dakota-luks-install.qcow2"
 # Scratch disk for /var/tmp inside the live LUKS VM — prevents ENOSPC during
 # OCI blob extraction.  fisherman bind-mounts /var/tmp for plain targets but
@@ -951,7 +952,7 @@ e2e target:
     echo "=== Step 1/2: Building ISO (debug={{debug}}, installer_channel={{installer_channel}}) ==="
     just debug={{debug}} installer_channel={{installer_channel}} output_dir={{output_dir}} iso-sd-boot {{target}}
     echo "=== Step 2/2: LUKS end-to-end test ==="
-    rm -f "{{luks-qemu-disk}}" "{{luks-scratch-disk}}" \
+    rm -f /var/tmp/dakota-luks-install-*.qcow2 /var/tmp/dakota-luks-scratch-*.img \
                "{{luks-qemu-monitor-live}}" "{{luks-qemu-monitor-installed}}" \
                "{{luks-qemu-serial-live}}" "{{luks-qemu-serial-installed}}"
     just luks-test-qemu {{target}}
@@ -961,9 +962,11 @@ e2e target:
 luks-test-qemu target:
     #!/usr/bin/bash
     set -euo pipefail
-    just luks-qemu-disk={{luks-qemu-disk}} luks-boot-qemu-live {{target}}
+    DISK="/var/tmp/dakota-luks-install-{{target}}.qcow2"
+    SCRATCH="/var/tmp/dakota-luks-scratch-{{target}}.img"
+    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-live {{target}}
     just luks-qemu-ssh-port={{luks-qemu-ssh-port}} luks-install-qemu {{target}}
-    just luks-qemu-disk={{luks-qemu-disk}} luks-boot-qemu-installed {{target}}
+    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-installed {{target}}
     just luks-qemu-monitor-installed={{luks-qemu-monitor-installed}} \
          luks-qemu-serial-installed={{luks-qemu-serial-installed}} \
          luks-unlock-qemu {{target}}
