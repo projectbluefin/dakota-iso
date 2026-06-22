@@ -333,6 +333,7 @@ iso-sd-boot target:
                 sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:'"${PAYLOAD_IMAGE}"' containers-storage:'"${PAYLOAD_IMAGE}"''
             rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
 
+        fi
         echo '=== Disk space after OCI store embed ==='
         df -h '${OUTPUT_DIR}'
         if [[ '$WORKDIR' != '$OUTPUT_DIR' ]]; then
