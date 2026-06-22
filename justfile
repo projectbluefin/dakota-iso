@@ -27,7 +27,7 @@ luks-passphrase := "testpassphrase"
 # Path to the projectbluefin/fisherman repo for building the patched fisherman binary
 # used in bootcDirect mode (ostree variants: stable, lts).
 # Override with: just fisher_repo=/path/to/fisherman/fisherman luks-test-qemu stable
-fisher_repo := "../fisherman/fisherman"
+fisher_repo := "/tmp/fisherman/fisherman"
 
 # Squashfs compression preset:
 #   fast    (default) — zstd level 3,  128K blocks — quick local builds/CI
