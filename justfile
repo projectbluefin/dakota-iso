@@ -318,20 +318,20 @@ iso-sd-boot target:
             # ── non-composefs path: overlay containers-storage ───────────────
             # Import squashed oci-archive into overlay containers-storage at
             # /usr/lib/containers/storage (additionalimagestore). Mirrors projectbluefin/iso.
-            STORAGE_CONF="\$(mktemp '${OUTPUT_DIR}'/live-storage-XXXXXX.conf)"
-            SQUASHFS_STORAGE="\${CS_STAGING}/usr/lib/containers/storage"
-            mkdir -p "\${SQUASHFS_STORAGE}"
+            STORAGE_CONF=\"\$(mktemp '${OUTPUT_DIR}'/live-storage-XXXXXX.conf)\"
+            SQUASHFS_STORAGE=\"\${CS_STAGING}/usr/lib/containers/storage\"
+            mkdir -p \"\${SQUASHFS_STORAGE}\"
             printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
-                > "\${STORAGE_CONF}"
+                > \"\${STORAGE_CONF}\"
             echo 'Importing squashed OCI into overlay containers-storage (non-composefs)...'
             podman run --rm \
                 --privileged \
-                -v "\${PAYLOAD_OCI}:/payload.oci.tar:ro" \
-                -v "\${SQUASHFS_STORAGE}:/vfs-storage" \
-                -v "\${STORAGE_CONF}:/tmp/st.conf:ro" \
+                -v \"\${PAYLOAD_OCI}:/payload.oci.tar:ro\" \
+                -v \"\${SQUASHFS_STORAGE}:/vfs-storage\" \
+                -v \"\${STORAGE_CONF}:/tmp/st.conf:ro\" \
                 localhost/{{target}}-installer \
                 sh -c 'mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:'"${PAYLOAD_IMAGE}"' containers-storage:'"${PAYLOAD_IMAGE}"''
-            rm -f "\${PAYLOAD_OCI}" "\${STORAGE_CONF}"
+            rm -f \"\${PAYLOAD_OCI}\" \"\${STORAGE_CONF}\"
 
         echo '=== Disk space after OCI store embed ==='
         df -h '${OUTPUT_DIR}'
