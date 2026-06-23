@@ -1188,6 +1188,9 @@ luks-boot-qemu-installed target:
     rm -f "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-installed}}"
 
     echo "Booting installed disk: {{luks-qemu-disk}}"
+    # The install recipe triggers guest shutdown, but the daemonized QEMU
+    # may take a moment to flush and release the qcow2 file lock.
+    sleep 5
     # KVM access: try direct, then sudo, then fall back to TCG
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
