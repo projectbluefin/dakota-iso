@@ -696,20 +696,11 @@ e2e target:
 luks-test-qemu target installer_channel="dev":
     #!/usr/bin/bash
     set -euo pipefail
-    # Non-composefs (ostree) images have many layers; bootcViaContainer pulls
-    # via podman which needs more RAM. Composefs (dakota) works at 8 GB.
-    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null || echo "{{target}}")
-    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
-    if [[ "$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null || echo "true")" != "true" ]]; then
-        QEMU_MEM="12288"
-    else
-        QEMU_MEM="{{qemu-mem}}"
-    fi
     DISK="/var/tmp/dakota-luks-install-{{target}}-{{installer_channel}}.qcow2"
     SCRATCH="/var/tmp/dakota-luks-scratch-{{target}}-{{installer_channel}}.img"
-    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" qemu-mem="$QEMU_MEM" luks-boot-qemu-live {{target}}
+    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-live {{target}}
     just luks-qemu-ssh-port={{luks-qemu-ssh-port}} luks-install-qemu {{target}}
-    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" qemu-mem="$QEMU_MEM" luks-boot-qemu-installed {{target}}
+    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-installed {{target}}
     just luks-qemu-monitor-installed={{luks-qemu-monitor-installed}} \
          luks-qemu-serial-installed={{luks-qemu-serial-installed}} \
          luks-unlock-qemu {{target}}
@@ -830,31 +821,21 @@ luks-install-qemu target:
     SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}}"
     SCP="sshpass -p live scp $SSH_OPTS -P {{luks-qemu-ssh-port}}"
 
-    # Determine image transport.
-    # Composefs (dakota): the embedded VFS store works correctly after squash
-    # because composefs-native images don't use ostree commit hardlinks.
-    # Non-composefs (stable, lts): buildah commit --squash corrupts ostree
-    # hardlinked commit objects, so always pull from registry to bypass the
-    # broken embedded store. Offline installs for non-composefs are tracked
-    # separately (see projectbluefin/dakota-iso#104).
-    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
-    BOOTLOADER_VARIANT=$(echo "${LIVE_TARGET}" | sed 's/-nvidia-open$//;s/-nvidia$//')
-    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
-    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
-        if $SSH "sudo podman image exists '${PAYLOAD_IMAGE}' 2>/dev/null"; then
-            INSTALL_IMAGE="containers-storage:${PAYLOAD_IMAGE}"
-            echo "Image found in local containers-storage — using offline install."
-        else
-            INSTALL_IMAGE="docker://${PAYLOAD_IMAGE}"
-            echo "Image not in local store — fisherman will pull from network."
-        fi
+    # Use local containers-storage if the image is cached there (offline install);
+    # otherwise fall back to a network pull via docker://.
+    if $SSH "sudo podman image exists '${PAYLOAD_IMAGE}' 2>/dev/null"; then
+        INSTALL_IMAGE="containers-storage:${PAYLOAD_IMAGE}"
+        echo "Image found in local containers-storage — using offline install."
     else
         INSTALL_IMAGE="docker://${PAYLOAD_IMAGE}"
-        echo "Non-composefs image — using network pull (embedded VFS store squashing corrupts ostree objects)."
+        echo "Image not in local store — fisherman will pull from network."
     fi
 
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
+    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
+    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
+    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
     BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
     # Normalise "grub" → "grub2" for fisherman's recipe validator.
     if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
@@ -899,15 +880,11 @@ luks-install-qemu target:
         "'
     else
         # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
-        # Use docker:// transport for the image to bypass the broken embedded
-        # VFS store (buildah commit --squash corrupts ostree hardlinked commit
-        # objects, causing 'Expected commit object, not File'). Empty image
-        # triggers bootcDirect; targetImgref sets day-2 update tracking.
-        # Offline install fix for non-composefs tracked in #104.
-        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "docker://%s",\n  "targetImgref": "%s",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
-            "${DISK}" "${FILESYSTEM}" "${PAYLOAD_IMAGE}" "${PAYLOAD_IMAGE}" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+        # Empty image triggers bootcDirect; targetImgref sets day-2 update tracking.
+        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "",\n  "targetImgref": "%s",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+            "${DISK}" "${FILESYSTEM}" "${PAYLOAD_IMAGE}" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
         $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
-        echo "Uploaded recipe — building patched fisherman for bootcDirect (docker:// to bypass embedded store)..."
+        echo "Uploaded recipe — building patched fisherman for bootcDirect..."
         FISHER_REPO="${FISHER_REPO:-{{fisher_repo}}}"
         FISHERMAN_BIN=$(mktemp /tmp/fisherman-XXXXXX)
         trap "rm -f '${RECIPE_TMP}' '${FISHERMAN_BIN}'" EXIT

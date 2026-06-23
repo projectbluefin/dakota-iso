@@ -108,18 +108,12 @@ if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
     _ns "buildah commit --squash '${ANNOT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
     _ns "buildah rm '${ANNOT_CTR}'"
 else
-    _ns "buildah commit --squash '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
+    # Non-composefs (bootcDirect): no VFS store needed.  bootc reads from the
+    # running ostree deployment on the live system.  The embedded VFS store
+    # built via buildah commit --squash corrupts ostree hardlinked commit
+    # objects ("Expected commit object, not File"), making it unusable.
+    # The running system IS the image — bootcDirect uses it directly.
     _ns "buildah rm '${INJECT_CTR}'"
-    ANNOT_CTR=$(_ns "buildah from --pull-never 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'")
-    SQUASHED_DIFFID=$(_ns "skopeo inspect --config 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}' 2>/dev/null" | \
-        python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)
-    if [[ -n "${SQUASHED_DIFFID}" ]]; then
-        echo "Updating ostree.final-diffid to ${SQUASHED_DIFFID} (non-composefs mode)"
-        _ns "buildah config --label 'ostree.final-diffid=${SQUASHED_DIFFID}' '${ANNOT_CTR}'"
-        _ns "buildah config --annotation 'ostree.final-diffid=${SQUASHED_DIFFID}' '${ANNOT_CTR}'"
-    fi
-    _ns "buildah commit --squash '${ANNOT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
-    _ns "buildah rm '${ANNOT_CTR}'"
 fi
 
 podman rmi "${PAYLOAD_IMAGE}" || true
@@ -174,19 +168,9 @@ _ns_build_squashfs() {
             sh -c "mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:${PAYLOAD_IMAGE} containers-storage:${PAYLOAD_IMAGE}"
         rm -f "${PAYLOAD_OCI}" "${STORAGE_CONF}"
     else
-        SQUASHFS_STORAGE="${CS_STAGING}/usr/lib/containers/storage"
-        STORAGE_CONF=$(mktemp "${OUTPUT_DIR}/live-storage-XXXXXX.conf")
-        mkdir -p "${SQUASHFS_STORAGE}"
-        printf '[storage]\ndriver = "vfs"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' > "${STORAGE_CONF}"
-        echo 'Importing OCI into VFS containers-storage (non-composefs)...'
-        podman run --rm \
-            --privileged \
-            -v "${PAYLOAD_OCI}:/payload.oci.tar:ro" \
-            -v "${SQUASHFS_STORAGE}:/vfs-storage" \
-            -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
-            "localhost/${TARGET}-installer" \
-            sh -c "mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:${PAYLOAD_IMAGE} containers-storage:${PAYLOAD_IMAGE}"
-        rm -f "${PAYLOAD_OCI}" "${STORAGE_CONF}"
+        # Non-composefs: no VFS store to embed — bootcDirect reads from the
+        # running ostree deployment, not from containers-storage.
+        echo '(non-composefs: skipping VFS store embed — bootcDirect uses the running deployment)'
     fi
 
     echo "=== Disk space after OCI store embed ==="
@@ -215,10 +199,6 @@ _ns_build_squashfs() {
         mkdir -p "${SQUASHFS_ROOT}/var/lib/containers/storage"
         echo "Copying VFS store into squashfs root..."
         cp -a "${CS_STAGING}/var/lib/containers/storage/." "${SQUASHFS_ROOT}/var/lib/containers/storage/"
-    else
-        mkdir -p "${SQUASHFS_ROOT}/usr/lib/containers/storage"
-        echo "Copying OCI store into squashfs root..."
-        cp -a "${CS_STAGING}/usr/lib/containers/storage/." "${SQUASHFS_ROOT}/usr/lib/containers/storage/"
     fi
 
     echo "=== Disk space after creation of squashfs root ==="

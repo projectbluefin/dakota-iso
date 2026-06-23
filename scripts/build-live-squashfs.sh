@@ -206,53 +206,12 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         # VFS-format additional stores are driver-agnostic and readable by both
         # the Fedora 44 (stable) and el10 (lts) kernels.
         # Mirrors projectbluefin/iso commit 34fe6659.
-        echo ">>> [live-squashfs] embedding OCI image ${OCI_IMAGE} into VFS containers-storage (non-composefs, bootcDirect) ..."
-
+        echo ">>> [live-squashfs] non-composefs (bootcDirect) — skipping VFS store embed; bootcDirect uses the running deployment directly"
         printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
         INJECT_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
         buildah copy "${INJECT_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
         buildah run  "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
-        OCI_ARCHIVE="${WORK}/payload.oci.tar"
-        buildah commit --squash "${INJECT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
         buildah rm "${INJECT_CTR}"
-
-        SQUASHED_DIFFID="$(skopeo inspect --config "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}" 2>/dev/null | \
-            python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)"
-        if [[ -n "${SQUASHED_DIFFID}" ]]; then
-            echo ">>> [live-squashfs] updating ostree.final-diffid to ${SQUASHED_DIFFID} (non-composefs) ..."
-            ANNOT_CTR="$(buildah from --pull-never "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}")"
-            buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-            buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-            buildah commit --squash "${ANNOT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
-            buildah rm "${ANNOT_CTR}"
-        fi
-
-        # Import into VFS containers-storage at staging dir, then copy to squashfs root.
-        CS_STAGING="${WORK}/cs-staging"
-        STORAGE_CONF="${WORK}/st.conf"
-        mkdir -p "${CS_STAGING}"
-        printf '[storage]\ndriver = "vfs"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' > "${STORAGE_CONF}"
-
-        echo ">>> [live-squashfs] importing OCI into VFS containers-storage ..."
-        podman run --rm \
-            --privileged \
-            -v "${OCI_ARCHIVE}:/payload.oci.tar:ro" \
-            -v "${CS_STAGING}:/vfs-storage" \
-            -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
-            "${IMAGE}" \
-            sh -c "mkdir -p /tmp/cs-runroot /var/tmp && \
-                   CONTAINERS_STORAGE_CONF=/tmp/st.conf \
-                   skopeo copy \
-                   oci-archive:/payload.oci.tar:${OCI_IMAGE} \
-                   containers-storage:${OCI_IMAGE}"
-
-        rm -f "${OCI_ARCHIVE}" "${STORAGE_CONF}"
-
-        mkdir -p "${SFS_ROOT}/usr/lib/containers/storage"
-        echo ">>> [live-squashfs] copying VFS store into squashfs root ($(du -sh "${CS_STAGING}" | cut -f1)) ..."
-        cp -a "${CS_STAGING}/." "${SFS_ROOT}/usr/lib/containers/storage/"
-        rm -rf "${CS_STAGING}"
-        echo ">>> [live-squashfs] VFS store embedded: $(du -sh "${SFS_ROOT}/usr/lib/containers/storage" | cut -f1)"
     fi
 fi
 
