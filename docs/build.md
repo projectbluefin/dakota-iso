@@ -461,3 +461,11 @@ buildah commit --squash --format oci "${INJECT_CTR}" "oci:${OCI_DIR}:${OCI_IMAGE
 Squashing reduces the OCI store to a single ~4 GB layer → ~6 GB final ISO.
 
 **NEVER remove `--squash` from this path.** The dakota (composefs) path squashes for VFS import; the bluefin (non-composefs) path squashes before OCI layout copy. Both paths squash.
+
+### VFS additionalimagestore requires squashing to prevent storage explosion (2026-06-23)
+
+**What failed:** Building `stable` and `lts` ISO targets failed in CI with `no space left on device` (ENOSPC) during the VFS import step of `Build debug ISO`.
+
+**Why:** To support kernels without overlay-on-overlay, the non-composefs targets (`stable`, `lts`) use the `vfs` driver for their additional image store. If the payload image is NOT squashed before import, the VFS driver has to unpack and copy all ~120 layers sequentially. Because VFS lacks copy-on-write, this layer-on-layer unpacking causes an exponential disk space explosion (>100 GB), exhausting the runner's disk.
+
+**Fix:** Ensure `buildah commit --squash --format oci` is used for the payload image in BOTH the `justfile` (inline `iso-sd-boot`) and `scripts/build-live-squashfs.sh` non-composefs paths before the `skopeo copy ... containers-storage:` import step. This squashes the payload to a single layer, preventing the VFS import explosion.
