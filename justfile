@@ -856,17 +856,22 @@ luks-install-qemu target:
         echo "Uploaded recipe — running fisherman (takes several minutes)..."
         $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
         $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/luks-recipe.json'
-        echo "Patching BLS entries to enable dual serial+VT console..."
+        echo "Patching BLS entries to enable dual serial+VT console and LUKS unlock..."
         $SSH 'sudo bash -c "
             set -euo pipefail
-            TMP=$(mktemp -d)
+            LUKS_UUID=\$(cryptsetup luksUUID /dev/vda2 2>/dev/null || echo \"\")
+            TMP=\$(mktemp -d)
             trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
             mount /dev/vda1 \$TMP
             COUNT=0
             for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
                 [[ -f \"\$entry\" ]] || continue
                 if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
-                    sed -i \"s|^options .*|& console=tty0 console=ttyS0|\" \"\$entry\"
+                    if [[ -n \"\$LUKS_UUID\" ]]; then
+                        sed -i \"s|^options .*|& console=tty0 console=ttyS0 rd.luks.name=\${LUKS_UUID}=root|\" \"\$entry\"
+                    else
+                        sed -i \"s|^options .*|& console=tty0 console=ttyS0|\" \"\$entry\"
+                    fi
                     COUNT=\$((COUNT+1))
                     echo \"  patched: \$(basename \$entry)\"
                 fi

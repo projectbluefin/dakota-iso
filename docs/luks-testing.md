@@ -212,3 +212,55 @@ The scratch disk is cleaned up along with the install disk in the `e2e` recipe.
 This fixes every LUKS E2E run since composefs was enabled (all had been silently
 timing out at the 90-minute job ceiling before the fisherman wrapper surfaced
 the real error).
+
+### LUKS emergency shell: missing `rd.luks.name=` kernel arg (2026-06-23)
+
+After the ISO build was fixed, all 6 LUKS E2E variants (dakota dev/stable, lts
+dev/stable, stable dev/stable) failed with:
+
+```
+[luks-unlock] RESULT: emergency shell — issue #270 reproduced
+```
+
+Serial log reveals:
+```
+[ TIME ] Timed out waiting for device dev-disk-by-x2dlabel-root.device
+[DEPEND] Dependency failed for sysroot.mount - /sysroot
+```
+
+The kernel cmdline in the BLS entry contained `root=LABEL=root` with **no**
+`rd.luks.name=` argument, so the initramfs never unlocked the LUKS container
+and could not find the root filesystem.
+
+**Root cause:** The `justfile` has TWO install paths for LUKS tests:
+
+| Path | Usage | Fisherman source | Has EnsureLuksArgs? |
+|---|---|---|---|
+| **composefs** (dakota) | `"composeFsBackend": true` + `"image"` set | Flatpak `/usr/local/bin/fisherman` | ❌ No |
+| **bootcDirect** (stable, lts) | `"image": ""` + `"targetImgref"` set | Compiled from `tmp_bootc_installer/` | ✅ Yes |
+
+The `tmp_bootc_installer/fisherman` source (`internal/post/luks_args.go`) has
+`EnsureLuksArgs()` which injects `rd.luks.name=<UUID>=root` into BLS entries.
+This is compiled and used in the bootcDirect path (passing). The composefs
+path uses the Flatpak-provided fisherman which lacks this function (failing).
+
+**Fix:** Add `rd.luks.name=<UUID>=root` injection to the justfile's composefs
+BLS patch step (`justfile`, composefs path, around line 859). Before patching
+the BLS entry, query `cryptsetup luksUUID /dev/vda2` for the LUKS UUID and
+append it to the `options` line:
+
+```bash
+LUKS_UUID=$(cryptsetup luksUUID /dev/vda2 2>/dev/null || echo "")
+sed -i "s|^options .*|& console=tty0 console=ttyS0 rd.luks.name=${LUKS_UUID}=root|" "$entry"
+```
+
+**Verification:** Run `just luks-test-qemu dakota` and confirm serial log shows:
+```
+Starting systemd-cryptsetup@root.service - Cryptography Setup for root...
+Please enter passphrase for disk root::*****
+Finished systemd-cryptsetup@root.service
+Found device dev-disk-by-x2dlabel-root.device
+```
+
+**Long-term fix:** Ship `EnsureLuksArgs` in the `projectbluefin/bootc-installer`
+Flatpak so both install paths are covered.
