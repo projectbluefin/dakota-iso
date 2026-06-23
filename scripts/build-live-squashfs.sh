@@ -213,7 +213,7 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         buildah copy "${INJECT_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
         buildah run  "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
         OCI_ARCHIVE="${WORK}/payload.oci.tar"
-        buildah commit "${INJECT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
+        buildah commit --squash --format oci "${INJECT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
         buildah rm "${INJECT_CTR}"
 
         # Import into VFS containers-storage at staging dir, then copy to squashfs root.

@@ -246,12 +246,10 @@ iso-sd-boot target:
         _ns "buildah commit --squash '${ANNOT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
         _ns "buildah rm '${ANNOT_CTR}'"
     else
-        # Non-composefs (bluefin, lts-hwe): commit WITHOUT --squash to preserve
-        # the original layer structure.  Each layer blob is small and fits in the
-        # VM's overlay tmpfs during bootcDirect install.  Overlay containers-storage
-        # stores layer diffs efficiently; squashfs compression handles the rest.
-        # Mirrors projectbluefin/iso (which uses podman save, no squash).
-        _ns "buildah commit '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
+        # Non-composefs (bluefin, lts-hwe): squash to 1 layer to avoid VFS explosion
+        # and keep the ISO size within bounds.
+        # Mirrors projectbluefin/iso.
+        _ns "buildah commit --squash --format oci '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
         _ns "buildah rm '${INJECT_CTR}'"
     fi
 
