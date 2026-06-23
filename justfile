@@ -890,11 +890,15 @@ luks-install-qemu target:
         "'
     else
         # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
-        # Empty image triggers bootcDirect; targetImgref sets day-2 update tracking.
-        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "",\n  "targetImgref": "%s",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
-            "${DISK}" "${FILESYSTEM}" "${PAYLOAD_IMAGE}" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+        # Use docker:// transport for the image to bypass the broken embedded
+        # VFS store (buildah commit --squash corrupts ostree hardlinked commit
+        # objects, causing 'Expected commit object, not File'). Empty image
+        # triggers bootcDirect; targetImgref sets day-2 update tracking.
+        # Offline install fix for non-composefs tracked in #104.
+        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "docker://%s",\n  "targetImgref": "%s",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+            "${DISK}" "${FILESYSTEM}" "${PAYLOAD_IMAGE}" "${PAYLOAD_IMAGE}" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
         $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
-        echo "Uploaded recipe — building patched fisherman for bootcDirect..."
+        echo "Uploaded recipe — building patched fisherman for bootcDirect (docker:// to bypass embedded store)..."
         FISHER_REPO="${FISHER_REPO:-{{fisher_repo}}}"
         FISHERMAN_BIN=$(mktemp /tmp/fisherman-XXXXXX)
         trap "rm -f '${RECIPE_TMP}' '${FISHERMAN_BIN}'" EXIT
