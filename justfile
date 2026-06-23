@@ -696,11 +696,20 @@ e2e target:
 luks-test-qemu target installer_channel="dev":
     #!/usr/bin/bash
     set -euo pipefail
+    # Non-composefs (ostree) images have many layers; bootcViaContainer pulls
+    # via podman which needs more RAM. Composefs (dakota) works at 8 GB.
+    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null || echo "{{target}}")
+    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
+    if [[ "$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null || echo "true")" != "true" ]]; then
+        QEMU_MEM="12288"
+    else
+        QEMU_MEM="{{qemu-mem}}"
+    fi
     DISK="/var/tmp/dakota-luks-install-{{target}}-{{installer_channel}}.qcow2"
     SCRATCH="/var/tmp/dakota-luks-scratch-{{target}}-{{installer_channel}}.img"
-    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-live {{target}}
+    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" qemu-mem="$QEMU_MEM" luks-boot-qemu-live {{target}}
     just luks-qemu-ssh-port={{luks-qemu-ssh-port}} luks-install-qemu {{target}}
-    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-installed {{target}}
+    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" qemu-mem="$QEMU_MEM" luks-boot-qemu-installed {{target}}
     just luks-qemu-monitor-installed={{luks-qemu-monitor-installed}} \
          luks-qemu-serial-installed={{luks-qemu-serial-installed}} \
          luks-unlock-qemu {{target}}
