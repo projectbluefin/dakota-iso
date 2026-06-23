@@ -469,3 +469,19 @@ Squashing reduces the OCI store to a single ~4 GB layer → ~6 GB final ISO.
 **Why:** To support kernels without overlay-on-overlay, the non-composefs targets (`stable`, `lts`) use the `vfs` driver for their additional image store. If the payload image is NOT squashed before import, the VFS driver has to unpack and copy all ~120 layers sequentially. Because VFS lacks copy-on-write, this layer-on-layer unpacking causes an exponential disk space explosion (>100 GB), exhausting the runner's disk.
 
 **Fix:** Ensure `buildah commit --squash --format oci` is used for the payload image in BOTH the `justfile` (inline `iso-sd-boot`) and `scripts/build-live-squashfs.sh` non-composefs paths before the `skopeo copy ... containers-storage:` import step. This squashes the payload to a single layer, preventing the VFS import explosion.
+
+### Mksquashfs silently skips bind-mounted dirs on overlayfs host (2026-06-23)
+
+**Symptom:** `just iso-sd-boot` ran successfully in CI, but the resulting live ISO was missing the entire embedded VFS store/OCI layout inside `/usr/lib/containers/storage` or `/var/lib/containers/storage`.
+
+**Why:** In the `justfile`'s `iso-sd-boot` target, the intermediate storage staging directory was bind-mounted (`mount --bind`) into the squashfs root. When the runner's build directory is on `overlayfs` (as in CI), `mksquashfs` respects filesystem boundaries (stops when the device ID changes) and silently skips the bind-mounted directory.
+
+**Fix:** Avoid bind mounts when structuring filesystems inside `SQUASHFS_ROOT`. Use `cp -a` to copy the staged container storage directory directly into the squashfs root instead of bind-mounting.
+
+### Non-composefs bootcDirect QEMU E2E installs require the scratch disk (2026-06-23)
+
+**Symptom:** E2E test runs for `stable` and `lts` failed with `no space left on device` (ENOSPC) during `bootc install to-filesystem` inside the live VM.
+
+**Why:** The `justfile`'s `luks-install-qemu` and `plain-install-qemu` targets only mounted the `/dev/vdb` scratch disk over `/var/tmp` for `composefs=true` (dakota). However, `bootc install` on non-composefs targets also writes temporary layer/blob files to `/var/tmp/container_images_...` during its extraction/deployment phase. Without the scratch disk backing `/var/tmp`, `bootc` quickly exhausts the 4 GiB VM's RAM-backed overlay tmpfs.
+
+**Fix:** Move the scratch disk mounting step outside the composefs checks in `justfile`'s `luks-install-qemu` and `plain-install-qemu` targets so it is formatted and mounted over `/var/tmp` for all variants.

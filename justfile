@@ -366,13 +366,16 @@ iso-sd-boot target:
             cp -a \"\${MOUNT}/.\" \"\${SQUASHFS_ROOT}/\"
         fi
 
-        # Bind mount the OCI store into the squashfs at the correct path for this variant
-        if [[ \"\${COMPOSEFS}\" == \"true\" ]]; then
-            mkdir -p \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
-            mount --bind \"\${CS_STAGING}/var/lib/containers/storage\" \"\${SQUASHFS_ROOT}/var/lib/containers/storage\"
+        # Copy the VFS store into the squashfs root.
+        # MUST copy, do not use bind-mount (mksquashfs skips bind mounts on overlayfs).
+        if [[ "${COMPOSEFS}" == "true" ]]; then
+            mkdir -p "${SQUASHFS_ROOT}/var/lib/containers/storage"
+            echo "Copying VFS store into squashfs root..."
+            cp -a "${CS_STAGING}/var/lib/containers/storage/." "${SQUASHFS_ROOT}/var/lib/containers/storage/"
         else
-            mkdir -p \"\${SQUASHFS_ROOT}/usr/lib/containers/storage\"
-            mount --bind \"\${CS_STAGING}/usr/lib/containers/storage\" \"\${SQUASHFS_ROOT}/usr/lib/containers/storage\"
+            mkdir -p "${SQUASHFS_ROOT}/usr/lib/containers/storage"
+            echo "Copying OCI store into squashfs root..."
+            cp -a "${CS_STAGING}/usr/lib/containers/storage/." "${SQUASHFS_ROOT}/usr/lib/containers/storage/"
         fi
         echo '=== Disk space after creation of squashfs root ==='
         df -h '${OUTPUT_DIR}'
@@ -1120,18 +1123,19 @@ luks-install-qemu target:
     # Normalise "grub" → "grub2" for fisherman's recipe validator.
     if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
     FILESYSTEM=$(just _filesystem_for "{{target}}")
+    echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
+    $SSH 'sudo bash -c "
+        mkfs.ext4 -F /dev/vdb >/dev/null
+        umount /var/tmp 2>/dev/null || true
+        mount /dev/vdb /var/tmp
+        echo \"/var/tmp is now disk-backed on /dev/vdb\"
+    "'
+
     if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
         # Composefs path (dakota): podman-based install with VFS containers-storage.
         printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
             "${DISK}" "${FILESYSTEM}" "${INSTALL_IMAGE}" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
         $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
-        echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
-        $SSH 'sudo bash -c "
-            mkfs.ext4 -F /dev/vdb >/dev/null
-            umount /var/tmp 2>/dev/null || true
-            mount /dev/vdb /var/tmp
-            echo \"/var/tmp is now disk-backed on /dev/vdb\"
-        "'
         echo "Uploaded recipe — running fisherman (takes several minutes)..."
         $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
         $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/luks-recipe.json'
@@ -1507,18 +1511,19 @@ plain-install-qemu target:
     FILESYSTEM=$(just _filesystem_for "{{target}}")
     RECIPE_TMP=$(mktemp /tmp/plain-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
+    echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
+    $SSH 'sudo bash -c "
+        mkfs.ext4 -F /dev/vdb >/dev/null
+        umount /var/tmp 2>/dev/null || true
+        mount /dev/vdb /var/tmp
+        echo \"/var/tmp is now disk-backed on /dev/vdb\"
+    "'
+
     if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
         # Composefs path (dakota): podman-based install with VFS containers-storage.
         printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "%s",\n  "composeFsBackend": true,\n  "bootloader": "%s",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
             "${DISK}" "${FILESYSTEM}" "${INSTALL_IMAGE}" "${BOOTLOADER}" > "${RECIPE_TMP}"
         $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json
-        echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
-        $SSH 'sudo bash -c "
-            mkfs.ext4 -F /dev/vdb >/dev/null
-            umount /var/tmp 2>/dev/null || true
-            mount /dev/vdb /var/tmp
-            echo \"/var/tmp is now disk-backed on /dev/vdb\"
-        "'
         echo "Uploaded recipe — running fisherman (this takes several minutes)..."
         $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
         $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/plain-recipe.json'
