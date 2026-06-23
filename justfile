@@ -1188,11 +1188,6 @@ luks-boot-qemu-installed target:
     rm -f "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-installed}}"
 
     echo "Booting installed disk: {{luks-qemu-disk}}"
-    # Kill any live QEMU still holding the disk lock.
-    # The install recipe shuts down the guest but QEMU may still hold
-    # the qcow2 file lock briefly after guest shutdown completes.
-    sudo pkill -f "qemu.*{{luks-qemu-disk}}" 2>/dev/null || true
-    sleep 3
     # KVM access: try direct, then sudo, then fall back to TCG
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
