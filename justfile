@@ -821,21 +821,31 @@ luks-install-qemu target:
     SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}}"
     SCP="sshpass -p live scp $SSH_OPTS -P {{luks-qemu-ssh-port}}"
 
-    # Use local containers-storage if the image is cached there (offline install);
-    # otherwise fall back to a network pull via docker://.
-    if $SSH "sudo podman image exists '${PAYLOAD_IMAGE}' 2>/dev/null"; then
-        INSTALL_IMAGE="containers-storage:${PAYLOAD_IMAGE}"
-        echo "Image found in local containers-storage — using offline install."
+    # Determine image transport.
+    # Composefs (dakota): the embedded VFS store works correctly after squash
+    # because composefs-native images don't use ostree commit hardlinks.
+    # Non-composefs (stable, lts): buildah commit --squash corrupts ostree
+    # hardlinked commit objects, so always pull from registry to bypass the
+    # broken embedded store. Offline installs for non-composefs are tracked
+    # separately (see projectbluefin/dakota-iso#104).
+    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
+    BOOTLOADER_VARIANT=$(echo "${LIVE_TARGET}" | sed 's/-nvidia-open$//;s/-nvidia$//')
+    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
+    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
+        if $SSH "sudo podman image exists '${PAYLOAD_IMAGE}' 2>/dev/null"; then
+            INSTALL_IMAGE="containers-storage:${PAYLOAD_IMAGE}"
+            echo "Image found in local containers-storage — using offline install."
+        else
+            INSTALL_IMAGE="docker://${PAYLOAD_IMAGE}"
+            echo "Image not in local store — fisherman will pull from network."
+        fi
     else
         INSTALL_IMAGE="docker://${PAYLOAD_IMAGE}"
-        echo "Image not in local store — fisherman will pull from network."
+        echo "Non-composefs image — using network pull (embedded VFS store squashing corrupts ostree objects)."
     fi
 
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
-    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
-    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
     BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
     # Normalise "grub" → "grub2" for fisherman's recipe validator.
     if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
