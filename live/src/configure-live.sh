@@ -504,11 +504,14 @@ echo 'f /etc/hostname 0644 - - - dakota-live' > /usr/lib/tmpfiles.d/live-hostnam
 #   composefs (dakota): VFS driver at /var/lib/containers/storage.
 #     Fisherman exports VFS → OCI at install time, podman-based install.
 #
-#   non-composefs (bluefin, lts): overlay driver at /var/lib/containers/storage
-#     with an additionalimagestore at /usr/lib/containers/storage (read-only
-#     squashfs).  The bootcDirect path runs bootc install --source-imgref
-#     containers-storage:<ref>, which resolves via the additional store.
-#     Mirrors projectbluefin/iso.
+#   non-composefs (stable, lts): VFS driver at /var/lib/containers/storage
+#     with a VFS-format additionalimagestore at /usr/lib/containers/storage
+#     (read-only squashfs).  VFS driver is required — the live ISO rootfs is
+#     overlayfs (dmsquash-live) and el10 (LTS) lacks native overlay-on-overlay;
+#     an overlay-format additional store silently fails, causing bootc to write
+#     blobs to /var/tmp (RAM-backed tmpfs) → ENOSPC.
+#     bootcDirect runs bootc natively with containers-storage:<ref> resolving
+#     via the VFS additional store.  Mirrors projectbluefin/iso commit 34fe6659.
 
 mkdir -p /var/lib/containers/storage
 mkdir -p /etc/containers
@@ -522,11 +525,16 @@ runroot = "/run/containers/storage"
 graphroot = "/var/lib/containers/storage"
 STOREOF
 else
-    # non-composefs (bootcDirect): overlay driver, payload in additional store
+    # non-composefs (bootcDirect): VFS driver, payload in VFS additional store.
+    # Must use VFS driver — the live ISO rootfs is overlayfs (dmsquash-live)
+    # and the el10 kernel (LTS) lacks native overlay-on-overlay.  An overlay
+    # additional store silently fails to load, causing bootc to write blobs
+    # to /var/tmp (RAM-backed tmpfs) → ENOSPC.  Mirrors projectbluefin/iso
+    # commit 34fe6659.
     mkdir -p /usr/lib/containers/storage
     cat > /etc/containers/storage.conf << 'STOREOF'
 [storage]
-driver = "overlay"
+driver = "vfs"
 runroot = "/run/containers/storage"
 graphroot = "/var/lib/containers/storage"
 

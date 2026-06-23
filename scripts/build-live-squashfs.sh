@@ -123,11 +123,14 @@ fi
 #     Fisherman exports VFS → OCI at install time and passes
 #     --source-imgref oci:... --composefs-backend to bootc.
 #
-#   standard-ostree / non-composefs (e.g. bluefin, bluefin-lts-hwe):
-#     Squash to 1 layer, import into overlay containers-storage at
-#     /usr/lib/containers/storage (additionalimagestore).  bootcDirect
-#     resolves containers-storage:<ref> from the read-only squashfs.
-#     Mirrors projectbluefin/iso.
+#   standard-ostree / non-composefs (e.g. stable, lts):
+#     Embed into VFS containers-storage at /usr/lib/containers/storage
+#     (additionalimagestore).  VFS driver is required — the live ISO rootfs
+#     is an overlayfs and el10 (LTS) lacks native overlay-on-overlay; an
+#     overlay-format additional store silently fails, sending bootc to write
+#     large blobs to /var/tmp (RAM tmpfs) → ENOSPC.  VFS is driver-agnostic.
+#     bootcDirect resolves containers-storage:<ref> via the additional store.
+#     Mirrors projectbluefin/iso commit 34fe6659.
 #
 # Detect composefs from the recipe.json baked into the live container.
 COMPOSEFS_BACKEND=false
@@ -194,12 +197,16 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         rm -rf "${CS_STAGING}"
         echo ">>> [live-squashfs] VFS store embedded: $(du -sh "${SFS_ROOT}/var/lib/containers/storage" | cut -f1)"
     else
-        # Non-composefs (standard-ostree): commit WITHOUT --squash to preserve
-        # the original layer structure.  Each layer blob is small and fits in the
-        # VM's overlay tmpfs during bootcDirect install.  Overlay containers-storage
-        # stores layer diffs efficiently; squashfs compression handles the rest.
-        # Mirrors projectbluefin/iso (which uses podman save, no squash).
-        echo ">>> [live-squashfs] embedding OCI image ${OCI_IMAGE} into overlay containers-storage (non-composefs, preserving layers) ..."
+        # Non-composefs (standard-ostree / bootcDirect): embed image into VFS
+        # containers-storage at /usr/lib/containers/storage (additionalimagestore).
+        # Must use VFS driver — the live ISO rootfs is an overlayfs (dmsquash-live)
+        # and the el10 kernel (LTS) lacks native overlay-on-overlay support.  An
+        # overlay-format additional store fails to load on the live system, causing
+        # bootc to write large blobs to /var/tmp (RAM-backed tmpfs) → ENOSPC.
+        # VFS-format additional stores are driver-agnostic and readable by both
+        # the Fedora 44 (stable) and el10 (lts) kernels.
+        # Mirrors projectbluefin/iso commit 34fe6659.
+        echo ">>> [live-squashfs] embedding OCI image ${OCI_IMAGE} into VFS containers-storage (non-composefs, bootcDirect) ..."
 
         printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
         INJECT_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
@@ -209,13 +216,13 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         buildah commit "${INJECT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
         buildah rm "${INJECT_CTR}"
 
-        # Import into overlay containers-storage at staging dir, then copy to squashfs root.
+        # Import into VFS containers-storage at staging dir, then copy to squashfs root.
         CS_STAGING="${WORK}/cs-staging"
         STORAGE_CONF="${WORK}/st.conf"
         mkdir -p "${CS_STAGING}"
-        printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' > "${STORAGE_CONF}"
+        printf '[storage]\ndriver = "vfs"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' > "${STORAGE_CONF}"
 
-        echo ">>> [live-squashfs] importing squashed OCI into overlay containers-storage ..."
+        echo ">>> [live-squashfs] importing OCI into VFS containers-storage ..."
         podman run --rm \
             --privileged \
             -v "${OCI_ARCHIVE}:/payload.oci.tar:ro" \
@@ -231,13 +238,10 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         rm -f "${OCI_ARCHIVE}" "${STORAGE_CONF}"
 
         mkdir -p "${SFS_ROOT}/usr/lib/containers/storage"
-        echo ">>> [live-squashfs] copying overlay store into squashfs root ($(du -sh "${CS_STAGING}" | cut -f1)) ..."
-        # Overlay containers-storage contains character-device whiteout files that
-        # cp -a cannot create without privileges.  Use rsync to skip them — they
-        # are write-layer artifacts not needed in the read-only additional store.
-        rsync -a --no-specials --no-devices "${CS_STAGING}/" "${SFS_ROOT}/usr/lib/containers/storage/"
+        echo ">>> [live-squashfs] copying VFS store into squashfs root ($(du -sh "${CS_STAGING}" | cut -f1)) ..."
+        cp -a "${CS_STAGING}/." "${SFS_ROOT}/usr/lib/containers/storage/"
         rm -rf "${CS_STAGING}"
-        echo ">>> [live-squashfs] overlay store embedded: $(du -sh "${SFS_ROOT}/usr/lib/containers/storage" | cut -f1)"
+        echo ">>> [live-squashfs] VFS store embedded: $(du -sh "${SFS_ROOT}/usr/lib/containers/storage" | cut -f1)"
     fi
 fi
 
