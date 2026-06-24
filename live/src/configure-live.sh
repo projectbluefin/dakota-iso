@@ -525,16 +525,15 @@ runroot = "/run/containers/storage"
 graphroot = "/var/lib/containers/storage"
 STOREOF
 else
-    # non-composefs (bootcDirect): VFS driver, payload in VFS additional store.
-    # Must use VFS driver — the live ISO rootfs is overlayfs (dmsquash-live)
-    # and the el10 kernel (LTS) lacks native overlay-on-overlay.  An overlay
-    # additional store silently fails to load, causing bootc to write blobs
-    # to /var/tmp (RAM-backed tmpfs) → ENOSPC.  Mirrors projectbluefin/iso
-    # commit 34fe6659.
+    # non-composefs (bootcDirect): overlay driver with fuse-overlayfs, payload in overlay additional store.
+    # We must use fuse-overlayfs because the live ISO rootfs is overlayfs (dmsquash-live)
+    # and the el10 kernel (LTS) lacks native overlay-on-overlay support.
+    # Using fuse-overlayfs bypasses kernel restrictions and allows the overlay driver
+    # to be used, which avoids the VFS storage explosion of unsquashed images.
     mkdir -p /usr/lib/containers/storage
     cat > /etc/containers/storage.conf << 'STOREOF'
 [storage]
-driver = "vfs"
+driver = "overlay"
 runroot = "/run/containers/storage"
 graphroot = "/var/lib/containers/storage"
 
@@ -542,6 +541,9 @@ graphroot = "/var/lib/containers/storage"
 additionalimagestores = [
   "/usr/lib/containers/storage"
 ]
+
+[storage.options.overlay]
+mount_program = "/usr/bin/fuse-overlayfs"
 STOREOF
 
     # Bind-mount the read-only squashfs payload into container namespaces

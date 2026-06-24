@@ -108,11 +108,10 @@ if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
     _ns "buildah commit --squash '${ANNOT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
     _ns "buildah rm '${ANNOT_CTR}'"
 else
-    # Non-composefs (bootcDirect): no VFS store needed.  bootc reads from the
-    # running ostree deployment on the live system.  The embedded VFS store
-    # built via buildah commit --squash corrupts ostree hardlinked commit
-    # objects ("Expected commit object, not File"), making it unusable.
-    # The running system IS the image — bootcDirect uses it directly.
+    # Non-composefs (bootcDirect): no squash to preserve ostree commits.
+    # Save the injected container image as an oci-archive for overlay import.
+    echo "=== Committing ${PAYLOAD_IMAGE} WITHOUT squash to preserve ostree commits ==="
+    _ns "buildah commit '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
     _ns "buildah rm '${INJECT_CTR}'"
 fi
 
@@ -168,9 +167,20 @@ _ns_build_squashfs() {
             sh -c "mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:${PAYLOAD_IMAGE} containers-storage:${PAYLOAD_IMAGE}"
         rm -f "${PAYLOAD_OCI}" "${STORAGE_CONF}"
     else
-        # Non-composefs: no VFS store to embed — bootcDirect reads from the
-        # running ostree deployment, not from containers-storage.
-        echo '(non-composefs: skipping VFS store embed — bootcDirect uses the running deployment)'
+        # Non-composefs: embed into overlay containers-storage.
+        SQUASHFS_STORAGE="${CS_STAGING}/usr/lib/containers/storage"
+        STORAGE_CONF=$(mktemp "${OUTPUT_DIR}/live-storage-XXXXXX.conf")
+        mkdir -p "${SQUASHFS_STORAGE}"
+        printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' > "${STORAGE_CONF}"
+        echo 'Importing OCI image into squashfs overlay containers-storage...'
+        podman run --rm \
+            --privileged \
+            -v "${PAYLOAD_OCI}:/payload.oci.tar:ro" \
+            -v "${SQUASHFS_STORAGE}:/vfs-storage" \
+            -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
+            "localhost/${TARGET}-installer" \
+            sh -c "mkdir -p /tmp/cs-runroot /var/tmp && CONTAINERS_STORAGE_CONF=/tmp/st.conf skopeo copy oci-archive:/payload.oci.tar:${PAYLOAD_IMAGE} containers-storage:${PAYLOAD_IMAGE}"
+        rm -f "${PAYLOAD_OCI}" "${STORAGE_CONF}"
     fi
 
     echo "=== Disk space after OCI store embed ==="
@@ -199,6 +209,10 @@ _ns_build_squashfs() {
         mkdir -p "${SQUASHFS_ROOT}/var/lib/containers/storage"
         echo "Copying VFS store into squashfs root..."
         cp -a "${CS_STAGING}/var/lib/containers/storage/." "${SQUASHFS_ROOT}/var/lib/containers/storage/"
+    else
+        mkdir -p "${SQUASHFS_ROOT}/usr/lib/containers/storage"
+        echo "Copying overlay store into squashfs root..."
+        cp -a "${CS_STAGING}/usr/lib/containers/storage/." "${SQUASHFS_ROOT}/usr/lib/containers/storage/"
     fi
 
     echo "=== Disk space after creation of squashfs root ==="

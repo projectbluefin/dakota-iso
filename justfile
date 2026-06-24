@@ -880,13 +880,12 @@ luks-install-qemu target:
         "'
     else
         # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
-        # Empty image triggers bootcDirect. Omit targetImgref so fisherman
-        # doesn't add --source-imgref containers-storage:... (the embedded VFS
-        # store is not built for non-composefs — squash corrupts ostree commit
-        # objects). Without --source-imgref, bootc auto-detects from the
-        # running deployment, which IS the target image on the live ISO.
-        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
-            "${DISK}" "${FILESYSTEM}" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+        # Empty image triggers bootcDirect; targetImgref sets the day-2 rebase ref.
+        # Fisherman emits --source-imgref containers-storage:<targetImgref> when
+        # targetImgref is present and image is empty, resolving the payload from
+        # the overlay additionalimagestore embedded in the squashfs.
+        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "",\n  "targetImgref": "%s",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
+            "${DISK}" "${FILESYSTEM}" "${PAYLOAD_IMAGE}" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
         $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
         echo "Uploaded recipe — building patched fisherman for bootcDirect..."
         FISHER_REPO="${FISHER_REPO:-{{fisher_repo}}}"
@@ -1275,8 +1274,12 @@ plain-install-qemu target:
         "'
     else
         # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
-        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
-            "${DISK}" "${FILESYSTEM}" "${BOOTLOADER}" > "${RECIPE_TMP}"
+        # Empty image triggers bootcDirect; targetImgref sets the day-2 rebase ref.
+        # Fisherman emits --source-imgref containers-storage:<targetImgref> when
+        # targetImgref is present and image is empty, resolving the payload from
+        # the overlay additionalimagestore embedded in the squashfs.
+        printf '{\n  "disk": "%s",\n  "filesystem": "%s",\n  "image": "",\n  "targetImgref": "%s",\n  "composeFsBackend": false,\n  "bootloader": "%s",\n  "hostname": "dakota-plain-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
+            "${DISK}" "${FILESYSTEM}" "${PAYLOAD_IMAGE}" "${BOOTLOADER}" > "${RECIPE_TMP}"
         $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json
         echo "Uploaded recipe — building patched fisherman for bootcDirect..."
         FISHER_REPO="${FISHER_REPO:-{{fisher_repo}}}"

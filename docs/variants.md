@@ -137,3 +137,20 @@ lts/live_title               → Bluefin LTS Live
 `build-iso.sh` accepts `--title <string>`; the justfile reads `<target>/live_title`
 and passes it. To customise the title for a new variant, create a `live_title` file
 in the variant directory.
+
+### Non-composefs (ostree) offline storage: overlay additional store vs VFS size explosion (2026-06-24)
+
+When building ISOs for non-composefs (ostree/bootcDirect) targets:
+1. **Squashing is prohibited**: Squashing the payload image flattens the filesystem layer and breaks bootc's ostree unencapsulation (corrupts hardlinks, leading to `Expected commit object, not File` and missing `ostree.final-diffid` annotations).
+2. **VFS size explosion**: Storing the image unsquashed in a VFS-format containers-storage additional store replicates and inflates all ~120 layers, causing `no space left on device` and OOM errors during build or installation.
+3. **The Solution**: Build an unsquashed `oci-archive` payload and import it into an `overlay`-driver additional store (`/usr/lib/containers/storage`) inside the live squashfs root. To boot and run natively on EL10/LTS host kernels (which lack native overlay-on-overlay support), configure the live ISO's `/etc/containers/storage.conf` to use `fuse-overlayfs` as the mount program:
+   ```toml
+   [storage]
+   driver = "overlay"
+   additionalimagestores = ["/usr/lib/containers/storage"]
+
+   [storage.options.overlay]
+   mount_program = "/usr/bin/fuse-overlayfs"
+   ```
+4. **Fisherman targetImgref**: Ensure that `targetImgref` is populated in the fisherman recipe JSON. If omitted, fisherman's direct-mode path runs bootc without the `--source-imgref` argument, failing with `Either --source-imgref must be defined or this command must be executed inside a podman container`.
+

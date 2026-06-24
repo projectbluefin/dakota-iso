@@ -197,21 +197,47 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         rm -rf "${CS_STAGING}"
         echo ">>> [live-squashfs] VFS store embedded: $(du -sh "${SFS_ROOT}/var/lib/containers/storage" | cut -f1)"
     else
-        # Non-composefs (standard-ostree / bootcDirect): embed image into VFS
+        # Non-composefs (standard-ostree / bootcDirect): embed image into overlay
         # containers-storage at /usr/lib/containers/storage (additionalimagestore).
-        # Must use VFS driver — the live ISO rootfs is an overlayfs (dmsquash-live)
-        # and the el10 kernel (LTS) lacks native overlay-on-overlay support.  An
-        # overlay-format additional store fails to load on the live system, causing
-        # bootc to write large blobs to /var/tmp (RAM-backed tmpfs) → ENOSPC.
-        # VFS-format additional stores are driver-agnostic and readable by both
-        # the Fedora 44 (stable) and el10 (lts) kernels.
-        # Mirrors projectbluefin/iso commit 34fe6659.
-        echo ">>> [live-squashfs] non-composefs (bootcDirect) — skipping VFS store embed; bootcDirect uses the running deployment directly"
+        echo ">>> [live-squashfs] non-composefs (bootcDirect) — embedding OCI image ${OCI_IMAGE} into overlay store ..."
+
         printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
         INJECT_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
         buildah copy "${INJECT_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
         buildah run  "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
+        
+        OCI_ARCHIVE="${WORK}/payload.oci.tar"
+        CS_STAGING="${WORK}/overlay-storage"
+        STORAGE_CONF="${WORK}/st.conf"
+        mkdir -p "${CS_STAGING}"
+
+        echo ">>> [live-squashfs] committing payload without squash to preserve ostree commits ..."
+        buildah commit "${INJECT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
         buildah rm "${INJECT_CTR}"
+
+        printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
+            > "${STORAGE_CONF}"
+
+        echo ">>> [live-squashfs] importing OCI into overlay staging dir ..."
+        podman run --rm \
+            --privileged \
+            -v "${OCI_ARCHIVE}:/payload.oci.tar:ro" \
+            -v "${CS_STAGING}:/vfs-storage" \
+            -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
+            "${IMAGE}" \
+            sh -c "mkdir -p /tmp/cs-runroot /var/tmp && \
+                   CONTAINERS_STORAGE_CONF=/tmp/st.conf \
+                   skopeo copy \
+                   oci-archive:/payload.oci.tar:${OCI_IMAGE} \
+                   containers-storage:${OCI_IMAGE}"
+
+        rm -f "${OCI_ARCHIVE}" "${STORAGE_CONF}"
+
+        mkdir -p "${SFS_ROOT}/usr/lib/containers/storage"
+        echo ">>> [live-squashfs] copying overlay store into squashfs root ($(du -sh "${CS_STAGING}" | cut -f1)) ..."
+        cp -a "${CS_STAGING}/." "${SFS_ROOT}/usr/lib/containers/storage/"
+        rm -rf "${CS_STAGING}"
+        echo ">>> [live-squashfs] overlay store embedded: $(du -sh "${SFS_ROOT}/usr/lib/containers/storage" | cut -f1)"
     fi
 fi
 
