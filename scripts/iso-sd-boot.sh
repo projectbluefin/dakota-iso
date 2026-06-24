@@ -212,7 +212,10 @@ _ns_build_squashfs() {
     else
         mkdir -p "${SQUASHFS_ROOT}/usr/lib/containers/storage"
         echo "Copying overlay store into squashfs root..."
-        cp -a "${CS_STAGING}/usr/lib/containers/storage/." "${SQUASHFS_ROOT}/usr/lib/containers/storage/"
+        # Overlay containers-storage contains character-device whiteout files that
+        # cp -a cannot create without privileges.  Use rsync to skip them — they
+        # are write-layer artifacts not needed in the read-only additional store.
+        rsync -a --no-specials --no-devices "${CS_STAGING}/usr/lib/containers/storage/" "${SQUASHFS_ROOT}/usr/lib/containers/storage/"
     fi
 
     echo "=== Disk space after creation of squashfs root ==="

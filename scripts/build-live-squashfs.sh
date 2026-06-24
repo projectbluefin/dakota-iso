@@ -235,7 +235,10 @@ if [[ -n "${OCI_IMAGE}" ]]; then
 
         mkdir -p "${SFS_ROOT}/usr/lib/containers/storage"
         echo ">>> [live-squashfs] copying overlay store into squashfs root ($(du -sh "${CS_STAGING}" | cut -f1)) ..."
-        cp -a "${CS_STAGING}/." "${SFS_ROOT}/usr/lib/containers/storage/"
+        # Overlay containers-storage contains character-device whiteout files that
+        # cp -a cannot create without privileges.  Use rsync to skip them — they
+        # are write-layer artifacts not needed in the read-only additional store.
+        rsync -a --no-specials --no-devices "${CS_STAGING}/" "${SFS_ROOT}/usr/lib/containers/storage/"
         rm -rf "${CS_STAGING}"
         echo ">>> [live-squashfs] overlay store embedded: $(du -sh "${SFS_ROOT}/usr/lib/containers/storage" | cut -f1)"
     fi
