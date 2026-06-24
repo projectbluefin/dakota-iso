@@ -47,7 +47,7 @@ if grep -q "writing hostname" /tmp/fish.log && \
     LUKS_DEV=$(lsblk -nrpo NAME,FSTYPE /dev/vda \
                | awk '$2=="crypto_LUKS"{print $1;exit}')
     ROOT_DEV=$(lsblk -nrpo NAME,FSTYPE /dev/vda \
-               | awk '$2=="btrfs"{print $1;exit}')
+               | awk '$2=="btrfs"||$2=="xfs"{print $1;exit}')
 
     MNT=$(mktemp -d /tmp/hostname-fix-XXXX)
     MAPPER="hostname-fix-$$"
