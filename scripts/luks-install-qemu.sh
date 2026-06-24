@@ -96,10 +96,17 @@ fi
 echo "Patching BLS entries to enable dual serial+VT console and LUKS unlock..."
 $SSH 'sudo bash -c "
     set -euo pipefail
-    LUKS_UUID=\$(cryptsetup luksUUID /dev/vda2 2>/dev/null || echo \"\")
+    BOOT_PART=\"/dev/vda1\"
+    LUKS_PART=\"/dev/vda2\"
+    if ls /dev/vda3 >/dev/null 2>&1; then
+        echo \"Detected 3 partitions layout (separate boot partition for GRUB)\"
+        BOOT_PART=\"/dev/vda2\"
+        LUKS_PART=\"/dev/vda3\"
+    fi
+    LUKS_UUID=\$(cryptsetup luksUUID \"\$LUKS_PART\" 2>/dev/null || echo \"\")
     TMP=\$(mktemp -d)
     trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
-    mount /dev/vda1 \$TMP
+    mount \"\$BOOT_PART\" \$TMP
     COUNT=0
     for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
         [[ -f \"\$entry\" ]] || continue

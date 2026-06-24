@@ -92,9 +92,14 @@ fi
 echo "Patching BLS entries to add serial console..."
 $SSH 'sudo bash -c "
     set -euo pipefail
+    BOOT_PART=\"/dev/vda1\"
+    if ls /dev/vda3 >/dev/null 2>&1; then
+        echo \"Detected 3 partitions layout (separate boot partition for GRUB)\"
+        BOOT_PART=\"/dev/vda2\"
+    fi
     TMP=\$(mktemp -d)
     trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
-    mount /dev/vda1 \$TMP
+    mount \"\$BOOT_PART\" \$TMP
     COUNT=0
     for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
         [[  -f \"\$entry\" ]] || continue
