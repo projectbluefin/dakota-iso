@@ -38,7 +38,11 @@ BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d
 if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
 
 # Determine target filesystem
-FILESYSTEM="btrfs"
+if [[ "${TARGET}" == "lts" ]]; then
+    FILESYSTEM="xfs-in-lvm"
+else
+    FILESYSTEM="btrfs"
+fi
 
 RECIPE_TMP=$(mktemp /tmp/plain-recipe-XXXXXX.json)
 trap "rm -f '${RECIPE_TMP}'" EXIT
