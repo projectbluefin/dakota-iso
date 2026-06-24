@@ -63,26 +63,6 @@ if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
     echo "Uploaded recipe — running fisherman (this takes several minutes)..."
     $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
     $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/plain-recipe.json'
-    echo "Patching BLS entries to add serial console..."
-    $SSH 'sudo bash -c "
-        set -euo pipefail
-        TMP=\$(mktemp -d)
-        trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
-        mount /dev/vda1 \$TMP
-        COUNT=0
-        for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
-            [[  -f \"\$entry\" ]] || continue
-            echo \"=== BLS entry before patch: \$(basename \$entry) ===\"
-            cat \"\$entry\"
-            if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
-                sed -i \"s|^options .*|& console=tty0 console=ttyS0 rd.info systemd.journald.forward_to_console=yes|\" \"\$entry\"
-                COUNT=\$((COUNT+1))
-            fi
-            echo \"=== BLS entry after patch ===\"
-            cat \"\$entry\"
-        done
-        echo \"BLS patch: \$COUNT entries updated\"
-    "'
 else
     # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
     # Empty image triggers bootcDirect; targetImgref sets the day-2 rebase ref.
@@ -108,6 +88,27 @@ else
         exit 1
     fi
 fi
+
+echo "Patching BLS entries to add serial console..."
+$SSH 'sudo bash -c "
+    set -euo pipefail
+    TMP=\$(mktemp -d)
+    trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
+    mount /dev/vda1 \$TMP
+    COUNT=0
+    for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
+        [[  -f \"\$entry\" ]] || continue
+        echo \"=== BLS entry before patch: \$(basename \$entry) ===\"
+        cat \"\$entry\"
+        if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
+            sed -i \"s|^options .*|& console=tty0 console=ttyS0 rd.info systemd.journald.forward_to_console=yes|\" \"\$entry\"
+            COUNT=\$((COUNT+1))
+        fi
+        echo \"=== BLS entry after patch ===\"
+        cat \"\$entry\"
+    done
+    echo \"BLS patch: \$COUNT entries updated\"
+"'
 
 echo "Install complete. Shutting down live QEMU..."
 SOCAT_PREFIX=""
