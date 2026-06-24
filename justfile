@@ -39,7 +39,7 @@ compression := "fast"
 # lts (bluefin-lts-hwe) uses XFS inside LVM by default — the interactive
 # installer defaults to XFS for LTS so E2E must match.
 _filesystem_for target:
-    @if [ "{{ target }}" = "lts" ]; then echo "xfs"; else echo "btrfs"; fi
+    @if [ "{{ target }}" = "lts" ]; then echo "xfs-in-lvm"; else echo "btrfs"; fi
 
 # Create an XFS loopback mount at /mnt for faster VFS import.
 #
