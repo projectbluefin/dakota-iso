@@ -485,3 +485,17 @@ Squashing reduces the OCI store to a single ~4 GB layer → ~6 GB final ISO.
 **Why:** The `justfile`'s `luks-install-qemu` and `plain-install-qemu` targets only mounted the `/dev/vdb` scratch disk over `/var/tmp` for `composefs=true` (dakota). However, `bootc install` on non-composefs targets also writes temporary layer/blob files to `/var/tmp/container_images_...` during its extraction/deployment phase. Without the scratch disk backing `/var/tmp`, `bootc` quickly exhausts the 4 GiB VM's RAM-backed overlay tmpfs.
 
 **Fix:** Move the scratch disk mounting step outside the composefs checks in `justfile`'s `luks-install-qemu` and `plain-install-qemu` targets so it is formatted and mounted over `/var/tmp` for all variants.
+
+### Architectural Decisions for OSTree (Stable/LTS) vs ComposeFS (Dakota) (2026-06-24)
+
+Our consolidation of OSTree (GRUB) and ComposeFS (systemd-boot) installer flows into a unified repository highlighted two distinct execution requirements:
+
+1. **Storage Drivers & Whiteouts**:
+   * **ComposeFS (`dakota`)** relies on a squashed, single-layer `vfs` storage driver.
+   * **OSTree (`stable`, `lts`)** requires `overlay` with `fuse-overlayfs` mapping because the host live ISO runs `dmsquash-live` overlayfs, and CentOS 10/el10 kernels lack native overlay-on-overlay support. Standard OSTree layers must **not** be squashed during image construction to preserve commits integrity. Whiteouts are stripped out during the rsync staging phase via `--no-specials --no-devices`.
+
+2. **Filesystem Selection & Boot UUID Timeout**:
+   * **`dakota` and `stable`** install successfully using raw `btrfs` partitions.
+   * **`lts`** targets formatted as direct `xfs` fail boot verification due to a `/boot` partition ext4 UUID detection timeout in the CentOS 10 initramfs dracut loop.
+   * **Fix**: LTS installations default to `xfs-in-lvm` which mounts through LVM volume activation hooks, bypassing the udev device-by-uuid wait step and ensuring reliable boot discovery.
+
