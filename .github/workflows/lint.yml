@@ -18,3 +18,25 @@ jobs:
           scandir: '.'
           ignore_paths: >
             .git
+
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Actionlint
+        uses: rhysd/actionlint-action@v1
+
+  ruff:
+    name: Ruff (Linter and Formatter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Ruff Linter
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: 'check'
+      - name: Run Ruff Formatter
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: 'format --check'
