@@ -20,9 +20,10 @@
 set -euo pipefail
 
 RECIPE="${1:-/tmp/plain-recipe.json}"
+FISHERMAN_BIN="${FISHERMAN_BIN:-/usr/local/bin/fisherman}"
 
 FISH_RC=0
-/usr/local/bin/fisherman "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
+"$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
 cat /tmp/fish.log
 
 PATCH_HOSTNAME=0

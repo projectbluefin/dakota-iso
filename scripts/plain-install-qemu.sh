@@ -75,7 +75,8 @@ else
     $SCP "${FISHERMAN_BIN}" liveuser@127.0.0.1:/tmp/fisherman
     $SSH 'chmod +x /tmp/fisherman'
     echo "Running fisherman (bootcDirect, takes several minutes)..."
-    if ! $SSH 'sudo /tmp/fisherman /tmp/plain-recipe.json'; then
+    $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
+    if ! $SSH 'sudo FISHERMAN_BIN=/tmp/fisherman bash /tmp/fisherman-install.sh /tmp/plain-recipe.json'; then
         echo "=== INSTALL FAILURE DIAGNOSTICS ==="
         echo "--- dmesg ---"
         $SSH 'sudo dmesg | tail -n 100' || true
