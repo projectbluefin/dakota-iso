@@ -41,7 +41,7 @@ gh workflow run build-iso-bluefin.yml --ref main
 
 ### Pipeline steps
 
-1. **Free disk space** — `jlumbroso/free-disk-space` reclaims ~119 GB at `/var/iso-build`
+1. **Free disk space** — `ublue-os/remove-unwanted-software` reclaims ~119 GB at `/var/iso-build`
 2. **Install deps** — `apt-get install podman buildah skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
 4. **Pull payload image** — pulls only `dakota-nvidia:stable` (the unified ISO base)
@@ -682,3 +682,7 @@ must be accompanied by the matching matrix update in `build-iso-bluefin.yml` in 
 **Long-term fix (Design Gate — requires human approval):** Remove the duplication by having
 the matrix read config values from the variant files at build time instead of hardcoding them.
 Until that refactor lands, keep the matrix and config files in sync manually on every change.
+
+### Organization Standards for GitHub Actions (2026-06-25)
+
+**Policy:** Whenever a CI task requires a GitHub Action (e.g., freeing disk space, setting up tools), **always** check for and use the organization's documented standard Action (e.g., `ublue-os/remove-unwanted-software`) rather than reaching for generic third-party equivalents (like `jlumbroso/free-disk-space`). Project Bluefin maintains centralized tooling to guarantee cross-repo consistency, prevent redundancy, and maintain tight control over the supply chain. If you are deciding on a piece of technology, there is almost always a documented standard you should follow.
