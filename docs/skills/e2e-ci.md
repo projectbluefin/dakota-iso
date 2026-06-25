@@ -340,6 +340,18 @@ Instead of booting QEMU VMs (which can be slow, resource-heavy, and require nest
    ```
    We verify the system reached a running state via `machinectl shell root@<name> systemctl is-system-running`.
 
+**LUKS Encryption Support:**
+1. During installation, the container configures standard LUKS partitions (e.g. `/dev/loop0p2`) inside the live container via standard loop mappings.
+2. For testing the boot, instead of interactive/flaky GRUB/Plymouth console scripts to input the password, the partition is decrypted on the host *prior* to container boot:
+   ```bash
+   echo -n "$PASSPHRASE" | sudo cryptsetup luksOpen "/dev/loopXp2" dakota-luks-nspawn-decrypted
+   ```
+3. The decrypted root partition and corresponding EFI/boot partitions are mounted directly to a target directory, which is then booted using `systemd-nspawn -D`:
+   ```bash
+   sudo systemd-nspawn -x -D "$INSTALLED_MOUNT" --privileged --bind=/dev --bind=/sys -n -p tcp:2222:22 -b
+   ```
+
+
 
 ## Verification
 

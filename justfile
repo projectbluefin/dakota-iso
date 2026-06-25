@@ -703,6 +703,11 @@ luks-test-qemu target installer_channel="dev":
          luks-qemu-serial-installed={{luks-qemu-serial-installed}} \
          luks-unlock-qemu {{target}}
 
+# Run the full LUKS end-to-end test using systemd-nspawn (expects rootfs squashfs to exist in {{output_dir}}).
+luks-test-nspawn target luks_passphrase="testpassphrase":
+    sudo ./scripts/luks-test-nspawn.sh "{{target}}" "{{luks_passphrase}}"
+
+
 # Boot the live ISO in QEMU (daemonized) with a blank install disk attached.
 # Creates the install disk if it doesn't exist.
 luks-boot-qemu-live target:
