@@ -943,6 +943,20 @@ plain-e2e target:
                "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
     just qemu-mem={{qemu-mem}} plain-test-qemu {{target}}
 
+# Full plain E2E using systemd-nspawn: build rootfs then run the nspawn test.
+plain-e2e-nspawn target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    echo "=== Step 1/2: Building ISO (debug={{debug}}, installer_channel={{installer_channel}}) ==="
+    just debug={{debug}} installer_channel={{installer_channel}} output_dir={{output_dir}} iso-sd-boot {{target}}
+    echo "=== Step 2/2: Plain composefs install test via systemd-nspawn ==="
+    just plain-test-nspawn {{target}}
+
+# Run the plain install test using systemd-nspawn (expects rootfs squashfs to exist in {{output_dir}}).
+plain-test-nspawn target:
+    sudo ./scripts/plain-test-nspawn.sh "{{target}}"
+
+
 # ENOSPC regression gate: boot live ISO + run fisherman only through the OCI
 # export step, then exit.  Passes when skopeo copies the blob without hitting
 # ENOSPC in /var/tmp.  Runs at 4 GiB to keep overlay tmpfs tight (~2 GiB).

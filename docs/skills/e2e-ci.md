@@ -316,6 +316,31 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 - Using `installer_channel=dev` in CI or production builds (active fisherman regression)
 - SSH connecting to a production ISO that has sshd disabled (build with `debug=1` for testing)
 
+---
+
+## E2E Testing using systemd-nspawn (2026-06-25)
+
+**Concept:**
+Instead of booting QEMU VMs (which can be slow, resource-heavy, and require nested virtualization), we can run integration tests using systemd-nspawn containers.
+
+**How it works:**
+1. **Live Environment:** systemd-nspawn boots the live rootfs (e.g. from the mounted squashfs image) as an ephemeral, privileged container:
+   ```bash
+   sudo systemd-nspawn -x -D /mnt/rootfs --privileged --bind=/dev --bind=/sys -n -p tcp:2222:22 -b
+   ```
+   This exposes the host's block devices (like loopback devices) so `fisherman` can perform disk partitioning and filesystem formatting.
+2. **Virtual Disk:** We create a raw sparse disk image and attach it as a loop device:
+   ```bash
+   LOOP_DEV=$(sudo losetup --find --show -P /var/tmp/dakota-plain-nspawn-install.img)
+   ```
+   The installer inside the container targets this loop device.
+3. **Booting the Installed System:** Once installation completes, we boot the resulting loopback partition directly using:
+   ```bash
+   sudo systemd-nspawn -x -i "$LOOP_DEV" --privileged --bind=/dev --bind=/sys -n -p tcp:2222:22 -b
+   ```
+   We verify the system reached a running state via `machinectl shell root@<name> systemctl is-system-running`.
+
+
 ## Verification
 
 Before marking any E2E work complete:
