@@ -941,7 +941,7 @@ plain-e2e target:
     rm -f "{{plain-qemu-disk}}" "{{plain-scratch-disk}}" \
                "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
                "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
-    just qemu-mem={{qemu-mem}} plain-test-qemu {{target}}
+    just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-test-qemu {{target}}
 
 # ENOSPC regression gate: boot live ISO + run fisherman only through the OCI
 # export step, then exit.  Passes when skopeo copies the blob without hitting
@@ -995,20 +995,20 @@ plain-enospc-gate target:
 plain-test-qemu target:
     #!/usr/bin/bash
     set -euo pipefail
-    just qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
+    just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-live={{plain-qemu-monitor-live}} \
          plain-qemu-serial-live={{plain-qemu-serial-live}} \
          plain-qemu-ssh-port={{plain-qemu-ssh-port}} \
          plain-boot-qemu-live {{target}}
-    just plain-qemu-ssh-port={{plain-qemu-ssh-port}} \
+    just output_dir={{output_dir}} plain-qemu-ssh-port={{plain-qemu-ssh-port}} \
          plain-qemu-monitor-live={{plain-qemu-monitor-live}} \
          plain-qemu-disk={{plain-qemu-disk}} \
          plain-install-qemu {{target}}
-    just qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
+    just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
          plain-boot-qemu-installed {{target}}
-    just plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
+    just output_dir={{output_dir}} plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
          plain-verify-qemu {{target}}
 
@@ -1140,6 +1140,11 @@ plain-boot-qemu-installed target:
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
     rm -f "{{plain-qemu-monitor-installed}}" "{{plain-qemu-serial-installed}}"
+    # Wait for the live QEMU to release the disk (monitor socket disappears on exit)
+    for i in $(seq 1 20); do
+        [[ -S "{{plain-qemu-monitor-live}}" ]] || break
+        sleep 2
+    done
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
     if ! test -r /dev/kvm 2>/dev/null; then

@@ -17,7 +17,9 @@ Agent entry point for `projectbluefin/dakota-iso`. Load only the skill(s) that m
 | **Building ISOs** | |
 | Build ISOs locally, disk space, BTRFS/XFS quirks | [`docs/build.md`](build.md) |
 | Unified nvidia ISO — size, compression, composefs vs non-composefs variants | [`docs/build.md`](build.md) |
-| ISO is wrong size, won't boot, install fails | [`docs/build.md`](build.md) → ISO size table at top |
+| ISO is wrong size | [`docs/build.md`](build.md) → ISO size table at top |
+| Installed system drops to emergency shell or won't boot | [`docs/skills/install-failures.md`](skills/install-failures.md) |
+| UEFI falls to PXE after install (no bootloader found) | [`docs/skills/install-failures.md`](skills/install-failures.md) |
 | Add or modify variants (`payload_ref` pattern) | [`docs/variants.md`](variants.md) |
 | **Architecture** | |
 | Two-container pipeline, boot flow, squashfs, VFS storage | [`docs/architecture.md`](architecture.md) |
@@ -32,6 +34,7 @@ Agent entry point for `projectbluefin/dakota-iso`. Load only the skill(s) that m
 | Org structure, parity matrix, open gaps | [common: `docs/factory/README.md`](https://github.com/projectbluefin/common/blob/main/docs/factory/README.md) |
 | **Skill improvement** | |
 | Writing a skill update alongside a PR | [`docs/skills/skill-improvement.md`](skills/skill-improvement.md) |
+| Skill-drift CI check failing on a PR | [`docs/skills/skill-drift.md`](skills/skill-drift.md) |
 
 ## Skill index
 

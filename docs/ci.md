@@ -33,10 +33,10 @@ gh workflow run build-iso-bluefin.yml --ref main
 
 ## build-iso.yml
 
-**Triggers:** 1st of each month 03:00 UTC, `workflow_dispatch`  
+**Triggers:** 1st of each month 03:00 UTC, `workflow_dispatch`
 **Job:** `build-and-publish` (single job, no matrix)
-**Runner:** `ubuntu-24.04`  
-**Runs as:** root via `sudo`  
+**Runner:** `ubuntu-24.04`
+**Runs as:** root via `sudo`
 ~~**Path triggers:** `live/**`, `scripts/**`, `.github/workflows/build-iso.yml`~~ — removed; see lessons.
 
 ### Pipeline steps
@@ -46,14 +46,14 @@ gh workflow run build-iso-bluefin.yml --ref main
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
 4. **Pull payload image** — pulls only `dakota-nvidia:stable` (the unified ISO base)
 5. **Build live container** — `podman build live/ --build-arg TARGET=dakota-nvidia` → `localhost/dakota-nvidia-live:latest`
-6. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `dakota-nvidia.rootfs.sfs` + `dakota-nvidia-boot.tar` (~5.3 GB)
+6. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `<target>.rootfs.sfs` + `<target>-boot.tar` (~4.5 GB dakota, ~6 GB bluefin/lts-hwe)
 7. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (no `--store` flag — OCI already embedded in squashfs as VFS)
 8. **Generate checksum** — dated + latest variants
 9. **Plain-install E2E gates** — live boot, ENOSPC export gate, full install, installed-boot verification
 10. **Boot verification** — QEMU UEFI smoke boot on the production ISO
 11. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, and production boot smoke all succeed
 
-> ⚠️ **Do not add `--store` back or re-add the offline store squashfs step.**  
+> ⚠️ **Do not add `--store` back or re-add the offline store squashfs step.**
 > The OCI image is already embedded in the live squashfs via VFS containers-storage.
 > Building a separate `store.squashfs.img` doubles the OCI payload, producing an ~8 GB
 > ISO instead of ~5.3 GB. See lessons below.
@@ -98,8 +98,8 @@ server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
 
 ## build-iso-bluefin.yml
 
-**Triggers:** 1st of each month 05:00 UTC, `workflow_dispatch`  
-**Matrix:** `bluefin`, `bluefin-lts-hwe`  
+**Triggers:** 1st of each month 05:00 UTC, `workflow_dispatch`
+**Matrix:** `bluefin`, `bluefin-lts-hwe`
 **Runner:** `ubuntu-24.04`
 
 This workflow builds the Bluefin and Bluefin LTS live ISOs, runs a QEMU smoke boot,
@@ -137,8 +137,8 @@ When a new image is ready to publish:
 
 ## test-luks-install.yml
 
-**Matrix:** `installer_channel: [dev, stable]` (fail-fast: false)  
-**Timeout:** 90 minutes  
+**Matrix:** `installer_channel: [dev, stable]` (fail-fast: false)
+**Timeout:** 90 minutes
 **Triggers:** PRs to main, weekly schedule, `workflow_dispatch`
 
 ### Pipeline steps
@@ -174,8 +174,8 @@ comments. Key screenshots:
 
 ## test-plain-install.yml
 
-**Matrix:** `installer_channel: [dev, stable]` (fail-fast: false)  
-**Timeout:** 120 minutes  
+**Matrix:** `installer_channel: [dev, stable]` (fail-fast: false)
+**Timeout:** 120 minutes
 **Triggers:** PRs to main, weekly schedule, `workflow_dispatch`
 
 This workflow builds a debug Dakota ISO and runs the full plain-install QEMU path

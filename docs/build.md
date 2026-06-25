@@ -499,3 +499,36 @@ Our consolidation of OSTree (GRUB) and ComposeFS (systemd-boot) installer flows 
    * **`lts`** targets formatted as direct `xfs` fail boot verification due to a `/boot` partition ext4 UUID detection timeout in the CentOS 10 initramfs dracut loop.
    * **Fix**: LTS installations default to `xfs-in-lvm` which mounts through LVM volume activation hooks, bypassing the udev device-by-uuid wait step and ensuring reliable boot discovery.
 
+### Debug ISO squashfs must mirror production mksquashfs flags (2026-06-21)
+
+**What failed:** `build-iso.yml` E2E step 1/4 (boot live ISO) — `dracut Warning: /sysroot has no proper rootfs layout` → `Can't mount root filesystem`. Production ISO was correct; boot failed because E2E uses the debug ISO (preferred by `plain-boot-qemu-live`).
+
+**Why:** The debug ISO rebuild step in CI used `-wildcards -e sys -e dev` (without glob patterns). With `-wildcards`, mksquashfs treats `-e sys` as "exclude any path matching 'sys'" which removes the `sys/` directory node entirely. dracut's `usable_root()` requires all three of `proc/`, `sys/`, `dev/` as empty dirs. The production squashfs was built correctly (using `-e "sys/*" -e "dev/*"` and `mkdir -p sys/ dev/`) but the debug rebuild step had stale flags.
+
+**Fix in `.github/workflows/build-iso.yml`:**
+```bash
+sudo mkdir -p /var/iso-build/debug-rootfs/proc \
+              /var/iso-build/debug-rootfs/sys \
+              /var/iso-build/debug-rootfs/dev
+sudo mksquashfs ... -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e run -e tmp
+```
+
+**Rule:** Any squashfs rebuild step (debug ISO, test fixtures, etc.) must use the exact same `mkdir -p proc/ sys/ dev/` + `-e "proc/*" -e "sys/*" -e "dev/*"` pattern as `scripts/build-live-squashfs.sh`. Using `-e sys` or `-e dev` (bare names, even with or without `-wildcards`) is dangerous — it may remove the directory node on newer mksquashfs.
+
+### COMPOSEFS_BACKEND detection: never use `sh -c 'python3 -c "..."'` (2026-06-21)
+
+**What failed silently:** `scripts/build-live-squashfs.sh` always selected the non-composefs OCI layout path for ALL variants, including dakota (which needs the VFS composefs path). Dakota installs would fail because recipe.json says `containers-storage:...` but the offline store was embedded as an OCI layout at `/var/lib/containers/oci-store`.
+
+**Why:** Shell quoting bug. The detection ran:
+```bash
+sh -c 'python3 -c "import json; print(json.load(open("/etc/bootc-installer/recipe.json"))..."'
+```
+Inside the container, `sh` sees the inner `"` after `open(` as closing the outer double-quoted string. python3 gets a malformed `-c` argument, exits with an error (suppressed by `2>/dev/null`), output is empty, `grep -qi true` fails, `COMPOSEFS_BACKEND` stays `false` for ALL variants.
+
+**Fix:** Run python3 directly as the container entrypoint; avoid `sh -c '...'` wrapping:
+```bash
+podman run --rm --entrypoint="" "${IMAGE}" \
+    python3 -c 'import json; d=json.load(open("/etc/bootc-installer/recipe.json")); print(d.get("composeFsBackend", False))' \
+    2>/dev/null | grep -qi true
+```
+Single-quoting the python3 `-c` argument prevents bash from expanding it, and avoids any sh-layer quoting entirely.

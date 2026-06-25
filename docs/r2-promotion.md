@@ -23,7 +23,7 @@ This caused a production outage in June 2026 (broken XFS install, issue [#85](ht
 |---|---|
 | `testing` | All builds — CI uploads here, all ISOs are public via projectbluefin.dev |
 
-**Endpoint:** `https://2a4147f637f7d9e6a67ca185357d3b0a.r2.cloudflarestorage.com`  
+**Endpoint:** `https://2a4147f637f7d9e6a67ca185357d3b0a.r2.cloudflarestorage.com`
 **Account ID:** `2a4147f637f7d9e6a67ca185357d3b0a`
 
 ISOs are permanent — no expiry. Full history from 2026-04-10.
@@ -45,7 +45,7 @@ acl = private
 no_check_bucket = true
 ```
 
-⚠️ `no_check_bucket = true` is **required** — without it, `CopyObject` hangs on large files.  
+⚠️ `no_check_bucket = true` is **required** — without it, `CopyObject` hangs on large files.
 ⚠️ `acl = private` is required per Cloudflare docs for object-level permission tokens.
 
 ## Common operations

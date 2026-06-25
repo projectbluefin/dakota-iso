@@ -60,7 +60,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # Skip if workflow_dispatch selected a specific variant that doesn't match
       - name: Check if this variant should build
@@ -169,7 +169,7 @@ jobs:
 
       - name: Upload ISO artifact
         if: steps.should_build.outputs.build == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ steps.iso.outputs.dated }}
           path: |

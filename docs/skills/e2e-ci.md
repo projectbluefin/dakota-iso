@@ -39,8 +39,8 @@ The E2E gate splits into four named CI steps, each with its own timeout:
 | `E2E 3/4 — Full install composefs` | 60 min | 8 GiB | btrfs+composefs install completes |
 | `E2E 4/4 — Boot installed + verify Graphical` | 15 min | 8 GiB | Installed system reaches Graphical target |
 
-**Why split RAM between steps:**  
-The ENOSPC bug triggers when overlay tmpfs is ~2 GiB (4 GiB RAM).  
+**Why split RAM between steps:**
+The ENOSPC bug triggers when overlay tmpfs is ~2 GiB (4 GiB RAM).
 The `bootc install to-filesystem --composefs-backend` step extracts 6 GB via
 btrfs+overlay through QEMU — inherently slow at 4 GiB, ~3× faster at 8 GiB.
 
@@ -93,15 +93,15 @@ Raw sparse + cache=unsafe delivers 200–500 MB/s vs ~10–50 MB/s for qcow2.
 3. `/var/tmp` is on the dracut overlayfs (~1.4 GiB at 4 GiB RAM)
 4. A single squashed 5–6 GiB OCI layer blob overflows it
 
-**Why `TMPDIR` env var doesn't help:**  
+**Why `TMPDIR` env var doesn't help:**
 `TypeBigFiles` checks `store.TmpDir()` BEFORE `os.Getenv("TMPDIR")`. If the
 store returns a non-empty string, `TMPDIR` is ignored entirely.
 
-**Why `CONTAINERS_STORAGE_CONF` with `tmpdir =` doesn't help:**  
+**Why `CONTAINERS_STORAGE_CONF` with `tmpdir =` doesn't help:**
 Older containers/storage versions don't have `tmpdir` as a recognized TOML
 field — they silently reject it with `Failed to decode the keys ["storage.tmpdir"]`.
 
-**The fix that works (fisherman v2.7.3):**  
+**The fix that works (fisherman v2.7.3):**
 Bind-mount a disk-backed scratch subdir over `/var/tmp` before the skopeo copy,
 then umount it in a deferred call:
 ```go
