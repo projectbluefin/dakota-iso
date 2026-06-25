@@ -265,6 +265,9 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
         # With console=tty0 console=ttyS0 in the BLS entry, Plymouth writes
         # the prompt to serial.  Input still comes from tty0, so sendkey works.
         serial_result = qemu_check_serial(serial_log)
+        if serial_result == "emergency":
+            print("[luks-unlock] ERROR: emergency shell detected before Plymouth prompt reached!", file=sys.stderr)
+            sys.exit(2)
         if serial_result == "plymouth":
             print("[luks-unlock] Plymouth passphrase prompt detected via serial", flush=True)
             brightness, md5 = qemu_screendump(monitor_sock, snap)
@@ -273,6 +276,7 @@ def run_qemu(monitor_sock: str, passphrase: str, serial_log: str):
                 shutil.copy2(snap, "/tmp/luks-screenshot-plymouth.ppm")
             except OSError:
                 pass
+
             print(f"[luks-unlock] Waiting {PLYMOUTH_WAIT}s for Plymouth to settle...", flush=True)
             time.sleep(PLYMOUTH_WAIT)
             print("[luks-unlock] Sending passphrase via QEMU monitor sendkey...", flush=True)

@@ -739,6 +739,7 @@ luks-boot-qemu-live target:
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
 
+    sudo pkill -f "qemu-system.*{{luks-qemu-disk}}" 2>/dev/null || true
     [[ -f "{{luks-qemu-disk}}" ]] || qemu-img create -f qcow2 "{{luks-qemu-disk}}" 64G
     # Scratch disk: 16G sparse file mounted over /var/tmp in the live VM to
     # give skopeo disk-backed space for VFS blob extraction (~9 GB blob).
@@ -760,12 +761,15 @@ luks-boot-qemu-live target:
         fi
     fi
     CPU_FLAG="-cpu host"
+    SMP="{{qemu-smp}}"
     if [[ "$QEMU_ACCEL" =~ tcg ]]; then
         CPU_FLAG="-cpu qemu64"
+        SMP="2"
     fi
     $QEMU_PREFIX "$QEMU" \
-        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
+        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp $SMP $QEMU_ACCEL \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=iso,file=${ISO},media=cdrom,readonly=on,format=raw" \
         -device virtio-scsi-pci,id=scsi \
@@ -851,6 +855,7 @@ luks-boot-qemu-installed target:
         echo "Waiting for live QEMU to exit (attempt $i)..."
         sleep 2
     done
+    sudo pkill -f "qemu-system.*{{luks-qemu-disk}}" 2>/dev/null || true
     # KVM access: try direct, then sudo, then fall back to TCG
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
@@ -865,12 +870,15 @@ luks-boot-qemu-installed target:
         fi
     fi
     CPU_FLAG="-cpu host"
+    SMP="{{qemu-smp}}"
     if [[ "$QEMU_ACCEL" =~ tcg ]]; then
         CPU_FLAG="-cpu qemu64"
+        SMP="2"
     fi
     $QEMU_PREFIX "$QEMU" \
-        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
+        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp $SMP $QEMU_ACCEL \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
         -device virtio-blk-pci,drive=disk \
@@ -1044,6 +1052,7 @@ plain-boot-qemu-live target:
         if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-plain-qemu-live-vars.fd; OVMF_VARS=/var/tmp/dakota-plain-qemu-live-vars.fd; break; fi
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
+    sudo pkill -f "qemu-system.*{{plain-qemu-disk}}" 2>/dev/null || true
     [[ -f "{{plain-qemu-disk}}" ]] || truncate -s 64G "{{plain-qemu-disk}}"
     # Scratch disk: 16G sparse file mounted over /var/tmp in the live VM to
     # give skopeo disk-backed space for VFS blob extraction (~9 GB blob).
@@ -1059,11 +1068,16 @@ plain-boot-qemu-live target:
         fi
     fi
     CPU_FLAG="-cpu host"
-    [[ "$QEMU_ACCEL" =~ tcg ]] && CPU_FLAG="-cpu qemu64"
+    SMP="{{qemu-smp}}"
+    if [[ "$QEMU_ACCEL" =~ tcg ]]; then
+        CPU_FLAG="-cpu qemu64"
+        SMP="2"
+    fi
     echo "Booting live ISO: $ISO (qemu-mem={{qemu-mem}} MiB)"
     $QEMU_PREFIX "$QEMU" \
-        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
+        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp $SMP $QEMU_ACCEL \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=iso,file=${ISO},media=cdrom,readonly=on,format=raw" \
         -device virtio-scsi-pci,id=scsi \
@@ -1139,6 +1153,7 @@ plain-boot-qemu-installed target:
         if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-plain-qemu-installed-vars.fd; OVMF_VARS=/var/tmp/dakota-plain-qemu-installed-vars.fd; break; fi
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
+    sudo pkill -f "qemu-system.*{{plain-qemu-disk}}" 2>/dev/null || true
     rm -f "{{plain-qemu-monitor-installed}}" "{{plain-qemu-serial-installed}}"
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
@@ -1150,11 +1165,16 @@ plain-boot-qemu-installed target:
         fi
     fi
     CPU_FLAG="-cpu host"
-    [[ "$QEMU_ACCEL" =~ tcg ]] && CPU_FLAG="-cpu qemu64"
+    SMP="{{qemu-smp}}"
+    if [[ "$QEMU_ACCEL" =~ tcg ]]; then
+        CPU_FLAG="-cpu qemu64"
+        SMP="2"
+    fi
     echo "Booting installed disk: {{plain-qemu-disk}} (qemu-mem={{qemu-mem}} MiB)"
     $QEMU_PREFIX "$QEMU" \
-        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
+        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp $SMP $QEMU_ACCEL \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
+
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=disk,file={{plain-qemu-disk}},format=raw,cache=unsafe" \
         -device virtio-blk-pci,drive=disk \

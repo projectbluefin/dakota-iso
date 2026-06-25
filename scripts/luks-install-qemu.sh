@@ -18,7 +18,7 @@ FISHER_REPO="$5"
 
 DISK="/dev/vda"
 PAYLOAD_IMAGE=$(cat "${TARGET}/payload_ref" | tr -d '[:space:]')
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=20 -o ControlMaster=auto -o ControlPath=/tmp/ssh-control-%r@%h:%p -o ControlPersist=10m"
 SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p ${SSH_PORT}"
 SCP="sshpass -p live scp $SSH_OPTS -P ${SSH_PORT}"
 
