@@ -6,7 +6,7 @@
 |----------|----------|
 | Variant | Download | Checksum |
 |---------|----------|----------|
-| `dakota` | [⬇ dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) |
+| `dakota` | [⬇ dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) | XX GB | Date | link to test | 
 | `stable` | [⬇ stable-live-latest.iso](https://projectbluefin.dev/stable-live-latest.iso) | [checksum](https://projectbluefin.dev/stable-live-latest.iso-CHECKSUM) |
 | `lts` | [⬇ lts-live-latest.iso](https://projectbluefin.dev/lts-live-latest.iso) | [checksum](https://projectbluefin.dev/lts-live-latest.iso-CHECKSUM) |
 
