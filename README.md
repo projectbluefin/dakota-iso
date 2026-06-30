@@ -5,8 +5,6 @@
 | Variant | Download | Checksum | Size | Published (UTC) | Validation | Last 3 builds |
 |---------|----------|----------|------|-----------------|------------|---------------|
 | `dakota` | [⬇ `dakota-live-latest.iso`](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum `8bbd377f…`](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) | 4.23 GiB | 2026-06-29 05:34 | [run #195](https://github.com/projectbluefin/dakota-iso/actions/runs/28348909146) | [b1](https://projectbluefin.dev/dakota-live-backup-1.iso) · [b2](https://projectbluefin.dev/dakota-live-backup-2.iso) · [b3](https://projectbluefin.dev/dakota-live-backup-3.iso) |
-| `stable` | [⬇ `stable-live-latest.iso`](https://projectbluefin.dev/stable-live-latest.iso) | [checksum](https://projectbluefin.dev/stable-live-latest.iso-CHECKSUM) | — | — | — | [b1](https://projectbluefin.dev/stable-live-backup-1.iso) · [b2](https://projectbluefin.dev/stable-live-backup-2.iso) · [b3](https://projectbluefin.dev/stable-live-backup-3.iso) |
-| `lts` | [⬇ `lts-live-latest.iso`](https://projectbluefin.dev/lts-live-latest.iso) | [checksum](https://projectbluefin.dev/lts-live-latest.iso-CHECKSUM) | — | — | — | [b1](https://projectbluefin.dev/lts-live-backup-1.iso) · [b2](https://projectbluefin.dev/lts-live-backup-2.iso) · [b3](https://projectbluefin.dev/lts-live-backup-3.iso) |
 
 Builds bootable UEFI live ISOs from [Dakota](https://github.com/projectbluefin/dakota) and [Bluefin](https://github.com/projectbluefin/bluefin) images.
 
@@ -18,8 +16,8 @@ inside the squashfs so the target OS can be installed on any hardware without a 
 | Variant | Base image | Bootloader | Composefs | Description |
 |---------|-----------|------------|-----------|-------------|
 | `dakota` | `ghcr.io/projectbluefin/dakota-nvidia:stable` | systemd-boot | yes | GNOME OS-based prototype with composefs |
-| `stable` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | grub2 | no | Bluefin stable release (Fedora Silverblue) |
-| `lts` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | grub2 | no | Bluefin long-term support with HWE kernel |
+| `bluefin` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | grub2 | no | Bluefin stable release (Fedora Silverblue) |
+| `bluefin-lts-hwe` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | grub2 | no | Bluefin long-term support with HWE kernel |
 
 All ISOs embed the NVIDIA variant as the offline store. Non-NVIDIA hardware auto-rebases
 on the first `bootc upgrade` after installation.

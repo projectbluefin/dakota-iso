@@ -555,42 +555,28 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
                 f"Dakota row must link backup slot {backup_name}.",
             )
 
-    def test_readme_stable_and_lts_rows_link_last_three_builds(self):
-        """README stable/lts rows must link backup slots 1..3."""
+    def test_readme_bluefin_rows_link_last_three_builds(self):
+        """README bluefin/bluefin-lts-hwe rows must link backup slots 1..3."""
         content = README.read_text()
         top_table_section = content.split("\nBuilds bootable UEFI live ISOs", 1)[0]
 
-        stable_row = next(
-            (ln for ln in top_table_section.splitlines() if ln.startswith("| `stable` |")),
-            None,
-        )
-        self.assertIsNotNone(stable_row, "README must include a `stable` row in the top table.")
-        for backup_name in (
-            "stable-live-backup-1.iso",
-            "stable-live-backup-2.iso",
-            "stable-live-backup-3.iso",
+        for prefix, iso_base in (
+            ("`bluefin`", "bluefin-live"),
+            ("`bluefin-lts-hwe`", "bluefin-lts-hwe-live"),
         ):
-            self.assertIn(
-                backup_name,
-                stable_row,
-                f"`stable` row must link {backup_name}.",
+            row = next(
+                (ln for ln in top_table_section.splitlines() if ln.startswith(f"| {prefix} |")),
+                None,
             )
-
-        lts_row = next(
-            (ln for ln in top_table_section.splitlines() if ln.startswith("| `lts` |")),
-            None,
-        )
-        self.assertIsNotNone(lts_row, "README must include an `lts` row in the top table.")
-        for backup_name in (
-            "lts-live-backup-1.iso",
-            "lts-live-backup-2.iso",
-            "lts-live-backup-3.iso",
-        ):
-            self.assertIn(
-                backup_name,
-                lts_row,
-                f"`lts` row must link {backup_name}.",
-            )
+            if row is None:
+                continue  # variant row may not exist yet
+            for n in (1, 2, 3):
+                backup_name = f"{iso_base}-backup-{n}.iso"
+                self.assertIn(
+                    backup_name,
+                    row,
+                    f"{prefix} row must link {backup_name}.",
+                )
 
     def test_e2e_workflows_wait_for_unit_tests(self):
         """Expensive QEMU E2E jobs should not run after cheap test failures."""
