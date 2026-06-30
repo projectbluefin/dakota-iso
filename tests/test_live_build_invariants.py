@@ -500,6 +500,35 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             "build-iso.yml must explicitly prune backup slots older than the most recent 3.",
         )
 
+    def test_build_iso_bluefin_rotates_and_prunes_backups(self):
+        """Bluefin publisher must maintain exactly 3 backup slots per iso_name."""
+        content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
+        self.assertIn(
+            "BASE=\"${{ matrix.iso_name }}\"",
+            content,
+            "build-iso-bluefin.yml must derive a base name from matrix.iso_name.",
+        )
+        self.assertIn(
+            "${BASE}-backup-1.iso",
+            content,
+            "build-iso-bluefin.yml must rotate latest into backup-1 before overwrite.",
+        )
+        self.assertIn(
+            "${BASE}-backup-2.iso",
+            content,
+            "build-iso-bluefin.yml must keep a second backup slot per iso_name.",
+        )
+        self.assertIn(
+            "${BASE}-backup-3.iso",
+            content,
+            "build-iso-bluefin.yml must keep a third backup slot per iso_name.",
+        )
+        self.assertIn(
+            "Delete backup slots beyond 3",
+            content,
+            "build-iso-bluefin.yml must explicitly prune backup slots older than 3.",
+        )
+
     def test_readme_download_table_has_last_three_builds_links(self):
         """README top download table must expose latest + last 3 dakota backups."""
         content = README.read_text()
@@ -524,6 +553,43 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
                 backup_name,
                 dakota_row,
                 f"Dakota row must link backup slot {backup_name}.",
+            )
+
+    def test_readme_stable_and_lts_rows_link_last_three_builds(self):
+        """README stable/lts rows must link backup slots 1..3."""
+        content = README.read_text()
+        top_table_section = content.split("\nBuilds bootable UEFI live ISOs", 1)[0]
+
+        stable_row = next(
+            (ln for ln in top_table_section.splitlines() if ln.startswith("| `stable` |")),
+            None,
+        )
+        self.assertIsNotNone(stable_row, "README must include a `stable` row in the top table.")
+        for backup_name in (
+            "stable-live-backup-1.iso",
+            "stable-live-backup-2.iso",
+            "stable-live-backup-3.iso",
+        ):
+            self.assertIn(
+                backup_name,
+                stable_row,
+                f"`stable` row must link {backup_name}.",
+            )
+
+        lts_row = next(
+            (ln for ln in top_table_section.splitlines() if ln.startswith("| `lts` |")),
+            None,
+        )
+        self.assertIsNotNone(lts_row, "README must include an `lts` row in the top table.")
+        for backup_name in (
+            "lts-live-backup-1.iso",
+            "lts-live-backup-2.iso",
+            "lts-live-backup-3.iso",
+        ):
+            self.assertIn(
+                backup_name,
+                lts_row,
+                f"`lts` row must link {backup_name}.",
             )
 
     def test_e2e_workflows_wait_for_unit_tests(self):

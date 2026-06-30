@@ -242,6 +242,36 @@ jobs:
           sudo apt-get install -y rclone -qq
           ISO="${{ steps.iso.outputs.path }}"
           LATEST_NAME="${{ steps.iso.outputs.latest_name }}"
+          LATEST_CHECKSUM="${LATEST_NAME}-CHECKSUM"
+          BASE="${{ matrix.iso_name }}"
+
+          # Rotate stable backups before publishing new latest.
+          FILES="$(rclone lsf R2:testing --files-only || true)"
+          exists() { grep -Fxq "$1" <<<"$FILES"; }
+          move_if_exists() {
+            local src="$1" dst="$2"
+            if exists "${src}"; then
+              rclone moveto --log-level INFO --s3-no-check-bucket \
+                "R2:testing/${src}" "R2:testing/${dst}"
+            fi
+          }
+
+          move_if_exists "${BASE}-backup-2.iso" "${BASE}-backup-3.iso"
+          move_if_exists "${BASE}-backup-2.iso-CHECKSUM" "${BASE}-backup-3.iso-CHECKSUM"
+          move_if_exists "${BASE}-backup-1.iso" "${BASE}-backup-2.iso"
+          move_if_exists "${BASE}-backup-1.iso-CHECKSUM" "${BASE}-backup-2.iso-CHECKSUM"
+          move_if_exists "${LATEST_NAME}" "${BASE}-backup-1.iso"
+          move_if_exists "${LATEST_CHECKSUM}" "${BASE}-backup-1.iso-CHECKSUM"
+
+          # Delete backup slots beyond 3 for this iso_name.
+          rclone lsf R2:testing --files-only | grep -E "^${BASE}-backup-[0-9]+\\.iso(-CHECKSUM)?$" | \
+          while read -r f; do
+            n="$(sed -E "s/^${BASE}-backup-([0-9]+).*/\\1/" <<<"${f}")"
+            if [[ "${n}" -gt 3 ]]; then
+              rclone deletefile --log-level INFO --s3-no-check-bucket "R2:testing/${f}"
+            fi
+          done
+
           rclone copyto --log-level INFO --s3-no-check-bucket "$ISO" "R2:testing/${LATEST_NAME}"
           rclone copyto --log-level INFO --s3-no-check-bucket "${{ steps.checksum.outputs.latest_path }}" "R2:testing/${LATEST_NAME}-CHECKSUM"
 
