@@ -69,6 +69,8 @@ Slots beyond 3 are pruned by the `Delete backup slots beyond 3` step.
 `| \`dakota\` |` row with current ISO size, publish date, and CI run link. It then
 git-commits and pushes to `main`. This step requires `contents: write` permission on the job.
 
+**Branch Protection Note (July 2026):** If the `main` branch is protected and direct pushes are disabled (even for bots), this push step will fail with `protected branch hook declined`. The workflow will show as failed on this step, but **the ISO has already been successfully built, tested, and published to R2**. In this event, a repository admin must manually update the row in `README.md` and push it.
+
 Bluefin variants do not auto-refresh the README — update their rows manually after a build.
 
 ### AHCI vs SCSI CD for smoke boot (bluefin CI)
