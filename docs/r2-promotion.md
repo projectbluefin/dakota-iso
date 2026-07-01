@@ -99,6 +99,7 @@ done
 | `dakota-live-alpha2.iso` | `20260614-7ef17bd` | Rebuilt with bootc-installer v2.7.4 (ENOSPC + composefs hostname fixes) |
 | `dakota-live-alpha3.iso` | `20260614-9939dd7` | First build with fixed installer (fisherman v0.2.1, bootc-installer v2.7.3) |
 | `dakota-live-alpha4.iso` | `20260618-f095551` | composefs installed-boot fix; root-mount-spec injection in build-live-squashfs.sh |
+| `dakota-live-alpha5.iso` | `20260701-7ee8e14` | New alpha5 release from the triggered build |
 | `dakota-live-latest.iso` | Latest CI build | Auto-updated by monthly `build-iso.yml` |
 
 ## Public URLs
@@ -123,7 +124,7 @@ https://projectbluefin.dev/bluefin-lts-hwe-live-backup-3.iso
 
 Named releases follow the same pattern:
 ```
-https://projectbluefin.dev/dakota-live-alpha4.iso
+https://projectbluefin.dev/dakota-live-alpha5.iso
 ```
 
 ## Verifying an ISO without downloading it
