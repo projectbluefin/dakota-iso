@@ -115,11 +115,21 @@ flatpak override --system --filesystem=/etc:ro "${INSTALLER_APP_ID}"
 #     exit 0
 # fi
 
-readarray -t WANTED < <(grep -v '^[[:space:]]*#' /tmp/flatpaks-list | grep -v '^[[:space:]]*$')
+# A variant may override the shared flatpak list with src/<variant>/flatpaks
+# (e.g. installer-only ISOs).  VARIANT strips the -nvidia suffix from TARGET,
+# mirroring configure-live.sh.
+FLATPAKS_LIST="/tmp/flatpaks-list"
+VARIANT=$(echo "${TARGET:-dakota-nvidia}" | sed 's/-nvidia-open$//;s/-nvidia$//')
+if [ -f "/src/${VARIANT}/flatpaks" ]; then
+    FLATPAKS_LIST="/src/${VARIANT}/flatpaks"
+fi
+readarray -t WANTED < <(grep -v '^[[:space:]]*#' "${FLATPAKS_LIST}" | grep -v '^[[:space:]]*$')
 
 # Install or update everything in the list (--or-update = skip if current)
 # --no-related skips locale packs and debug symbols (~3 GB uncompressed)
-flatpak install --system --noninteractive --no-related --or-update flathub "${WANTED[@]}"
+if [ "${#WANTED[@]}" -gt 0 ]; then
+    flatpak install --system --noninteractive --no-related --or-update flathub "${WANTED[@]}"
+fi
 
 # Remove any system app that is no longer in the wanted list
 readarray -t INSTALLED < <(flatpak list --app --system --columns=application 2>/dev/null || true)

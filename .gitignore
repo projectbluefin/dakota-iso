@@ -2,3 +2,5 @@ image-builder-cli/
 output/
 __pycache__/
 *.pyc
+.wrangler/
+

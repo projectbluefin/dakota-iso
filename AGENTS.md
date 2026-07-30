@@ -33,9 +33,9 @@ You are an agent in this loop. Your work compounds.
 ## The Prime Directive: The Codebase is the Standard
 
 **Use what is in production already.**
-Whenever you need to make a technical decision — choosing a GitHub Action, picking a CLI tool, writing a configuration file — your first step is to `grep` the organization's existing codebase to see what is already used in production. 
-* If a specific tool (e.g., `ublue-os/remove-unwanted-software`) is already used across the org's repos, **that is the standard**. 
-* Use the existing production standard to guarantee cross-repo consistency and prevent redundant third-party dependencies. 
+Whenever you need to make a technical decision — choosing a GitHub Action, picking a CLI tool, writing a configuration file — your first step is to `grep` the organization's existing codebase to see what is already used in production.
+* If a specific tool (e.g., `ublue-os/remove-unwanted-software`) is already used across the org's repos, **that is the standard**.
+* Use the existing production standard to guarantee cross-repo consistency and prevent redundant third-party dependencies.
 * You do not need to ask for permission or look for a separate rules document if the codebase already shows a clear consensus.
 
 ## Agent fast path
@@ -319,6 +319,15 @@ Stop and request human input at these four gates. Never guess past them.
 ⛔ **Never use `rclone copyto` to manually overwrite `dakota-live-latest.iso` on R2.** The `latest` pointer is the production artifact users download. Only CI may write to it — after the E2E gate passes. Manual uploads bypass the gate and ship broken ISOs. See [#85](https://github.com/projectbluefin/dakota-iso/issues/85).
 
 See [`docs/skills/human-gates.md`](docs/skills/human-gates.md) for full evidence requirements.
+
+## Factory workflow, labels, and ownership
+
+Use the shared lifecycle and labels in
+[`docs/skills/label-workflow.md`](docs/skills/label-workflow.md). Humans
+triage and approve; agents claim `status/queued` issues. Clankers is
+authenticated Hive transport only, not merge authority. Templates are
+synchronized from `projectbluefin/bonedigger`; keep Dakota-ISO ownership
+local and never write to `ublue-os/*`.
 
 ## Verification Requirements
 

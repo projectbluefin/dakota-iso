@@ -149,4 +149,3 @@ When building ISOs for non-composefs (ostree/bootcDirect) targets:
    mount_program = "/usr/bin/fuse-overlayfs"
    ```
 4. **Fisherman targetImgref**: Ensure that `targetImgref` is populated in the fisherman recipe JSON. If omitted, fisherman's direct-mode path runs bootc without the `--source-imgref` argument, failing with `Either --source-imgref must be defined or this command must be executed inside a podman container`.
-

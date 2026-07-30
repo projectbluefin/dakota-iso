@@ -64,3 +64,8 @@ See [`docs/skills/human-gates.md`](../docs/skills/human-gates.md) for evidence r
 Every session produces two outputs: the work and the learning.
 Skill updates go in the **same PR**, never a follow-up.
 See [`docs/skills/skill-improvement.md`](../docs/skills/skill-improvement.md).
+
+Use the shared [label workflow](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md):
+humans triage and approve, agents claim `status/queued`, and Clankers only
+transports Hive assignments. Templates are synchronized from bonedigger.
+Never write to `ublue-os/*`.

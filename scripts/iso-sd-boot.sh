@@ -72,7 +72,7 @@ CS_STAGING="${WORKDIR}/${TARGET}-cs-staging"
 SQUASHFS_ROOT="${WORKDIR}/${TARGET}-sfs-root"
 PAYLOAD_OCI="${OUTPUT_DIR}/${TARGET}-payload.oci.tar"
 
-trap "rm -f '${SQUASHFS}' '${BOOT_TAR}' '${PAYLOAD_OCI}' 2>/dev/null || true" EXIT
+trap 'rm -f "${SQUASHFS}" "${BOOT_TAR}" "${PAYLOAD_OCI}" 2>/dev/null || true' EXIT
 
 echo "=== Disk space before squashfs assembly ==="
 df -h "${OUTPUT_DIR}"
@@ -91,9 +91,10 @@ _ns "buildah copy '${INJECT_CTR}' '${OUTPUT_DIR}/.bootc-root-mount.toml' /tmp/.b
 _ns "buildah run '${INJECT_CTR}' -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'"
 
 if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
-    printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > "${OUTPUT_DIR}/.vfs-storage.conf"
-    _ns "buildah run '${INJECT_CTR}' -- mkdir -p /etc/containers"
-    _ns "buildah copy '${INJECT_CTR}' '${OUTPUT_DIR}/.vfs-storage.conf' /etc/containers/storage.conf"
+    # The payload ships verbatim to installed systems — never bake a
+    # storage.conf into it (installed podman would inherit VFS storage).
+    # VFS config for reading the embedded store lives in the live env
+    # (configure-live.sh) and the embed step below (CONTAINERS_STORAGE_CONF).
     echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
     _ns "buildah commit --squash '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
     _ns "buildah rm '${INJECT_CTR}'"
@@ -250,7 +251,7 @@ du -sh "${SQUASHFS}" "${BOOT_TAR}" 2>/dev/null || true
 
 LIVE_TITLE=$(cat "${TARGET}/live_title" 2>/dev/null || echo 'Dakota Live')
 TMPDIR="${OUTPUT_DIR}" \
-PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:${PATH}" \
+PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}" \
     bash "live/src/build-iso.sh" \
         --title "${LIVE_TITLE}" \
         "${BOOT_TAR}" "${SQUASHFS}" "${OUTPUT_DIR}/${TARGET}-live.iso"

@@ -94,11 +94,15 @@ if [[ "${DEBUG:-0}" == "1" ]]; then
     # Enable sshd: the Dakota/Bluefin preset marks sshd disabled, so a plain
     # wants symlink gets overridden at first boot.  A preset file in
     # /etc/systemd/system-preset/ takes priority over /usr/lib and forces it on.
+    # Debian-based images ship the unit as ssh.service (sshd.service is only
+    # an alias), so pick whichever unit file actually exists.
+    SSH_UNIT="sshd.service"
+    [[ ! -f /usr/lib/systemd/system/sshd.service && -f /usr/lib/systemd/system/ssh.service ]] && SSH_UNIT="ssh.service"
     mkdir -p /etc/systemd/system-preset
-    echo "enable sshd.service" > /etc/systemd/system-preset/90-live-debug.preset
+    echo "enable ${SSH_UNIT}" > /etc/systemd/system-preset/90-live-debug.preset
     mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /usr/lib/systemd/system/sshd.service \
-        /etc/systemd/system/multi-user.target.wants/sshd.service
+    ln -sf "/usr/lib/systemd/system/${SSH_UNIT}" \
+        "/etc/systemd/system/multi-user.target.wants/${SSH_UNIT}"
 
     cat >> /etc/ssh/sshd_config << 'SSHEOF'
 PermitEmptyPasswords no
@@ -249,6 +253,17 @@ AutomaticLoginEnable=True
 AutomaticLogin=liveuser
 GDMEOF
 
+# Debian-based images (gdm3) read /etc/gdm3/daemon.conf instead.  Only write
+# it when the image does not already configure autologin (some images ship
+# their own live-session autologin).
+if [[ -d /etc/gdm3 ]] && ! grep -qs '^AutomaticLoginEnable' /etc/gdm3/daemon.conf; then
+    cat >> /etc/gdm3/daemon.conf << 'GDMEOF'
+[daemon]
+AutomaticLoginEnable=True
+AutomaticLogin=liveuser
+GDMEOF
+fi
+
 # ── /var/tmp tmpfs ────────────────────────────────────────────────────────────
 # The live overlayfs puts /var on a small RAM overlay.  During install skopeo
 # writes intermediate blob temp files to /var/tmp regardless of TMPDIR.  With
@@ -389,11 +404,17 @@ else
 fi
 
 # Generate recipe.json with the correct imgref/local_imgref for this variant.
-# All other fields (branding, tour, steps) are identical across variants.
+# A variant-specific recipe.json (branding, tour, steps) may be provided in
+# the variant directory, mirroring the images.json override above; otherwise
+# all variants share the stock recipe.
+RECIPE_SRC="$SCRIPT_DIR/etc/bootc-installer/recipe.json"
+if [[ -f "$VARIANT_DIR/recipe.json" ]]; then
+    RECIPE_SRC="$VARIANT_DIR/recipe.json"
+fi
 python3 - << PYEOF
 import json, sys
 
-with open("$SCRIPT_DIR/etc/bootc-installer/recipe.json") as f:
+with open("$RECIPE_SRC") as f:
     recipe = json.load(f)
 
 # image = source for fisherman/bootc install
@@ -608,3 +629,11 @@ fi
 
 # fisherman handles scratch space, transport-prefix stripping, OCI export, and
 # GPT partition retagging natively — no host-side wrappers needed.
+
+# ── Per-variant hook ──────────────────────────────────────────────────────────
+# Variants with needs beyond the declarative files (e.g. Debian-based images)
+# may ship an executable configure-live.d.sh in their variant directory.
+if [[ -f "$VARIANT_DIR/configure-live.d.sh" ]]; then
+    echo "Running variant hook: $VARIANT_DIR/configure-live.d.sh"
+    bash "$VARIANT_DIR/configure-live.d.sh"
+fi

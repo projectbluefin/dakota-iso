@@ -72,7 +72,7 @@ else
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
     echo "Uploaded recipe — building patched fisherman for bootcDirect..."
     FISHERMAN_BIN=$(mktemp /tmp/fisherman-XXXXXX)
-    trap "rm -f '${RECIPE_TMP}' '${FISHERMAN_BIN}'" EXIT
+    trap 'rm -f "${RECIPE_TMP}" "${FISHERMAN_BIN}"' EXIT
     (cd "${FISHER_REPO}" && CGO_ENABLED=0 go build -o "${FISHERMAN_BIN}" ./cmd/fisherman/)
     $SCP "${FISHERMAN_BIN}" liveuser@127.0.0.1:/tmp/fisherman
     $SSH 'chmod +x /tmp/fisherman'

@@ -373,9 +373,11 @@ jobs:
       - name: Publish latest URLs summary
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success' && steps.boot_verify.outcome == 'success' }}
         run: |
-          echo "## Latest ISO URLs" >> "$GITHUB_STEP_SUMMARY"
-          echo "- [dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- [dakota-live-latest.iso-CHECKSUM](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Latest ISO URLs"
+            echo "- [dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso)"
+            echo "- [dakota-live-latest.iso-CHECKSUM](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Refresh README dakota table
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success' && steps.boot_verify.outcome == 'success' }}

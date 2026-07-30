@@ -271,9 +271,11 @@ jobs:
           steps.boot_verify.outcome == 'success'
         run: |
           LATEST_NAME="${{ steps.iso.outputs.latest_name }}"
-          echo "## Latest ISO URL (${{ matrix.variant }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "- [${LATEST_NAME}](https://projectbluefin.dev/${LATEST_NAME})" >> "$GITHUB_STEP_SUMMARY"
-          echo "- [${LATEST_NAME}-CHECKSUM](https://projectbluefin.dev/${LATEST_NAME}-CHECKSUM)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Latest ISO URL (${{ matrix.variant }})"
+            echo "- [${LATEST_NAME}](https://projectbluefin.dev/${LATEST_NAME})"
+            echo "- [${LATEST_NAME}-CHECKSUM](https://projectbluefin.dev/${LATEST_NAME}-CHECKSUM)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Boot verification status
         if: always() && steps.boot_verify.outcome == 'failure'

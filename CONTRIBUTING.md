@@ -69,3 +69,7 @@ just boot-iso-serial dakota
 - Use Conventional Commits (`docs:`, `fix:`, `feat:`, etc.)
 - In the PR description, say what you built locally and how you verified boot/install behavior
 - If you touch build logic or installer behavior, test the resulting ISO before pushing
+
+Use the shared [label workflow](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md):
+humans triage and approve, agents claim `status/queued`, and Clankers only
+transports Hive assignments. Templates are synchronized from bonedigger.

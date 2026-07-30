@@ -159,9 +159,10 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
         buildah copy "${SQUASH_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
         buildah run  "${SQUASH_CTR}" -- sh -c 'cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
-        printf '[storage]\ndriver = "vfs"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > "${WORK}/vfs-storage.conf"
-        buildah run  "${SQUASH_CTR}" -- mkdir -p /etc/containers
-        buildah copy "${SQUASH_CTR}" "${WORK}/vfs-storage.conf" /etc/containers/storage.conf
+        # The payload ships verbatim to installed systems — never bake a
+        # storage.conf into it (installed podman would inherit VFS storage).
+        # VFS config for reading the embedded store lives in the live env
+        # (configure-live.sh) and the import step below (CONTAINERS_STORAGE_CONF).
         buildah commit --squash "${SQUASH_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
         buildah rm "${SQUASH_CTR}"
 
@@ -208,7 +209,7 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         INJECT_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
         buildah copy "${INJECT_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
         buildah run  "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
-        
+
         OCI_ARCHIVE="${WORK}/payload.oci.tar"
         CS_STAGING="${WORK}/overlay-storage"
         STORAGE_CONF="${WORK}/st.conf"
