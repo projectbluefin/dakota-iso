@@ -1,9 +1,20 @@
 ---
-name: qa-policy
-description: "QA policies for dakota-iso. Mandatory rules for artifact freshness, test isolation, E2E verification, and what constitutes proof of a working build. Load before running any test or making any verification claim."
+id: qa-policy
+name: QA Policy
+one_line_purpose: Rules for test freshness, artifact isolation, and E2E verification evidence.
+entry_point: docs/skills/qa-policy.md
+category: test-authoring
+status: active
+tags:
+  - qa
+  - policy
+  - testing
+  - verification
+description: Mandatory rules for artifact freshness, test isolation, E2E verification, and proof of working builds for dakota-iso.
+version: "1.0"
+last_updated: "2026-07-30"
 metadata:
   type: policy
-  context7-sources: [/addyosmani/agent-skills]
 ---
 
 # QA Policy — Dakota ISO

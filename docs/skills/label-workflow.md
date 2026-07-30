@@ -1,6 +1,18 @@
 ---
-name: label-workflow
-description: "Label taxonomy, issue lifecycle (filed→triage→queued→claimed→done), and the agent/human handoff model for projectbluefin/dakota-iso. Use when understanding the issue lifecycle, triaging work, or finding agent-ready issues."
+id: label-workflow
+name: Label Workflow
+one_line_purpose: Issue lifecycle, label taxonomy, and human-agent handoff signals.
+entry_point: docs/skills/label-workflow.md
+category: meta
+status: active
+tags:
+  - workflow
+  - labels
+  - issue-tracking
+  - governance
+description: Label taxonomy, queue states, and lifecycle rules for issues and pull requests in dakota-iso.
+version: "1.0"
+last_updated: "2026-07-30"
 metadata:
   type: procedure
 ---

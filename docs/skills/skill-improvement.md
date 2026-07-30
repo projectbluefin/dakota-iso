@@ -1,6 +1,18 @@
 ---
-name: skill-improvement
-description: "The skill-improvement mandate — every agent session must produce a skill file update alongside the work. Use when completing a task and deciding whether to write a skill update, or when creating or updating a skill file."
+id: skill-improvement
+name: Skill Improvement
+one_line_purpose: Mandate and conventions for recording agent learnings into skill docs.
+entry_point: docs/skills/skill-improvement.md
+category: meta
+status: active
+tags:
+  - skills
+  - documentation
+  - continuous-learning
+  - process
+description: The skill-improvement mandate requiring every agent session to contribute learnings back into docs.
+version: "1.0"
+last_updated: "2026-07-30"
 metadata:
   type: procedure
 ---

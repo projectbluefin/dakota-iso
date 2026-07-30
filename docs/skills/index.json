@@ -1,0 +1,166 @@
+{
+  "generated_at": "2026-07-30",
+  "schema_version": "1.0",
+  "skills": [
+    {
+      "id": "ci-tooling",
+      "name": "CI Tooling",
+      "one_line_purpose": "Maintain GitHub Actions workflows, matrix builds, and R2 backup rotation.",
+      "entry_point": "docs/skills/ci-tooling.md",
+      "category": "ci-ops",
+      "status": "active",
+      "tags": [
+        "ci",
+        "github-actions",
+        "r2"
+      ],
+      "description": "Workflow definitions, runner environment, caching, and release automation for dakota-iso.",
+      "version": "1.0",
+      "last_updated": "2026-07-30",
+      "doc_type": "reference"
+    },
+    {
+      "id": "e2e-ci",
+      "name": "E2E CI",
+      "one_line_purpose": "Plain composefs install E2E gate, QEMU runner tuning, and boot failure diagnosis.",
+      "entry_point": "docs/skills/e2e-ci.md",
+      "category": "test-authoring",
+      "status": "active",
+      "tags": [
+        "e2e",
+        "ci",
+        "qemu",
+        "composefs",
+        "testing"
+      ],
+      "description": "Architecture, QEMU disk configuration, ENOSPC prevention, and live/installed boot verification for dakota-iso.",
+      "version": "1.0",
+      "last_updated": "2026-07-30",
+      "doc_type": "reference"
+    },
+    {
+      "id": "human-gates",
+      "name": "Human Decision Gates",
+      "one_line_purpose": "Define the four mandatory human gates (Design, Security, Breakage, Merge) for agents.",
+      "entry_point": "docs/skills/human-gates.md",
+      "category": "meta",
+      "status": "active",
+      "tags": [
+        "governance",
+        "human-gates",
+        "process"
+      ],
+      "description": "The four decision gates where AI agents must pause and request human maintainer review.",
+      "version": "1.0",
+      "last_updated": "2026-07-30",
+      "doc_type": "procedure"
+    },
+    {
+      "id": "install-failures",
+      "name": "Install Failures",
+      "one_line_purpose": "Root cause analysis and remedies for live ISO install failures.",
+      "entry_point": "docs/skills/install-failures.md",
+      "category": "test-authoring",
+      "status": "active",
+      "tags": [
+        "install",
+        "failures",
+        "troubleshooting",
+        "fisherman"
+      ],
+      "description": "Known failure modes for Dakota and Bluefin ISO installations, including ENOSPC, emergency shells, and bootloader missing.",
+      "version": "1.0",
+      "last_updated": "2026-07-30",
+      "doc_type": "reference"
+    },
+    {
+      "id": "label-workflow",
+      "name": "Label Workflow",
+      "one_line_purpose": "Issue lifecycle, label taxonomy, and human-agent handoff signals.",
+      "entry_point": "docs/skills/label-workflow.md",
+      "category": "meta",
+      "status": "active",
+      "tags": [
+        "workflow",
+        "labels",
+        "issue-tracking",
+        "governance"
+      ],
+      "description": "Label taxonomy, queue states, and lifecycle rules for issues and pull requests in dakota-iso.",
+      "version": "1.0",
+      "last_updated": "2026-07-30",
+      "doc_type": "procedure"
+    },
+    {
+      "id": "onboarding",
+      "name": "Onboarding",
+      "one_line_purpose": "Dev environment setup, prerequisites, and first build instructions.",
+      "entry_point": "docs/skills/onboarding.md",
+      "category": "meta",
+      "status": "active",
+      "tags": [
+        "onboarding",
+        "setup",
+        "quickstart"
+      ],
+      "description": "Developer environment setup, tool dependencies, first build loop, and key justfile variables for dakota-iso.",
+      "version": "1.0",
+      "last_updated": "2026-07-30",
+      "doc_type": "procedure"
+    },
+    {
+      "id": "qa-policy",
+      "name": "QA Policy",
+      "one_line_purpose": "Rules for test freshness, artifact isolation, and E2E verification evidence.",
+      "entry_point": "docs/skills/qa-policy.md",
+      "category": "test-authoring",
+      "status": "active",
+      "tags": [
+        "qa",
+        "policy",
+        "testing",
+        "verification"
+      ],
+      "description": "Mandatory rules for artifact freshness, test isolation, E2E verification, and proof of working builds for dakota-iso.",
+      "version": "1.0",
+      "last_updated": "2026-07-30",
+      "doc_type": "policy"
+    },
+    {
+      "id": "skill-drift",
+      "name": "Skill Drift",
+      "one_line_purpose": "How the skill-drift CI check works and path mapping for doc updates.",
+      "entry_point": "docs/skills/skill-drift.md",
+      "category": "ci-ops",
+      "status": "active",
+      "tags": [
+        "ci",
+        "skill-drift",
+        "documentation",
+        "validation"
+      ],
+      "description": "Operation of the skill-drift CI check, path-to-skill mappings, and satisfying update requirements for PRs.",
+      "version": "1.0",
+      "last_updated": "2026-07-30",
+      "doc_type": "procedure"
+    },
+    {
+      "id": "skill-improvement",
+      "name": "Skill Improvement",
+      "one_line_purpose": "Mandate and conventions for recording agent learnings into skill docs.",
+      "entry_point": "docs/skills/skill-improvement.md",
+      "category": "meta",
+      "status": "active",
+      "tags": [
+        "skills",
+        "documentation",
+        "continuous-learning",
+        "process"
+      ],
+      "description": "The skill-improvement mandate requiring every agent session to contribute learnings back into docs.",
+      "version": "1.0",
+      "last_updated": "2026-07-30",
+      "doc_type": "procedure"
+    }
+  ]
+}

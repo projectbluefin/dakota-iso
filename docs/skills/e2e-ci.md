@@ -1,9 +1,21 @@
 ---
-name: e2e-ci
-description: "E2E CI for dakota-iso plain composefs install gate. Load when debugging a boot failure, install failure, dracut emergency shell, ENOSPC during install, or sshd connectivity issues during QEMU testing. Use when adding a new E2E step or interpreting a CI failure."
+id: e2e-ci
+name: E2E CI
+one_line_purpose: Plain composefs install E2E gate, QEMU runner tuning, and boot failure diagnosis.
+entry_point: docs/skills/e2e-ci.md
+category: test-authoring
+status: active
+tags:
+  - e2e
+  - ci
+  - qemu
+  - composefs
+  - testing
+description: Architecture, QEMU disk configuration, ENOSPC prevention, and live/installed boot verification for dakota-iso.
+version: "1.0"
+last_updated: "2026-07-30"
 metadata:
   type: reference
-  context7-sources: []
 ---
 
 # E2E CI — Plain Install Test

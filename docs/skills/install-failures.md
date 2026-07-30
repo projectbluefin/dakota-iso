@@ -1,9 +1,20 @@
 ---
-name: install-failures
-description: >
-  Root causes for bluefin/dakota ISO install failures.
-  Use when: ISO boots but installer fails, installed system does not boot,
-  ENOSPC during install, bootloader missing after install, emergency shell on boot.
+id: install-failures
+name: Install Failures
+one_line_purpose: Root cause analysis and remedies for live ISO install failures.
+entry_point: docs/skills/install-failures.md
+category: test-authoring
+status: active
+tags:
+  - install
+  - failures
+  - troubleshooting
+  - fisherman
+description: Known failure modes for Dakota and Bluefin ISO installations, including ENOSPC, emergency shells, and bootloader missing.
+version: "1.0"
+last_updated: "2026-07-30"
+metadata:
+  type: reference
 ---
 
 # Install Failures

@@ -1,6 +1,17 @@
 ---
-name: onboarding
-description: "Verified setup commands, build prerequisites, and PR workflow for projectbluefin/dakota-iso. Use when setting up a new development environment or writing contributor documentation."
+id: onboarding
+name: Onboarding
+one_line_purpose: Dev environment setup, prerequisites, and first build instructions.
+entry_point: docs/skills/onboarding.md
+category: meta
+status: active
+tags:
+  - onboarding
+  - setup
+  - quickstart
+description: Developer environment setup, tool dependencies, first build loop, and key justfile variables for dakota-iso.
+version: "1.0"
+last_updated: "2026-07-30"
 metadata:
   type: procedure
 ---

@@ -1,6 +1,17 @@
 ---
-name: human-gates
-description: "The four human decision gates — Design, Security, Breakage, and Merge — when an agent must stop and request human input. Use when uncertain whether a change requires human review, or to verify evidence requirements before opening a PR."
+id: human-gates
+name: Human Decision Gates
+one_line_purpose: Define the four mandatory human gates (Design, Security, Breakage, Merge) for agents.
+entry_point: docs/skills/human-gates.md
+category: meta
+status: active
+tags:
+  - governance
+  - human-gates
+  - process
+description: The four decision gates where AI agents must pause and request human maintainer review.
+version: "1.0"
+last_updated: "2026-07-30"
 metadata:
   type: procedure
 ---

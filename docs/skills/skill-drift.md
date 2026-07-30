@@ -1,6 +1,18 @@
 ---
-name: skill-drift
-description: "Covers how the skill-drift CI check works — when it fires, what it validates, how to write a satisfying skill update, and how to request a waiver. Load when the skill-drift check is failing on a PR or when deciding whether a change requires a skill file update."
+id: skill-drift
+name: Skill Drift
+one_line_purpose: How the skill-drift CI check works and path mapping for doc updates.
+entry_point: docs/skills/skill-drift.md
+category: ci-ops
+status: active
+tags:
+  - ci
+  - skill-drift
+  - documentation
+  - validation
+description: Operation of the skill-drift CI check, path-to-skill mappings, and satisfying update requirements for PRs.
+version: "1.0"
+last_updated: "2026-07-30"
 metadata:
   type: procedure
 ---

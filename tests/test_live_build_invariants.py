@@ -27,6 +27,7 @@ Covered invariants
 
 import re
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -942,3 +943,22 @@ class TestPayloadPristine(unittest.TestCase):
                     "the embed step (CONTAINERS_STORAGE_CONF), or the install "
                     "container (fisherman bind-mount) instead.",
                 )
+
+
+class TestSkillCatalogUpToDate(unittest.TestCase):
+    """The generated docs/skills/index.json and index.md must be up to date."""
+
+    def test_skill_catalog_is_fresh(self):
+        script = REPO / "scripts" / "generate_skill_index.py"
+        self.assertTrue(script.exists(), f"Missing {script}")
+        res = subprocess.run(
+            [sys.executable, str(script), "--check"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            res.returncode,
+            0,
+            f"Skill catalog check failed:\n{res.stderr}\n"
+            "Run `python3 scripts/generate_skill_index.py --write` to update.",
+        )

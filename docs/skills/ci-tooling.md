@@ -1,10 +1,19 @@
 ---
-name: ci-tooling
-description: >
-  ISO publish CI patterns for dakota-iso. Use when working on
-  `.github/workflows/build-iso.yml` or `build-iso-bluefin.yml`,
-  adding a variant to the matrix, changing R2 upload logic,
-  or debugging backup rotation or README auto-refresh.
+id: ci-tooling
+name: CI Tooling
+one_line_purpose: Maintain GitHub Actions workflows, matrix builds, and R2 backup rotation.
+entry_point: docs/skills/ci-tooling.md
+category: ci-ops
+status: active
+tags:
+  - ci
+  - github-actions
+  - r2
+description: Workflow definitions, runner environment, caching, and release automation for dakota-iso.
+version: "1.0"
+last_updated: "2026-07-30"
+metadata:
+  type: reference
 ---
 
 # CI Tooling — ISO Publish Workflows
