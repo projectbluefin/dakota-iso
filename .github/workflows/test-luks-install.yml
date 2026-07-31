@@ -46,7 +46,7 @@ jobs:
           tool: just
 
       - name: Install test dependencies
-        run: pip install pytest
+        run: pip install pytest PyYAML jsonschema
 
       - name: Run unit tests
         run: just test

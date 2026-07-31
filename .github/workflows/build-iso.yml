@@ -47,13 +47,19 @@ jobs:
       # dakota:stable and rebases on first bootc upgrade automatically.
       - name: Pull offline payload images
         run: |
-          sudo podman pull ghcr.io/projectbluefin/dakota-nvidia:stable
+          IMAGE=ghcr.io/projectbluefin/dakota-nvidia:stable
+          if sudo podman image exists "$IMAGE"; then
+            sudo podman rmi "$IMAGE"
+          fi
+          sudo podman pull "$IMAGE"
 
       # Build only the NVIDIA live container — it's the one that boots live.
       # Non-NVIDIA is available for install via the offline store.
       - name: Build live container — dakota-nvidia
         run: |
           sudo podman build \
+            --pull=always \
+            --no-cache \
             --cap-add sys_admin --security-opt label=disable \
             --layers \
             --build-arg TARGET=dakota-nvidia \
@@ -380,6 +386,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Refresh README dakota table
+        continue-on-error: true
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success' && steps.boot_verify.outcome == 'success' }}
         env:
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -417,7 +424,9 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "docs(readme): refresh dakota latest build table"
             git pull --rebase origin main
-            git push origin HEAD:main
+            if ! git push origin HEAD:main; then
+              echo "::warning::README refresh could not push to protected main; R2 publication already completed."
+            fi
           fi
 
       - name: Upload ISO artifact

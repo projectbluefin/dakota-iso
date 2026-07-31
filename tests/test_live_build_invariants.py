@@ -517,6 +517,70 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             "Dakota boot verification must run before the publish step.",
         )
 
+    def test_dakota_readme_refresh_is_advisory_after_r2_upload(self):
+        """README branch protection must not turn a published ISO run red."""
+        content = BUILD_ISO_WORKFLOW.read_text()
+        upload_pos = content.index("- name: Upload ISO to Cloudflare R2")
+        refresh_pos = content.index("- name: Refresh README dakota table")
+        refresh_block = content[refresh_pos:].split("\n      - name:", 1)[0]
+
+        self.assertLess(
+            upload_pos,
+            refresh_pos,
+            "README refresh must run only after the R2 upload step.",
+        )
+        self.assertIn(
+            "continue-on-error: true",
+            refresh_block,
+            "README refresh must not fail an otherwise successful R2 publish.",
+        )
+        self.assertIn(
+            "R2 publication already completed",
+            refresh_block,
+            "README push rejection must explain that the ISO was already published.",
+        )
+
+    def test_dakota_publish_uses_fresh_stable_payload_and_live_build(self):
+        """The publish workflow must not reuse stale Dakota images or build layers."""
+        content = BUILD_ISO_WORKFLOW.read_text()
+        pull_block = content.split("- name: Pull offline payload images", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        build_block = content.split("- name: Build live container — dakota-nvidia", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+
+        self.assertIn(
+            'IMAGE=ghcr.io/projectbluefin/dakota-nvidia:stable',
+            pull_block,
+            "Dakota publish must identify the current stable NVIDIA payload.",
+        )
+        self.assertIn(
+            'podman image exists "$IMAGE"',
+            pull_block,
+            "Dakota publish must detect a stale local payload tag before pulling.",
+        )
+        self.assertIn(
+            'podman rmi "$IMAGE"',
+            pull_block,
+            "Dakota publish must remove a stale local payload tag before pulling.",
+        )
+        self.assertIn(
+            'podman pull "$IMAGE"',
+            pull_block,
+            "Dakota publish must pull the current stable NVIDIA payload.",
+        )
+        self.assertIn(
+            "--pull=always",
+            build_block,
+            "Dakota live-container builds must refresh their base image.",
+        )
+        self.assertIn(
+            "--no-cache",
+            build_block,
+            "Dakota live-container builds must not reuse stale build layers.",
+        )
+
     def test_build_iso_bluefin_upload_waits_for_boot_verification(self):
         """Bluefin uploads must wait for the smoke-boot gate to pass."""
         content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
