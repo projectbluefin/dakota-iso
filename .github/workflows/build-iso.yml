@@ -47,7 +47,11 @@ jobs:
       # dakota:stable and rebases on first bootc upgrade automatically.
       - name: Pull offline payload images
         run: |
-          sudo podman pull --policy always ghcr.io/projectbluefin/dakota-nvidia:stable
+          IMAGE=ghcr.io/projectbluefin/dakota-nvidia:stable
+          if sudo podman image exists "$IMAGE"; then
+            sudo podman rmi "$IMAGE"
+          fi
+          sudo podman pull "$IMAGE"
 
       # Build only the NVIDIA live container — it's the one that boots live.
       # Non-NVIDIA is available for install via the offline store.

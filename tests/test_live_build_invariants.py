@@ -551,7 +551,22 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
         )[0]
 
         self.assertIn(
-            "podman pull --policy always ghcr.io/projectbluefin/dakota-nvidia:stable",
+            'IMAGE=ghcr.io/projectbluefin/dakota-nvidia:stable',
+            pull_block,
+            "Dakota publish must identify the current stable NVIDIA payload.",
+        )
+        self.assertIn(
+            'podman image exists "$IMAGE"',
+            pull_block,
+            "Dakota publish must detect a stale local payload tag before pulling.",
+        )
+        self.assertIn(
+            'podman rmi "$IMAGE"',
+            pull_block,
+            "Dakota publish must remove a stale local payload tag before pulling.",
+        )
+        self.assertIn(
+            'podman pull "$IMAGE"',
             pull_block,
             "Dakota publish must pull the current stable NVIDIA payload.",
         )

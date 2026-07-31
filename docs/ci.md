@@ -44,7 +44,7 @@ gh workflow run build-iso-bluefin.yml --ref main
 1. **Free disk space** — `ublue-os/remove-unwanted-software` reclaims ~119 GB at `/var/iso-build`
 2. **Install deps** — `apt-get install podman buildah skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
-4. **Pull payload image** — always pulls the current `dakota-nvidia:stable` (the unified ISO base)
+4. **Pull payload image** — removes any local `dakota-nvidia:stable` tag, then pulls the current unified ISO base
 5. **Build live container** — `podman build --pull=always --no-cache live/ --build-arg TARGET=dakota-nvidia` → `localhost/dakota-nvidia-live:latest`
 6. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `<target>.rootfs.sfs` + `<target>-boot.tar` (~4.5 GB dakota, ~6 GB bluefin/lts-hwe)
 7. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (no `--store` flag — OCI already embedded in squashfs as VFS)
