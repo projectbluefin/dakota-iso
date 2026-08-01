@@ -177,3 +177,10 @@ Resolve the intended tag before pinning — never hand-write a SHA:
 ```bash
 gh api repos/actions/setup-go/git/ref/tags/v5.3.0 -q .object.sha
 ```
+
+**Automated since 2026-08-01:** `TestActionPinsResolve` in
+`tests/test_live_build_invariants.py` runs that sweep on every PR — it resolves each
+pinned SHA against the GitHub API, fails with the offending file name when one does
+not exist, and skips cleanly when offline or unauthenticated. `test.yml` passes
+`GITHUB_TOKEN` to pytest; without it the shared runner IP is rate limited and the
+check would silently skip.

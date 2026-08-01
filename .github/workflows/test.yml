@@ -24,3 +24,8 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v
+        env:
+          # Lets TestActionPinsResolve verify pinned action SHAs against the
+          # GitHub API. Without a token the shared runner IP is rate limited and
+          # the check silently skips.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
