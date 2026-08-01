@@ -101,12 +101,18 @@ jobs:
         with:
           go-version: '1.23'
 
-      - name: Clone patched fisherman
+      # Track fisherman's active line. This used to pin the June branch
+      # fix/overlay-driver-for-ostree-bootc-install, which froze the gate on a
+      # six-week-old installer: every fisherman fix merged since — including the
+      # ENOSPC scratch-cache fix that this gate should have caught — was invisible
+      # to E2E. fisherman's default branch is `dev`, but `main` is the active line.
+      - name: Clone fisherman (main — the branch installer fixes land on)
         run: |
           git clone https://github.com/projectbluefin/fisherman.git \
-            --branch fix/overlay-driver-for-ostree-bootc-install \
+            --branch main \
             --depth 1 \
             /tmp/fisherman
+          git -C /tmp/fisherman --no-pager log --oneline -1
 
       - name: Build ISO
         id: build
