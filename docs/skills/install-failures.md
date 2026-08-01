@@ -195,6 +195,39 @@ chasing the reported step.
 failure even with the fix in place, because the deployed image alone is ~9 GB and
 Flatpaks add several more.
 
+### How a fisherman fix reaches a dakota ISO
+
+Fixing fisherman is not shipping it. The chain has three hops, and each one can be
+stale independently:
+
+```
+projectbluefin/fisherman  main
+        │  git submodule  (bootc-installer/fisherman, tracks branch `dev`)
+        ▼
+projectbluefin/bootc-installer  →  org.bootcinstaller.Installer flatpak
+        │  configure-live.sh installs the flatpak into the live squashfs
+        ▼
+dakota-iso  →  dakota-live-latest.iso
+```
+
+Check where a given fix actually is before telling anyone it is fixed:
+
+```bash
+# What fisherman commit does the shipped installer build from?
+gh api repos/projectbluefin/bootc-installer/contents/fisherman -q .sha
+
+# How far behind fisherman main is that pin?
+gh api repos/projectbluefin/fisherman/compare/<pin>...main -q '{ahead:.ahead_by,behind:.behind_by}'
+```
+
+As of 2026-08-01 that pin was a 2026-06-23 commit — 27 behind `main`, and diverged.
+Note also that fisherman's *default* branch is `dev` while the active line is `main`
+(`main` was 25 ahead of `dev`), so a PR opened with the default base can land on the
+branch nobody ships. **Target `main`, then check the submodule pin.**
+
+Bumping the submodule pulls in every unrelated installer change since the last bump,
+so it is a maintainer decision — see [`human-gates.md`](human-gates.md), Design/Breakage.
+
 ---
 
 ## Reading an installer log out of a running VM without SSH (2026-08-01)
