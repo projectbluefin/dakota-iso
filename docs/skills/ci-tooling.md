@@ -213,26 +213,40 @@ lands on the branch nobody ships. Target `main`.
 
 ---
 
-## The dev installer channel moved off `latest-dev` (2026-08-01)
+## Rolling installer release tags are impossible now (2026-08-01)
 
 `live/src/install-flatpaks.sh` fetches the installer Flatpak from a
-`projectbluefin/bootc-installer` **release asset**, not from a branch:
+`projectbluefin/bootc-installer` **release asset**, not from a branch. Both channels
+now use the same versioned-release redirect and differ only in filename:
 
 | channel | URL |
 |---|---|
 | stable | `releases/latest/download/org.bootcinstaller.Installer.flatpak` |
-| dev | `releases/download/dev-rolling/org.bootcinstaller.Installer.Devel.flatpak` |
+| dev | `releases/latest/download/org.bootcinstaller.Installer.Devel.flatpak` |
 
-The dev tag was `latest-dev` until bootc-installer's publishing workflow — which
-deleted and re-created that release on every push to `dev` — met the
-immutable-release ruleset. A tag that has carried a release can never be created
-again, so the delete succeeded, the re-create failed with
-`Cannot create ref due to creations being restricted`, and `latest-dev` became
-permanently unusable. Fixed in
-[bootc-installer#201](https://github.com/projectbluefin/bootc-installer/pull/201);
-the tag is now `dev-rolling` and nothing deletes it.
+The dev channel used to track a rolling tag (`latest-dev`). That model is dead under
+GitHub's immutable-release ruleset, which enforces two things at once:
 
-**Why this is worth a test:** the download failure is silent. `install-flatpaks.sh`
-falls back to the upstream `tuna-os` bundle on a 404, so a broken dev channel does
-not fail the ISO build — it ships a *different project's installer*.
-`TestInstallerChannelURLs` fails the build if either URL points at a dead tag.
+- a published release accepts no new or changed assets —
+  `HTTP 422: Cannot upload assets to an immutable release`
+- deleting a release to start over **permanently burns the tag name** —
+  `HTTP 422: Cannot create ref due to creations being restricted`
+
+So a tag can never be kept current, and the delete-then-recreate workaround is a
+one-way door. `latest-dev` was destroyed this way, and its replacement `dev-rolling`
+was then created empty and immediately became unwritable. Both are gone for good.
+The only pattern immutability permits is **create a new release together with its
+assets**, which is exactly what versioned `v*` releases do — and every one of them
+carries both bundles.
+
+**Why this needs a test:** the failure is silent. `install-flatpaks.sh` falls back to
+the upstream `tuna-os` bundle on a 404, so a broken channel does not fail the ISO
+build — it ships *a different project's installer*. `TestInstallerChannelURLs` fails
+the build if either URL names a known-dead tag, and requires both channels to use the
+versioned-release redirect.
+
+**Cutting a release:** push a `v*` tag; the Flatpak workflow builds both bundles and
+creates the release with them attached. Do not pre-create the release — an empty
+published release is immutable and can never receive its assets. Note that a version
+number whose release was once deleted is banned forever: `v3.0.15` could not be
+created, so the ENOSPC fix shipped as `v3.0.16`.

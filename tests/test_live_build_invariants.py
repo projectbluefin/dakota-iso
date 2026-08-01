@@ -1191,7 +1191,8 @@ class TestInstallerChannelURLs(unittest.TestCase):
     """
 
     INSTALL_FLATPAKS = REPO / "live" / "src" / "install-flatpaks.sh"
-    DEAD_TAGS = ("latest-dev", "latest-stable")
+    INSTALLER_REPO_PATH = "${INSTALLER_REPO}"
+    DEAD_TAGS = ("latest-dev", "latest-stable", "dev-rolling")
 
     def test_installer_urls_avoid_dead_release_tags(self):
         text = self.INSTALL_FLATPAKS.read_text(encoding="utf-8")
@@ -1209,11 +1210,23 @@ class TestInstallerChannelURLs(unittest.TestCase):
                     "tuna-os bundle.",
                 )
 
-    def test_dev_channel_uses_the_current_rolling_tag(self):
+    def test_both_channels_use_the_versioned_release_redirect(self):
+        """Only a release created together with its assets survives immutability.
+
+        A published release accepts no new assets, and deleting one to start
+        over permanently burns the tag name, so no rolling tag can be kept
+        current. Versioned releases carry both bundles and are created with
+        them, so both channels take the /releases/latest/ redirect and differ
+        only in filename.
+        """
         text = self.INSTALL_FLATPAKS.read_text(encoding="utf-8")
-        self.assertIn(
-            "releases/download/dev-rolling/",
-            text,
-            "the dev channel must fetch the dev-rolling pre-release from "
-            "projectbluefin/bootc-installer",
-        )
+        primary = [
+            ln.strip() for ln in text.splitlines() if ln.strip().startswith("PRIMARY_URL=")
+        ]
+        self.assertTrue(primary, "no PRIMARY_URL assignments found")
+        for line in primary:
+            self.assertIn(
+                f"/{self.INSTALLER_REPO_PATH}/releases/latest/download/",
+                line,
+                f"{line} must use the versioned-release redirect",
+            )

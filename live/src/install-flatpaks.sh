@@ -37,7 +37,7 @@ flatpak remote-add --system --if-not-exists flathub \
 # bootc-installer bundle
 # INSTALLER_CHANNEL controls which release to pull from:
 #   stable (default) → GitHub "latest" release (non-pre-release)
-#   dev              → dev-rolling pre-release (tracks bootc-installer's dev branch)
+#   dev              → Devel-branded bundle from the latest versioned release
 # Primary source: projectbluefin/bootc-installer (Project Bluefin's fork).
 # Fallback: tuna-os/tuna-installer (upstream) if projectbluefin assets are unavailable.
 # v2.6.1 adds nvidia_imgref GPU auto-detection support.
@@ -46,13 +46,17 @@ FALLBACK_REPO="tuna-os/tuna-installer"
 FLATPAK_FILENAME="org.bootcinstaller.Installer.flatpak"
 if [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]]; then
     FLATPAK_FILENAME="org.bootcinstaller.Installer.Devel.flatpak"
-    # projectbluefin/bootc-installer uses tag "dev-rolling" for dev builds.
-    # It was "latest-dev" until 2026-08-01, when the publishing workflow deleted
-    # that release and the immutable-release ruleset refused to re-create the tag.
-    # A tag that has carried a release can never be recreated, so latest-dev is
-    # permanently dead and this URL must never point at it again.
+    # Rolling dev tags are not viable under GitHub's immutable-release ruleset:
+    # a published release accepts no new assets ("Cannot upload assets to an
+    # immutable release"), and deleting it to start over permanently burns the
+    # tag name ("Cannot create ref due to creations being restricted"). Both
+    # "latest-dev" and "dev-rolling" were lost that way on 2026-08-01.
+    #
+    # Every versioned release carries BOTH bundles, so take the Devel one from
+    # the same /releases/latest/ redirect the stable channel uses. It is created
+    # together with its assets, which is the only pattern immutability allows.
     # tuna-os/tuna-installer uses tag "continuous-dev" — different naming convention.
-    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/download/dev-rolling/${FLATPAK_FILENAME}"
+    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
     FALLBACK_URL="https://github.com/${FALLBACK_REPO}/releases/download/continuous-dev/${FLATPAK_FILENAME}"
 else
     # Use GitHub's /releases/latest/download/ redirect — always resolves to the
