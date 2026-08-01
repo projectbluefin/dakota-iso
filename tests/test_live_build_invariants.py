@@ -1174,3 +1174,46 @@ class TestE2EFishermanRef(unittest.TestCase):
             checked, len(self.E2E_WORKFLOWS),
             "not every E2E workflow was checked",
         )
+
+
+class TestInstallerChannelURLs(unittest.TestCase):
+    """The dev channel must not point at the dead `latest-dev` release tag.
+
+    bootc-installer's publishing workflow used to delete the `latest-dev` release
+    and re-create it on every dev push. Under the immutable-release ruleset that
+    is a one-way door: a tag that has carried a release can never be created
+    again, so on 2026-08-01 the delete succeeded, the re-create failed, and the
+    tag became permanently unusable.
+
+    The failure mode is silent and dangerous — `install-flatpaks.sh` falls back
+    to the upstream `tuna-os` bundle on a 404, so the live ISO ships a different
+    project's installer instead of failing the build.
+    """
+
+    INSTALL_FLATPAKS = REPO / "live" / "src" / "install-flatpaks.sh"
+    DEAD_TAGS = ("latest-dev", "latest-stable")
+
+    def test_installer_urls_avoid_dead_release_tags(self):
+        text = self.INSTALL_FLATPAKS.read_text(encoding="utf-8")
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped.startswith(("PRIMARY_URL=", "FALLBACK_URL=")):
+                continue
+            for dead in self.DEAD_TAGS:
+                self.assertNotIn(
+                    f"/download/{dead}/",
+                    stripped,
+                    f"{self.INSTALL_FLATPAKS.name}:{line_no} points at the dead "
+                    f"release tag {dead!r}. That tag can never be re-created, so the "
+                    "download 404s and the script silently falls back to the upstream "
+                    "tuna-os bundle.",
+                )
+
+    def test_dev_channel_uses_the_current_rolling_tag(self):
+        text = self.INSTALL_FLATPAKS.read_text(encoding="utf-8")
+        self.assertIn(
+            "releases/download/dev-rolling/",
+            text,
+            "the dev channel must fetch the dev-rolling pre-release from "
+            "projectbluefin/bootc-installer",
+        )

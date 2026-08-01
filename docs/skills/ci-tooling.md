@@ -10,7 +10,7 @@ tags:
   - github-actions
   - r2
 description: Workflow definitions, runner environment, caching, and release automation for dakota-iso.
-version: "1.2"
+version: "1.3"
 last_updated: "2026-08-01"
 metadata:
   type: reference
@@ -210,3 +210,29 @@ build if either workflow clones anything other than a long-lived branch (`main`/
 **Branch note:** fisherman's *default* branch is `dev`, but `main` is the active line
 (`main` was 25 commits ahead of `dev` on 2026-08-01). A PR opened with the default base
 lands on the branch nobody ships. Target `main`.
+
+---
+
+## The dev installer channel moved off `latest-dev` (2026-08-01)
+
+`live/src/install-flatpaks.sh` fetches the installer Flatpak from a
+`projectbluefin/bootc-installer` **release asset**, not from a branch:
+
+| channel | URL |
+|---|---|
+| stable | `releases/latest/download/org.bootcinstaller.Installer.flatpak` |
+| dev | `releases/download/dev-rolling/org.bootcinstaller.Installer.Devel.flatpak` |
+
+The dev tag was `latest-dev` until bootc-installer's publishing workflow — which
+deleted and re-created that release on every push to `dev` — met the
+immutable-release ruleset. A tag that has carried a release can never be created
+again, so the delete succeeded, the re-create failed with
+`Cannot create ref due to creations being restricted`, and `latest-dev` became
+permanently unusable. Fixed in
+[bootc-installer#201](https://github.com/projectbluefin/bootc-installer/pull/201);
+the tag is now `dev-rolling` and nothing deletes it.
+
+**Why this is worth a test:** the download failure is silent. `install-flatpaks.sh`
+falls back to the upstream `tuna-os` bundle on a 404, so a broken dev channel does
+not fail the ISO build — it ships a *different project's installer*.
+`TestInstallerChannelURLs` fails the build if either URL points at a dead tag.
