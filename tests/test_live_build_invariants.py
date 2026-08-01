@@ -36,6 +36,7 @@ LIVE_BUILD_ISO = REPO / "live" / "src" / "build-iso.sh"
 DAKOTA_BUILD_ISO = REPO / "dakota" / "src" / "build-iso.sh"
 CONTAINERFILE = REPO / "live" / "Containerfile"
 CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
+GUI_E2E_JUSTFILE = REPO / "justfile"
 BUILD_ISO_WORKFLOW = REPO / ".github" / "workflows" / "build-iso.yml"
 BUILD_ISO_BLUEFIN_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-bluefin.yml"
 TEST_LUKS_WORKFLOW = REPO / ".github" / "workflows" / "test-luks-install.yml"
@@ -361,6 +362,204 @@ class TestConfigureLiveSyntax(unittest.TestCase):
             "on Fedora Silverblue /usr/local is a dangling symlink to "
             "/var/usrlocal which doesn't exist at container build time. "
             "Use /usr/share/applications/ instead.",
+        )
+
+    def test_auto_launched_installer_enables_atspi_only_in_debug_builds(self):
+        """Production ISOs must not receive GUI-test AT-SPI forcing."""
+        content = CONFIGURE_LIVE.read_text()
+        debug_guard = 'if [[ "${DEBUG:-0}" == "1" ]]; then'
+
+        for marker in (
+            "--env=GTK_MODULES=atk-bridge",
+            "toolkit-accessibility=true",
+            "/org/gnome/desktop/interface/toolkit-accessibility",
+        ):
+            self.assertEqual(
+                content.count(marker),
+                1,
+                f"{marker!r} must occur exactly once so it cannot leak to production.",
+            )
+            marker_index = content.index(marker)
+            guard_index = content.rfind(debug_guard, 0, marker_index)
+            self.assertNotEqual(
+                guard_index,
+                -1,
+                f"{marker!r} must be guarded by DEBUG=1.",
+            )
+            guard_end = content.find("\nfi", guard_index)
+            self.assertGreater(
+                guard_end,
+                marker_index,
+                f"{marker!r} must remain inside its DEBUG=1 guard.",
+            )
+        self.assertIn(
+            "Exec=flatpak run ${INSTALLER_ATSPI_ARGS[*]} "
+            "--env=BOOTC_CUSTOM_RECIPE=",
+            content,
+            "The debug-only ATK bridge argument must reach the auto-launch "
+            "desktop entry, not only the dock shortcut.",
+        )
+        self.assertEqual(
+            content.count(
+                "Exec=flatpak run ${INSTALLER_ATSPI_ARGS[*]} "
+                "--env=BOOTC_CUSTOM_RECIPE="
+            ),
+            2,
+            "Both the auto-launch and matching dock entry must retain the "
+            "debug-only ATK bridge argument.",
+        )
+
+
+class TestAtspiDriverRuntime(unittest.TestCase):
+    """The driver must use a binding the GNOME OS live image already provides."""
+
+    def test_driver_uses_the_gnome_os_gobject_atspi_binding(self):
+        """Do not add a cross-distro pyatspi package to the final image."""
+        content = (REPO / "scripts" / "atspi-installer-driver.py").read_text()
+        self.assertIn(
+            'gi.require_version("Atspi", "2.0")',
+            content,
+            "The driver must select the installed AT-SPI introspection namespace.",
+        )
+        self.assertIn(
+            "from gi.repository import Atspi",
+            content,
+            "The driver must use GNOME OS's PyGObject binding.",
+        )
+        self.assertIn(
+            "if atspi.init() not in (0, 1):",
+            content,
+            "The driver must initialize the AT-SPI accessibility bus before "
+            "requesting the desktop tree.",
+        )
+        self.assertNotIn(
+            "import pyatspi",
+            content,
+            "The driver must not rely on an unprovisioned pyatspi package.",
+        )
+        self.assertIn(
+            "node.get_action()",
+            content,
+            "The driver must use the current GObject-introspection action API.",
+        )
+        self.assertNotIn(
+            "queryAction",
+            content,
+            "The pyatspi-only action API is unavailable through gi.repository.Atspi.",
+        )
+
+    def test_gui_e2e_checks_the_driver_dependency_in_the_debug_iso(self):
+        """The GUI test must import its AT-SPI binding in the guest before UI actions."""
+        content = GUI_E2E_JUSTFILE.read_text()
+        recipe_start = content.index("gui-e2e target:")
+        recipe_end = content.index("\n# Boot the live ISO", recipe_start)
+        gui_e2e = content[recipe_start:recipe_end]
+        debug_iso_check = '[[ -f "{{output_dir}}/{{target}}-debug-live.iso" ]]'
+        scratch_prepare = 'echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."'
+        scratch_format = "mkfs.ext4 -F /dev/vdb >/dev/null"
+        scratch_unmount = "umount /var/tmp 2>/dev/null || true"
+        scratch_mount = "mount /dev/vdb /var/tmp"
+        dependency_check = "--check-dependencies"
+        driver_run = "--timeout 2700"
+        driver_status = 'DRIVER_STATUS="${PIPESTATUS[0]}"'
+        installer_log_collection = '} > "${INSTALLER_LOG}"'
+        driver_failure_exit = 'exit "${DRIVER_STATUS}"'
+        bls_patch = 'echo "Patching BLS entries to add serial console..."'
+
+        self.assertIn(
+            debug_iso_check,
+            gui_e2e,
+            "gui-e2e must reject a production ISO before it starts QEMU.",
+        )
+        self.assertIn(
+            dependency_check,
+            gui_e2e,
+            "gui-e2e must import the driver's AT-SPI binding in the debug guest.",
+        )
+        self.assertIn(
+            scratch_format,
+            gui_e2e,
+            "gui-e2e must format its dedicated scratch disk in the debug guest.",
+        )
+        self.assertIn(
+            scratch_unmount,
+            gui_e2e,
+            "gui-e2e must replace the live image's /var/tmp mount safely.",
+        )
+        self.assertIn(
+            scratch_mount,
+            gui_e2e,
+            "gui-e2e must mount the formatted scratch disk over /var/tmp.",
+        )
+        self.assertLess(
+            gui_e2e.index(scratch_prepare),
+            gui_e2e.index(scratch_format),
+            "gui-e2e must format /dev/vdb after identifying scratch preparation.",
+        )
+        self.assertLess(
+            gui_e2e.index(scratch_format),
+            gui_e2e.index(scratch_unmount),
+            "gui-e2e must format the scratch disk before replacing /var/tmp.",
+        )
+        self.assertLess(
+            gui_e2e.index(scratch_unmount),
+            gui_e2e.index(scratch_mount),
+            "gui-e2e must unmount the live /var/tmp before mounting /dev/vdb.",
+        )
+        self.assertLess(
+            gui_e2e.index(scratch_mount),
+            gui_e2e.index(dependency_check),
+            "gui-e2e must prepare disk-backed /var/tmp before the AT-SPI probe.",
+        )
+        self.assertLess(
+            gui_e2e.index(scratch_prepare),
+            gui_e2e.index(driver_run),
+            "gui-e2e must prepare disk-backed /var/tmp before the AT-SPI driver.",
+        )
+        self.assertLess(
+            gui_e2e.index(dependency_check),
+            gui_e2e.index(driver_run),
+            "The debug ISO dependency check must run before the destructive UI driver.",
+        )
+        self.assertIn(
+            driver_status,
+            gui_e2e,
+            "gui-e2e must preserve the AT-SPI driver's status from its tee pipeline.",
+        )
+        self.assertIn(
+            installer_log_collection,
+            gui_e2e,
+            "gui-e2e must collect installer logs after the AT-SPI driver exits.",
+        )
+        self.assertIn(
+            driver_failure_exit,
+            gui_e2e,
+            "gui-e2e must return the original driver failure after log collection.",
+        )
+        self.assertLess(
+            gui_e2e.index("set +e"),
+            gui_e2e.index(driver_run),
+            "gui-e2e must temporarily disable errexit around the driver pipeline.",
+        )
+        self.assertLess(
+            gui_e2e.index(driver_run),
+            gui_e2e.index(driver_status),
+            "gui-e2e must capture the driver status immediately after its pipeline.",
+        )
+        self.assertLess(
+            gui_e2e.index(driver_status),
+            gui_e2e.index(installer_log_collection),
+            "gui-e2e must collect installer logs after recording driver failure.",
+        )
+        self.assertLess(
+            gui_e2e.index(installer_log_collection),
+            gui_e2e.index(driver_failure_exit),
+            "gui-e2e must collect installer logs before returning driver failure.",
+        )
+        self.assertLess(
+            gui_e2e.index(driver_failure_exit),
+            gui_e2e.index(bls_patch),
+            "gui-e2e must not attempt BLS or boot validation after driver failure.",
         )
 
     def test_configure_live_binds_var_home_while_creating_liveuser(self):

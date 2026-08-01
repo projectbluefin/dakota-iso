@@ -1012,6 +1012,85 @@ plain-test-qemu target:
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
          plain-verify-qemu {{target}}
 
+# Drive the already auto-launched graphical installer in a fresh debug ISO.
+# Expects output/<target>-debug-live.iso; unlike plain-e2e, this does not build it.
+gui-e2e target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    DRIVER_LOG="{{plain-qemu-serial-live}}.atspi.log"
+    INSTALLER_LOG="{{output_dir}}/{{target}}-gui-installer-logs.txt"
+    [[ -f "{{output_dir}}/{{target}}-debug-live.iso" ]] || {
+        echo "No debug ISO found — run: just debug=1 iso-sd-boot {{target}}" >&2
+        exit 1
+    }
+    rm -f "{{plain-qemu-disk}}" "{{plain-scratch-disk}}" \
+           "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
+           "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}" \
+           "${DRIVER_LOG}" "${INSTALLER_LOG}"
+    just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
+         plain-qemu-monitor-live={{plain-qemu-monitor-live}} \
+         plain-qemu-serial-live={{plain-qemu-serial-live}} \
+         plain-qemu-ssh-port={{plain-qemu-ssh-port}} \
+         plain-boot-qemu-live {{target}}
+    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
+    SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}}"
+    SCP="sshpass -p live scp $SSH_OPTS -P {{plain-qemu-ssh-port}}"
+    echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
+    $SSH 'sudo bash -c "
+        mkfs.ext4 -F /dev/vdb >/dev/null
+        umount /var/tmp 2>/dev/null || true
+        mount /dev/vdb /var/tmp
+        echo \"/var/tmp is now disk-backed on /dev/vdb\"
+    "'
+    $SCP scripts/atspi-installer-driver.py liveuser@127.0.0.1:/home/liveuser/atspi-installer-driver.py
+    $SSH 'XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus python3 /home/liveuser/atspi-installer-driver.py --check-dependencies'
+    set +e
+    $SSH 'XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus python3 /home/liveuser/atspi-installer-driver.py --disk /dev/vda --timeout 2700' 2>&1 | tee "${DRIVER_LOG}"
+    DRIVER_STATUS="${PIPESTATUS[0]}"
+    set -e
+    {
+        echo "=== /var/log/bootc-installer.log ==="
+        $SSH 'sudo cat /var/log/bootc-installer.log' 2>&1 || true
+        echo "=== fisherman output ==="
+        $SSH 'cat /home/liveuser/.cache/bootc-installer/fisherman-output.log' 2>&1 || true
+    } > "${INSTALLER_LOG}"
+    if [[ "${DRIVER_STATUS}" -ne 0 ]]; then
+        exit "${DRIVER_STATUS}"
+    fi
+    echo "Patching BLS entries to add serial console..."
+    $SSH 'sudo bash -s' <<'REMOTE'
+    set -euo pipefail
+    boot_part="/dev/vda1"
+    if ls /dev/vda3 >/dev/null 2>&1; then
+    boot_part="/dev/vda2"
+    fi
+    mount_dir=$(mktemp -d)
+    trap 'umount "$mount_dir" 2>/dev/null || true; rmdir "$mount_dir"' EXIT
+    mount "$boot_part" "$mount_dir"
+    count=0
+    for entry in "$mount_dir"/loader/entries/*.conf "$mount_dir"/EFI/loader/entries/*.conf; do
+    [[ -f "$entry" ]] || continue
+    if grep -q '^options ' "$entry" && ! grep -q 'console=tty0' "$entry"; then
+    sed -i 's|^options .*|& console=tty0 console=ttyS0 rd.info systemd.journald.forward_to_console=yes|' "$entry"
+    count=$((count + 1))
+    echo "patched: $(basename "$entry")"
+    fi
+    done
+    echo "BLS patch: ${count} entries updated"
+    REMOTE
+    SOCAT_PREFIX=""
+    if ! test -w "{{plain-qemu-monitor-live}}" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
+    echo "system_powerdown" | $SOCAT_PREFIX socat - "UNIX-CONNECT:{{plain-qemu-monitor-live}}" 2>/dev/null || true
+    sleep 5
+    echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:{{plain-qemu-monitor-live}}" 2>/dev/null || true
+    just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
+         plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
+         plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-boot-qemu-installed {{target}}
+    just output_dir={{output_dir}} plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
+         plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-verify-qemu {{target}}
+
 # Boot the live ISO in QEMU for a plain install test.
 plain-boot-qemu-live target:
     #!/usr/bin/bash
