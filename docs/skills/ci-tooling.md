@@ -10,7 +10,7 @@ tags:
   - github-actions
   - r2
 description: Workflow definitions, runner environment, caching, and release automation for dakota-iso.
-version: "1.1"
+version: "1.2"
 last_updated: "2026-08-01"
 metadata:
   type: reference
@@ -184,3 +184,29 @@ pinned SHA against the GitHub API, fails with the offending file name when one d
 not exist, and skips cleanly when offline or unauthenticated. `test.yml` passes
 `GITHUB_TOKEN` to pytest; without it the shared runner IP is rate limited and the
 check would silently skip.
+## The E2E gates were testing a six-week-old installer (2026-08-01)
+
+`test-plain-install.yml` and `test-luks-install.yml` build the fisherman binary they
+test with from a clone made in the *Clone patched fisherman* step. That step pinned
+
+```yaml
+git clone https://github.com/projectbluefin/fisherman.git \
+  --branch fix/overlay-driver-for-ostree-bootc-install \
+  --depth 1 /tmp/fisherman
+```
+
+whose last commit was **2026-06-17**. A feature branch is a fossil the moment it stops
+moving, and nothing in CI notices — the gate stays green-looking while it validates an
+installer nobody ships. Every fisherman fix merged after mid-June was invisible to E2E,
+including the scratch-cache ENOSPC fix the gate should have caught
+([`install-failures.md`](install-failures.md) Failure 5).
+
+**Fixed:** both workflows now clone `--branch main` and log the resolved commit, so the
+job output records exactly which installer was tested.
+
+**Guarded:** `TestE2EFishermanRef` in `tests/test_live_build_invariants.py` fails the
+build if either workflow clones anything other than a long-lived branch (`main`/`dev`).
+
+**Branch note:** fisherman's *default* branch is `dev`, but `main` is the active line
+(`main` was 25 commits ahead of `dev` on 2026-08-01). A PR opened with the default base
+lands on the branch nobody ships. Target `main`.

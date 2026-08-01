@@ -1129,3 +1129,48 @@ class TestActionPinsResolve(unittest.TestCase):
                 "GitHub API unreachable or unauthenticated; could not verify "
                 f"{len(unverified)} action pin(s). Set GITHUB_TOKEN to enable."
             )
+class TestE2EFishermanRef(unittest.TestCase):
+    """The E2E gates must build fisherman from a long-lived branch.
+
+    Both install workflows once cloned ``fix/overlay-driver-for-ostree-bootc-install``,
+    whose last commit was 2026-06-17. The gate therefore built and tested a
+    six-week-old installer: every fisherman fix merged after that date was
+    invisible to E2E, including the scratch-cache ENOSPC fix that this gate is
+    supposed to catch. A feature branch is a fossil the moment it stops moving,
+    and nothing in CI notices.
+    """
+
+    E2E_WORKFLOWS = ("test-plain-install.yml", "test-luks-install.yml")
+    LONG_LIVED = {"main", "dev"}
+
+    CLONE_RE = re.compile(
+        r"git clone\s+\S*github\.com/projectbluefin/fisherman\.git\s*\\?\s*\n"
+        r"\s*--branch\s+(?P<branch>\S+)",
+    )
+
+    def test_e2e_workflows_clone_a_long_lived_fisherman_branch(self):
+        checked = 0
+        for name in self.E2E_WORKFLOWS:
+            path = REPO / ".github" / "workflows" / name
+            self.assertTrue(path.exists(), f"Missing {path}")
+            text = path.read_text(encoding="utf-8")
+            match = self.CLONE_RE.search(text)
+            self.assertIsNotNone(
+                match,
+                f"{name}: could not find the fisherman clone step — if the clone "
+                "moved, update this guard rather than deleting it.",
+            )
+            branch = match.group("branch")
+            self.assertIn(
+                branch,
+                self.LONG_LIVED,
+                f"{name} clones fisherman branch {branch!r}. E2E must track a "
+                f"long-lived branch ({', '.join(sorted(self.LONG_LIVED))}); a feature "
+                "branch freezes the gate on whatever the installer looked like when "
+                "that branch stopped moving.",
+            )
+            checked += 1
+        self.assertEqual(
+            checked, len(self.E2E_WORKFLOWS),
+            "not every E2E workflow was checked",
+        )
