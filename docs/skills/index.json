@@ -69,8 +69,8 @@
         "fisherman"
       ],
       "description": "Known failure modes for Dakota and Bluefin ISO installations, including ENOSPC, emergency shells, and bootloader missing.",
-      "version": "1.0",
-      "last_updated": "2026-07-30",
+      "version": "1.1",
+      "last_updated": "2026-08-01",
       "doc_type": "reference"
     },
     {
