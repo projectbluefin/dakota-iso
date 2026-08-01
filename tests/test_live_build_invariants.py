@@ -1026,3 +1026,106 @@ class TestSkillCatalogUpToDate(unittest.TestCase):
             f"Skill catalog check failed:\n{res.stderr}\n"
             "Run `python3 scripts/generate_skill_index.py --write` to update.",
         )
+
+
+class TestActionPinsResolve(unittest.TestCase):
+    """Every SHA-pinned GitHub Action must point at a commit that exists.
+
+    Regression guard for the pin that killed both E2E gates: both install
+    workflows referenced ``actions/setup-go@f111f37a573bc6312437e3d1d36d22ef1492b453``,
+    which is not a real commit (the true v5.3.0 SHA is
+    ``f111f3307d8850f501ac008e886eec1fd1932a34`` — same ``f111f3`` prefix, then
+    divergent). Such a pin is well-formed, so shape checks and actionlint pass;
+    the job instead dies in *Set up job* with "unable to find version", producing
+    a red check with no build log that is easy to dismiss as a flake.
+    """
+
+    PIN_RE = re.compile(
+        r"^\s*(?:-\s*)?uses:\s*['\"]?"
+        r"(?P<repo>[\w.-]+/[\w.-]+)(?P<path>(?:/[\w.-]+)*)"
+        r"@(?P<sha>[0-9a-f]{40})",
+        re.MULTILINE,
+    )
+
+    @staticmethod
+    def _collect_pins():
+        """Return {(owner/repo, sha): sorted list of workflow file names}."""
+        pins = {}
+        workflow_dir = REPO / ".github" / "workflows"
+        for path in sorted(workflow_dir.glob("*.y*ml")):
+            text = path.read_text(encoding="utf-8")
+            for match in TestActionPinsResolve.PIN_RE.finditer(text):
+                key = (match.group("repo"), match.group("sha"))
+                pins.setdefault(key, set()).add(path.name)
+        return {key: sorted(names) for key, names in pins.items()}
+
+    @staticmethod
+    def _resolve(repo, sha):
+        """Resolve a commit via the GitHub API.
+
+        Returns ``(True, None)`` when the commit exists, ``(False, reason)`` when
+        the API says it does not, and ``(None, reason)`` when the check could not
+        be performed (offline, unauthenticated, rate limited) so the caller can
+        skip rather than fail.
+        """
+        import json
+        import os
+        import urllib.error
+        import urllib.request
+
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/commits/{sha}",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "dakota-iso-tests",
+            },
+        )
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
+
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.load(response).get("sha") is not None, None
+        except urllib.error.HTTPError as exc:
+            if exc.code in (404, 422):
+                return False, f"HTTP {exc.code} — no such commit"
+            # 401/403 are auth or rate-limit problems, not a bad pin.
+            return None, f"HTTP {exc.code} — cannot verify"
+        except Exception as exc:  # offline, DNS failure, timeout
+            return None, f"{type(exc).__name__}: {exc}"
+
+    def test_pins_are_found(self):
+        """The collector must actually find pins, or the check is vacuous."""
+        pins = self._collect_pins()
+        self.assertGreater(
+            len(pins), 0,
+            "No SHA-pinned actions found in .github/workflows — the pin regex is "
+            "probably stale, which would make the resolution test pass vacuously.",
+        )
+
+    def test_every_pinned_action_sha_exists(self):
+        pins = self._collect_pins()
+        self.assertGreater(len(pins), 0, "no SHA-pinned actions found")
+
+        bad = []
+        unverified = []
+        for (repo, sha), files in sorted(pins.items()):
+            ok, reason = self._resolve(repo, sha)
+            if ok is None:
+                unverified.append(f"{repo}@{sha} ({reason})")
+            elif not ok:
+                bad.append(f"{repo}@{sha} in {', '.join(files)} — {reason}")
+
+        if bad:
+            self.fail(
+                "Unresolvable action pin(s) — these jobs will die in 'Set up job' "
+                "with no build log:\n  " + "\n  ".join(bad)
+                + "\n\nResolve the intended tag instead of hand-writing a SHA:\n"
+                "  gh api repos/<owner>/<repo>/git/ref/tags/<tag> -q .object.sha"
+            )
+        if unverified and len(unverified) == len(pins):
+            self.skipTest(
+                "GitHub API unreachable or unauthenticated; could not verify "
+                f"{len(unverified)} action pin(s). Set GITHUB_TOKEN to enable."
+            )

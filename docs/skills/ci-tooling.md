@@ -10,8 +10,8 @@ tags:
   - github-actions
   - r2
 description: Workflow definitions, runner environment, caching, and release automation for dakota-iso.
-version: "1.0"
-last_updated: "2026-07-30"
+version: "1.1"
+last_updated: "2026-08-01"
 metadata:
   type: reference
 ---
@@ -129,3 +129,58 @@ Before submitting CI workflow changes:
 - [ ] `contents: write` permission present in `build-iso.yml` job (required for README push)
 - [ ] Tests pass: `python -m pytest tests/test_live_build_invariants.py -q`
 - [ ] `rclone lsf R2:testing --files-only | sort` shows only `*-latest.iso`, `*-backup-{1,2,3}.iso`, and named alphas
+
+---
+
+## A wrong action SHA silently kills both E2E gates (2026-08-01)
+
+`test-plain-install.yml` and `test-luks-install.yml` both pinned
+
+```yaml
+uses: actions/setup-go@f111f37a573bc6312437e3d1d36d22ef1492b453 # v5.3.0
+```
+
+That SHA does not exist. The real `actions/setup-go` v5.3.0 commit is
+`f111f3307d8850f501ac008e886eec1fd1932a34` — same `f111f3` prefix, then divergent.
+It is exactly the shape of a fabricated or mis-copied pin, and the trailing
+`# v5.3.0` comment made it look reviewed.
+
+**Why it is dangerous:** the job dies in *Set up job* with
+
+```
+##[error]Unable to resolve action `actions/setup-go@f111f37…`, unable to find version
+```
+
+Nothing in the workflow ever runs, so there is no install log, no QEMU output, and no
+hint that a gate was skipped. The PR simply shows a red E2E check that looks like a
+flake. Both mandatory functional gates in this repo were dead this way, which is how
+an ENOSPC install regression reached a user's machine
+([`install-failures.md`](install-failures.md) Failure 5).
+
+**Rule:** a red check whose failure is in *Set up job* is never a flake and never a
+product bug — it is a broken workflow definition. Read the first error before
+re-running.
+
+**Sweep for bad pins** (all 8 pins in this repo resolve as of 2026-08-01):
+
+```bash
+grep -rhoP 'uses:\s*\K[\w.-]+/[\w.-]+(?:/[\w.-]+)*@[0-9a-f]{40}' .github/workflows/ | sort -u |
+while read -r pin; do
+  repo="${pin%@*}"; sha="${pin#*@}"
+  gh api "repos/$(echo "$repo" | cut -d/ -f1,2)/commits/$sha" -q .sha >/dev/null 2>&1 ||
+    echo "UNRESOLVABLE: $pin"
+done
+```
+
+Resolve the intended tag before pinning — never hand-write a SHA:
+
+```bash
+gh api repos/actions/setup-go/git/ref/tags/v5.3.0 -q .object.sha
+```
+
+**Automated since 2026-08-01:** `TestActionPinsResolve` in
+`tests/test_live_build_invariants.py` runs that sweep on every PR — it resolves each
+pinned SHA against the GitHub API, fails with the offending file name when one does
+not exist, and skips cleanly when offline or unauthenticated. `test.yml` passes
+`GITHUB_TOKEN` to pytest; without it the shared runner IP is rate limited and the
+check would silently skip.
