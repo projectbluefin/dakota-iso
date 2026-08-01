@@ -10,7 +10,7 @@ tags:
   - github-actions
   - r2
 description: Workflow definitions, runner environment, caching, and release automation for dakota-iso.
-version: "1.3"
+version: "1.4"
 last_updated: "2026-08-01"
 metadata:
   type: reference
@@ -250,3 +250,39 @@ creates the release with them attached. Do not pre-create the release — an emp
 published release is immutable and can never receive its assets. Note that a version
 number whose release was once deleted is banned forever: `v3.0.15` could not be
 created, so the ENOSPC fix shipped as `v3.0.16`.
+
+---
+
+## The README download table cannot self-refresh (2026-08-01)
+
+`build-iso.yml`'s *Refresh README dakota table* step ends with
+
+```bash
+if ! git push origin HEAD:main; then
+  echo "::warning::README refresh could not push to protected main; R2 publication already completed."
+fi
+```
+
+`main` is protected, so that push always fails:
+
+```
+remote: error: GH006: Protected branch update failed for refs/heads/main.
+```
+
+The step still reports **success**, so nothing draws attention to it. The row had been
+frozen on the 2026-07-01 build while the ISO behind the link kept changing — meaning
+the README advertised a **checksum that does not match the file it links to**. Anyone
+verifying their download against the README would conclude the ISO was corrupt.
+
+**Until the step can open a PR instead of pushing, the README row is stale by default.**
+Treat `https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM` as the only
+authoritative checksum, and refresh the row by hand after a publish:
+
+```bash
+curl -sL https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM
+curl -sIL https://projectbluefin.dev/dakota-live-latest.iso | grep -i content-length
+```
+
+Note the same protected-branch rule is why every PR needs `gh pr merge --admin`: the
+required contexts `LUKS E2E (dev)` / `LUKS E2E (stable)` no longer match any job name
+since the E2E matrix gained a variant dimension, so they never report.

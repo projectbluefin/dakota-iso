@@ -4,7 +4,7 @@
 
 | Variant | Download | Checksum | Size | Published (UTC) | Validation | Last 3 builds |
 |---------|----------|----------|------|-----------------|------------|---------------|
-| `dakota` | [⬇ `dakota-live-latest.iso`](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum `a3b0c17d…`](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) | 4.26 GiB | 2026-07-01 12:22 | [run #198](https://github.com/projectbluefin/dakota-iso/actions/runs/28530084365) | [b1](https://projectbluefin.dev/dakota-live-backup-1.iso) · [b2](https://projectbluefin.dev/dakota-live-backup-2.iso) · [b3](https://projectbluefin.dev/dakota-live-backup-3.iso) |
+| `dakota` | [⬇ `dakota-live-latest.iso`](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum `a163b05e…`](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) | 3.95 GiB | 2026-08-01 16:57 | [run #233](https://github.com/projectbluefin/dakota-iso/actions/runs/30706713158) | [b1](https://projectbluefin.dev/dakota-live-backup-1.iso) · [b2](https://projectbluefin.dev/dakota-live-backup-2.iso) · [b3](https://projectbluefin.dev/dakota-live-backup-3.iso) |
 
 Builds bootable UEFI live ISOs from [Dakota](https://github.com/projectbluefin/dakota) and [Bluefin](https://github.com/projectbluefin/bluefin) images.
 
