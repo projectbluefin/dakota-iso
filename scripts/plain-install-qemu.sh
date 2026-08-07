@@ -58,7 +58,7 @@ if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/plain-recipe.json
     echo "Uploaded recipe — running fisherman (this takes several minutes)..."
     $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
-    $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/plain-recipe.json'
+    $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/plain-recipe.json --enable-debug-ssh'
 else
     # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
     # Empty image triggers bootcDirect; targetImgref sets the day-2 rebase ref.
@@ -76,7 +76,7 @@ else
     $SSH 'chmod +x /tmp/fisherman'
     echo "Running fisherman (bootcDirect, takes several minutes)..."
     $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
-    if ! $SSH 'sudo FISHERMAN_BIN=/tmp/fisherman bash /tmp/fisherman-install.sh /tmp/plain-recipe.json'; then
+    if ! $SSH 'sudo FISHERMAN_BIN=/tmp/fisherman bash /tmp/fisherman-install.sh /tmp/plain-recipe.json --enable-debug-ssh'; then
         echo "=== INSTALL FAILURE DIAGNOSTICS ==="
         echo "--- dmesg ---"
         $SSH 'sudo dmesg | tail -n 100' || true
