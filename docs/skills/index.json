@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-01",
+  "generated_at": "2026-08-07",
   "schema_version": "1.0",
   "skills": [
     {
@@ -35,7 +35,7 @@
       ],
       "description": "Architecture, QEMU disk configuration, ENOSPC prevention, and live/installed boot verification for dakota-iso.",
       "version": "1.0",
-      "last_updated": "2026-07-30",
+      "last_updated": "2026-07-31",
       "doc_type": "reference"
     },
     {

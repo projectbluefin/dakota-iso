@@ -13,14 +13,23 @@
 #
 # Upstream bug: https://github.com/tuna-os/fisherman/issues
 #
-# Usage: fisherman-install.sh <recipe.json>
+# Usage: fisherman-install.sh <recipe.json> [--enable-debug-ssh]
 #   recipe.json must contain a "hostname" key (and "encryption.passphrase" for
 #   LUKS installs) whose values are used when patching on failure.
+#
+#   --enable-debug-ssh mounts the freshly-installed deployment and drops a
+#   root:root / sshd-enable override directly onto disk (mirroring the live
+#   ISO's DEBUG=1 convention in live/src/configure-live.sh) so the E2E suite
+#   can SSH into the *installed* system after its first boot to run post-boot
+#   assertions (UEFI boot entry, Flatpak exclusion, LUKS cmdline format — see
+#   projectbluefin/dakota#651). Test-only: never part of the shipped image.
 
 set -euo pipefail
 
 RECIPE="${1:-/tmp/plain-recipe.json}"
 FISHERMAN_BIN="${FISHERMAN_BIN:-/usr/local/bin/fisherman}"
+ENABLE_DEBUG_SSH=0
+[[ "${2:-}" == "--enable-debug-ssh" ]] && ENABLE_DEBUG_SSH=1
 
 FISH_RC=0
 "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
@@ -122,6 +131,41 @@ if [[ $MOUNTED -eq 1 ]]; then
 DefaultDependencies=no
 EOF
         echo "==> systemd override written successfully to $DEPLOY_ETC/systemd/system/rechunker-group-fix.service.d/override.conf"
+
+        # 3. Enable debug SSH on the installed system (test-only, opt-in).
+        # Mirrors live/src/configure-live.sh's DEBUG=1 convention: known
+        # root:root password + PermitRootLogin/PasswordAuthentication yes +
+        # a system-preset forcing sshd on.  This lets the E2E suite SSH into
+        # the *installed and booted* system to run post-boot assertions that
+        # can't be checked from the live environment (efibootmgr state after
+        # reboot, /proc/cmdline, flatpak list) — see projectbluefin/dakota#651.
+        if [[ "$ENABLE_DEBUG_SSH" -eq 1 ]]; then
+            echo "==> Enabling debug SSH on installed system for E2E post-boot assertions"
+            ROOT_HASH=$(openssl passwd -6 root 2>/dev/null || echo "")
+            if [[ -n "$ROOT_HASH" && -f "$DEPLOY_ETC/shadow" ]]; then
+                sed -i "s|^root:[^:]*:|root:${ROOT_HASH}:|" "$DEPLOY_ETC/shadow"
+                echo "==> root password set on installed system (shadow patched)"
+            else
+                echo "WARNING: could not set root password (openssl missing or no $DEPLOY_ETC/shadow) — debug SSH may not be reachable"
+            fi
+            mkdir -p "$DEPLOY_ETC/ssh/sshd_config.d"
+            cat <<'SSHEOF' > "$DEPLOY_ETC/ssh/sshd_config.d/90-e2e-debug.conf"
+PermitEmptyPasswords no
+PasswordAuthentication yes
+PermitRootLogin yes
+SSHEOF
+            mkdir -p "$DEPLOY_ETC/systemd/system-preset"
+            echo "enable sshd.service" > "$DEPLOY_ETC/systemd/system-preset/90-e2e-debug.preset"
+            mkdir -p "$DEPLOY_ETC/firewalld/zones"
+            cat <<'FWEOF' > "$DEPLOY_ETC/firewalld/zones/public.xml"
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <service name="ssh"/>
+</zone>
+FWEOF
+            echo "==> debug SSH override written (sshd preset + PermitRootLogin + firewalld ssh zone)"
+        fi
     else
         echo "WARNING: deployment etc/ not found under $MNT/ostree — post-install patches not applied"
     fi

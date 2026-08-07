@@ -661,6 +661,9 @@ luks-qemu-serial-installed := "/tmp/dakota-qemu-installed-serial.log"
 
 # SSH port for QEMU SLIRP forwarding (LUKS test)
 luks-qemu-ssh-port := "2222"
+# SSH port forwarded to the *installed* system after reboot, for post-boot
+# assertions (see verify-post-install.sh / projectbluefin/dakota#651).
+luks-qemu-ssh-port-installed := "2224"
 
 # ── Plain (no-encryption) install test paths ─────────────────────────────────
 # Uses port 2223 and separate socket/disk paths so both tests can run concurrently.
@@ -673,6 +676,9 @@ plain-qemu-monitor-installed := "/tmp/dakota-plain-qemu-installed.sock"
 plain-qemu-serial-live := "/tmp/dakota-plain-qemu-live-serial.log"
 plain-qemu-serial-installed := "/tmp/dakota-plain-qemu-installed-serial.log"
 plain-qemu-ssh-port := "2223"
+# SSH port forwarded to the *installed* system after reboot, for post-boot
+# assertions (see verify-post-install.sh / projectbluefin/dakota#651).
+plain-qemu-ssh-port-installed := "2225"
 
 # Full end-to-end test: build the ISO then run the LUKS install + boot test.
 # This is the primary integration test — mirrors .github/workflows/test-luks-install.yml.
@@ -702,6 +708,7 @@ luks-test-qemu target installer_channel="dev":
     just luks-qemu-monitor-installed={{luks-qemu-monitor-installed}} \
          luks-qemu-serial-installed={{luks-qemu-serial-installed}} \
          luks-unlock-qemu {{target}}
+    just luks-qemu-ssh-port-installed={{luks-qemu-ssh-port-installed}} luks-verify-qemu {{target}}
 
 # Boot the live ISO in QEMU (daemonized) with a blank install disk attached.
 # Creates the install disk if it doesn't exist.
@@ -874,7 +881,7 @@ luks-boot-qemu-installed target:
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
         -device virtio-blk-pci,drive=disk \
-        -netdev user,id=net0 \
+        -netdev "user,id=net0,hostfwd=tcp::{{luks-qemu-ssh-port-installed}}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -monitor "unix:{{luks-qemu-monitor-installed}},server,nowait" \
         -serial "file:{{luks-qemu-serial-installed}}" \
@@ -905,6 +912,14 @@ luks-unlock-qemu target:
         key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
         bash "dakota/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
     done
+
+# Post-boot assertions against the unlocked, installed LUKS system
+# (projectbluefin/dakota#651): UEFI boot entry, Flatpak exclusion, and LUKS
+# cmdline UUID parseability (rd.luks.uuid=/rd.luks.name=), all over SSH.
+luks-verify-qemu target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase"
 
 # Run Python unit tests.
 # Note: pytest passing means source-file invariants and mocked logic are OK.
@@ -1163,7 +1178,7 @@ plain-boot-qemu-installed target:
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=disk,file={{plain-qemu-disk}},format=raw,cache=unsafe" \
         -device virtio-blk-pci,drive=disk \
-        -netdev user,id=net0 \
+        -netdev "user,id=net0,hostfwd=tcp::{{plain-qemu-ssh-port-installed}}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -monitor "unix:{{plain-qemu-monitor-installed}},server,nowait" \
         -serial "file:{{plain-qemu-serial-installed}}" \
@@ -1195,8 +1210,12 @@ plain-verify-qemu target:
             if ! test -w "$MONITOR" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
             echo "screendump $SCREENSHOT" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
             bash "dakota/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
+            # Post-boot assertions (projectbluefin/dakota#651): UEFI entry +
+            # Flatpak exclusion, over SSH into the now-booted installed system.
+            POST_BOOT_RC=0
+            bash "scripts/verify-post-install.sh" "{{plain-qemu-ssh-port-installed}}" "none" || POST_BOOT_RC=$?
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
-            exit 0
+            exit "$POST_BOOT_RC"
         fi
         # Detect emergency shell / kernel panic — fast-fail
         if echo "$LOG" | grep -q "Emergency mode\|You are in emergency mode\|Kernel panic"; then
