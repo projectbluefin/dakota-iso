@@ -20,6 +20,8 @@ on:
         default: false
         type: boolean
 
+permissions: {}
+
 jobs:
   build-and-publish:
     name: Build ${{ matrix.variant }} Live ISO
