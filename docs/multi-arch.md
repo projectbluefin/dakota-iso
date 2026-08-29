@@ -103,7 +103,7 @@ Simplest, no dracut changes, already supported upstream.
 
 ### Phase 1: `build-iso.sh` multi-arch support ✅ Complete
 
-`build-iso.sh` (both `live/src/` and `dakota/src/`) accepts multiple boot-files tars
+`live/src/build-iso.sh` accepts multiple boot-files tars
 and squashfs images via `--arch` flags:
 
 ```bash

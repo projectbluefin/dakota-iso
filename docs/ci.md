@@ -226,8 +226,8 @@ Runs `pytest tests/ -v` against Python 3.11.
 
 | File | Tests | What it checks |
 |---|---|---|
-| `tests/test_live_build_invariants.py` | 32 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, publish workflows, E2E workflow wiring, and variant config files. Also pins the DEBUG-only SSH guard, publish gating/concurrency, and `live/src` vs `dakota/src` `luks-unlock.py` sync. |
-| `tests/test_luks_unlock.py` | 52 | `dakota/src/luks-unlock.py` routing, passphrase injection key sequences, and screenshot parsing. `tests/test_live_build_invariants.py` separately asserts the `live/src` helper stays byte-for-byte identical so local helpers and CI exercise the same logic. |
+| `tests/test_live_build_invariants.py` | 32 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, publish workflows, E2E workflow wiring, and variant config files. Also pins the DEBUG-only SSH guard and publish gating/concurrency. |
+| `tests/test_luks_unlock.py` | 52 | `live/src/luks-unlock.py` routing, passphrase injection key sequences, and screenshot parsing. |
 | `tests/test_multi_arch_iso.py` | 2 | `live/src/build-iso.sh --arch` flag: single-arch backwards compat and two-arch assembly. **Skipped when `xorriso`/`mtools` are absent.** CI installs these tools so the tests run; they are skipped only in local environments lacking them — and the skip message names the exact apt packages to install. |
 
 Run locally with:
@@ -581,7 +581,7 @@ fully installed.
 after BIOS handoff with no display output.
 
 **Root cause:** `nvidia-drm.modeset=1` was never set in any of the four boot entry
-locations in `live/src/build-iso.sh` and `dakota/src/build-iso.sh`. Without KMS
+locations in `live/src/build-iso.sh`. Without KMS
 enabled, the NVIDIA proprietary driver cannot take over the framebuffer from the
 BIOS, leaving the screen dark even though the system is running fine.
 

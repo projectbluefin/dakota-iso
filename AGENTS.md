@@ -250,7 +250,7 @@ The `skill-drift.yml` CI check warns when a PR changes implementation files with
 
 - `.github/workflows/` — CI pipeline changes
 - `justfile` — canonical build interface
-- `live/src/build-iso.sh` — ISO assembly logic (canonical; `dakota/src/build-iso.sh` is the local-only copy)
+- `live/src/build-iso.sh` — ISO assembly logic (single source of truth for CI, `scripts/*.sh`, and local justfile recipes)
 - `live/src/configure-live.sh` — live environment setup
 - `live/src/install-flatpaks.sh` — Flatpak baking into squashfs
 

@@ -120,20 +120,20 @@ the image to one layer before VFS import. The squash uses `buildah from --pull-n
 + `buildah commit --squash` — NOT `podman create --entrypoint ... && podman commit`
 (the latter corrupts the Entrypoint config, breaking `bootc install`).
 
-## Source layout: `live/src/` vs `dakota/src/`
+## Source layout: `live/src/`
 
-Two parallel source trees exist:
+`live/src/` is the single source of truth for the live ISO source tree.
 
 | Path | Used by | Notes |
 |---|---|---|
-| `live/src/` | CI (`build-iso.yml`), `live/Containerfile` | Canonical for CI; `build-iso.sh` here supports `--store` for offline OCI store |
-| `dakota/src/` | Local justfile (`iso-sd-boot`, `luks-*` recipes) | `build-iso.sh` here is the simpler local variant without `--store` |
+| `live/src/` | CI (`build-iso.yml`, `build-iso-bluefin.yml`), `live/Containerfile`, `scripts/*.sh`, local justfile recipes | `build-iso.sh` supports `--store` for the offline OCI store |
 
 The live container (`live/Containerfile`) is used for **both** local and CI builds.
 `live/src/flatpaks` is the definitive list of bundled Flatpaks.
 
-`dakota/src/flatpaks` is a legacy copy — it may diverge. Use `live/src/flatpaks` as the
-source of truth when adding or removing apps.
+A second copy of this tree previously lived at `dakota/src/`. It had no build
+consumer, silently diverged from `live/src/`, and was removed; local justfile
+recipes now call the `live/src/` helpers directly.
 
 
 
@@ -194,11 +194,11 @@ step, producing zstd-15 compression. Local `just iso-sd-boot` defaults to `compr
 just compression=release iso-sd-boot dakota
 ```
 
-### `dakota/src/flatpaks` diverged from `live/src/flatpaks` (2026-06)
+### `dakota/src/flatpaks` diverged from `live/src/flatpaks` (2026-06, resolved)
 
-`dakota/src/flatpaks` contains `be.alexandervanhee.gradia` but `live/src/flatpaks` does not.
-Since `live/Containerfile` uses `live/src/flatpaks`, CI builds omit Gradia. Keep `live/src/flatpaks`
-as the source of truth and sync `dakota/src/flatpaks` to match it.
+`dakota/src/flatpaks` contained `be.alexandervanhee.gradia` while `live/src/flatpaks`
+did not, so CI builds omitted Gradia. The unreferenced `dakota/src/` tree has since been
+removed, leaving `live/src/flatpaks` as the only Flatpak list.
 
 
 `/tmp` is a 16 GB tmpfs on this host. A Dakota build needs ~22 GB peak. The build
@@ -212,14 +212,14 @@ in the image config. Dakota/bootc images have no Entrypoint by design; a fake on
 `bootc install` to fail with "cannot execute binary file". Always use
 `buildah commit --squash` to squash layers cleanly without touching config.
 
-### live/src/install-flatpaks.sh must mirror dakota/src/install-flatpaks.sh (2026-06)
+### live/src/install-flatpaks.sh was one of two copies (2026-06, resolved)
 
-`live/src/install-flatpaks.sh` is a parallel copy of `dakota/src/install-flatpaks.sh`
-for the live-squashfs build path. When the installer source logic changes in one, it
-must be replicated in the other. After PR fc0346d added primary/fallback logic to the
-`dakota` copy, the `live` copy was left behind still pointing only at `tuna-os/tuna-installer`.
-Both files now use `projectbluefin/bootc-installer` as primary (with `--fail` so curl
-exits non-zero on HTTP errors) and fall back to `tuna-os/tuna-installer` automatically.
+`live/src/install-flatpaks.sh` used to be a parallel copy of
+`dakota/src/install-flatpaks.sh`, and the two drifted: after PR fc0346d added
+primary/fallback logic to the `dakota` copy, the `live` copy was left pointing only at
+`tuna-os/tuna-installer`. The `dakota/src/` copy has been removed. `live/src/install-flatpaks.sh`
+uses `projectbluefin/bootc-installer` as primary (with `--fail` so curl exits non-zero on
+HTTP errors) and falls back to `tuna-os/tuna-installer` automatically.
 
 ### filesystem choice: always btrfs for dakota (2026-06)
 

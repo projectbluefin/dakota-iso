@@ -22,7 +22,9 @@ Covered invariants
 5. Variant config files are complete and consistent for known variants.
 6. Release builds keep debug-only SSH/password config inside the DEBUG guard.
 7. build-iso.yml uploads to R2 only after the full install + verify gates pass.
-8. live/src/luks-unlock.py stays in sync with dakota/src/luks-unlock.py.
+
+live/src/ is the single source of truth for the live ISO source tree; there is
+no second copy to keep in sync.
 """
 
 import re
@@ -33,7 +35,6 @@ from pathlib import Path
 
 REPO = Path(__file__).parent.parent
 LIVE_BUILD_ISO = REPO / "live" / "src" / "build-iso.sh"
-DAKOTA_BUILD_ISO = REPO / "dakota" / "src" / "build-iso.sh"
 CONTAINERFILE = REPO / "live" / "Containerfile"
 CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
 BUILD_ISO_WORKFLOW = REPO / ".github" / "workflows" / "build-iso.yml"
@@ -41,7 +42,6 @@ BUILD_ISO_BLUEFIN_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-bluefin
 TEST_LUKS_WORKFLOW = REPO / ".github" / "workflows" / "test-luks-install.yml"
 TEST_PLAIN_WORKFLOW = REPO / ".github" / "workflows" / "test-plain-install.yml"
 LIVE_LUKS_UNLOCK = REPO / "live" / "src" / "luks-unlock.py"
-DAKOTA_LUKS_UNLOCK = REPO / "dakota" / "src" / "luks-unlock.py"
 BUILD_LIVE_SQUASHFS = REPO / "scripts" / "build-live-squashfs.sh"
 ISO_SD_BOOT = REPO / "scripts" / "iso-sd-boot.sh"
 README = REPO / "README.md"
@@ -105,10 +105,6 @@ class TestBootCmdline(unittest.TestCase):
         """live/src/build-iso.sh must use LABEL=, not CDLABEL= or /dev/sr0."""
         self._check_boot_root(LIVE_BUILD_ISO)
 
-    def test_dakota_build_iso_uses_label_not_cdlabel_or_sr0(self):
-        """dakota/src/build-iso.sh must use LABEL=, not CDLABEL= or /dev/sr0."""
-        self._check_boot_root(DAKOTA_BUILD_ISO)
-
     def test_live_build_iso_contains_label_root(self):
         """live/src/build-iso.sh boot entries must use root=live:LABEL=DAKOTA_LIVE."""
         self._check_has_label(LIVE_BUILD_ISO)
@@ -133,10 +129,6 @@ class TestBootCmdline(unittest.TestCase):
     def test_live_build_iso_has_nvidia_drm_modeset(self):
         """All live/src/build-iso.sh boot entries must include nvidia-drm.modeset=1."""
         self._check_nvidia_modeset(LIVE_BUILD_ISO)
-
-    def test_dakota_build_iso_has_nvidia_drm_modeset(self):
-        """All dakota/src/build-iso.sh boot entries must include nvidia-drm.modeset=1."""
-        self._check_nvidia_modeset(DAKOTA_BUILD_ISO)
 
 
 class TestXfsprogs(unittest.TestCase):
@@ -728,17 +720,6 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             "test-luks-install.yml must gate luks-e2e on unit-tests.",
         )
 
-    def test_luks_unlock_copies_are_identical(self):
-        """live/ and dakota/ luks-unlock helpers must stay byte-for-byte aligned."""
-        self.assertEqual(
-            LIVE_LUKS_UNLOCK.read_text(),
-            DAKOTA_LUKS_UNLOCK.read_text(),
-            "live/src/luks-unlock.py and dakota/src/luks-unlock.py diverged. "
-            "Keep them identical so CI/build logic and local helpers exercise "
-            "the same unlock behavior.",
-        )
-
-
 class TestVariantConfig(unittest.TestCase):
     """Variant directories must be complete and consistent."""
 
@@ -852,41 +833,6 @@ class TestBuildIsoScript(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0,
                          f"live/src/build-iso.sh syntax error:\n{result.stderr}")
-
-    def test_dakota_build_iso_bash_syntax(self):
-        result = subprocess.run(
-            ["bash", "-n", str(DAKOTA_BUILD_ISO)],
-            capture_output=True, text=True,
-        )
-        self.assertEqual(result.returncode, 0,
-                         f"dakota/src/build-iso.sh syntax error:\n{result.stderr}")
-
-    def test_build_iso_scripts_are_in_sync(self):
-        """live/ and dakota/ build-iso.sh must have identical boot cmdlines.
-
-        These two scripts serve different entry points (CI vs local justfile)
-        but must stay in sync on the boot cmdline to prevent split-brain bugs
-        where CI builds boot with different options than local test builds.
-        """
-        live_content = LIVE_BUILD_ISO.read_text()
-        dakota_content = DAKOTA_BUILD_ISO.read_text()
-
-        def extract_boot_lines(content):
-            return [
-                ln.strip() for ln in content.splitlines()
-                if ("root=live:" in ln or "rd.live." in ln)
-                and not ln.strip().startswith("#")
-            ]
-
-        live_boot = extract_boot_lines(live_content)
-        dakota_boot = extract_boot_lines(dakota_content)
-
-        self.assertEqual(
-            live_boot, dakota_boot,
-            "live/src/build-iso.sh and dakota/src/build-iso.sh have different "
-            "boot cmdline options. These files must be kept in sync.\n"
-            f"live:   {live_boot}\ndakota: {dakota_boot}",
-        )
 
 
 if __name__ == "__main__":

@@ -597,7 +597,7 @@ luks-unlock target:
     fi
     echo "Waiting for Plymouth passphrase prompt (VM MAC: ${MAC})..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "dakota/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
+    sudo python3 "live/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
 
 # Connect to the serial console of the dakota-debug VM to watch boot after
 # luks-install.  At the LUKS passphrase prompt type the passphrase (default:
@@ -803,7 +803,7 @@ luks-boot-qemu-live target:
     done
 
     # Wait for the live boot GUI to render and stabilize before taking screenshot
-    sudo python3 "dakota/src/luks-unlock.py" wait-live \
+    sudo python3 "live/src/luks-unlock.py" wait-live \
         "{{luks-qemu-monitor-live}}" \
         "/tmp/luks-screenshot-live.ppm" || true
 
@@ -895,7 +895,7 @@ luks-unlock-qemu target:
     PASSPHRASE="{{luks-passphrase}}"
     echo "Unlocking LUKS on installed QEMU VM..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "dakota/src/luks-unlock.py" qemu \
+    sudo python3 "live/src/luks-unlock.py" qemu \
         "{{luks-qemu-monitor-installed}}" \
         "$PASSPHRASE" \
         "{{luks-qemu-serial-installed}}"
@@ -903,7 +903,7 @@ luks-unlock-qemu target:
     # Show key screenshots inline for terminals that support it (Kitty, iTerm2, etc.)
     for label in "Plymouth prompt" "Final boot"; do
         key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
-        bash "dakota/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
+        bash "live/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
     done
 
 # Run Python unit tests.
@@ -1194,7 +1194,7 @@ plain-verify-qemu target:
             SOCAT_PREFIX=""
             if ! test -w "$MONITOR" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
             echo "screendump $SCREENSHOT" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
-            bash "dakota/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
+            bash "live/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
             exit 0
         fi
