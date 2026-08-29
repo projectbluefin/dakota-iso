@@ -60,7 +60,7 @@ just boot-iso-serial dakota
 `just boot-iso-serial <target>` is the quickest local smoke test for a bootable ISO.
 
 ## Repo notes
-- Key scripts: `dakota/src/build-iso.sh` and `dakota/src/configure-live.sh`
+- Key scripts: `live/src/build-iso.sh` and `live/src/configure-live.sh`
 - The `justfile` is the canonical interface for local work
 - Prefer small, surgical changes: this repo feeds the Dakota installer media
 

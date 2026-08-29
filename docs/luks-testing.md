@@ -120,7 +120,7 @@ EOF
 
 ## LUKS passphrase unlock (luks-unlock.py)
 
-`dakota/src/luks-unlock.py` handles automated passphrase injection. It:
+`live/src/luks-unlock.py` handles automated passphrase injection. It:
 1. Polls QEMU monitor screendumps to detect Plymouth's passphrase prompt
 2. Injects keystrokes via `sendkey` commands
 3. Monitors serial log for successful boot
