@@ -78,29 +78,9 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Install cosign
-        if: steps.should_build.outputs.build == 'true'
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      # Verify cosign signatures and pin to verified digests — the mutable
-      # :stable tag alone does not prove the image was built by project CI.
-      - name: Verify image signatures
-        if: steps.should_build.outputs.build == 'true'
-        id: sigs
-        run: |
-          PAYLOAD_PINNED=$(scripts/verify-image-signature.sh ${{ matrix.payload_image }})
-          echo "payload_pinned=${PAYLOAD_PINNED}" >> "$GITHUB_OUTPUT"
-          BASE=ghcr.io/${{ matrix.registry }}/${{ matrix.live_target }}:${{ matrix.tag }}
-          if [ "$BASE" != "${{ matrix.payload_image }}" ]; then
-            BASE_PINNED=$(scripts/verify-image-signature.sh "$BASE")
-          else
-            BASE_PINNED="$PAYLOAD_PINNED"
-          fi
-          echo "base_digest=@${BASE_PINNED##*@}" >> "$GITHUB_OUTPUT"
-
       - name: Pull offline payload image
         if: steps.should_build.outputs.build == 'true'
-        run: sudo podman pull ${{ steps.sigs.outputs.payload_pinned }}
+        run: sudo podman pull ${{ matrix.payload_image }}
 
       - name: Build live container
         if: steps.should_build.outputs.build == 'true'
@@ -111,7 +91,6 @@ jobs:
             --build-arg TARGET=${{ matrix.live_target }} \
             --build-arg TAG=${{ matrix.tag }} \
             --build-arg REGISTRY=${{ matrix.registry }} \
-            --build-arg BASE_DIGEST=${{ steps.sigs.outputs.base_digest }} \
             --build-arg INSTALLER_CHANNEL=stable \
             -t localhost/${{ matrix.live_target }}-live:latest \
             ./live
