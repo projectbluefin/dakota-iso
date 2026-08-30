@@ -99,14 +99,15 @@ _payload_ref_flag target:
 
 container target:
     #!/usr/bin/bash
+    source scripts/variant-config.sh
     test -f "{{target}}/payload_ref" || { echo "ERROR: {{target}}/payload_ref not found — create it with the base image reference, e.g.: echo 'ghcr.io/projectbluefin/dakota:latest' > {{target}}/payload_ref"; exit 1; }
     # live_target overrides the Containerfile TARGET build-arg when the live
     # environment image differs from the variant directory name.
     # e.g. the 'dakota' variant builds its live env from 'dakota-nvidia' so all
     # hardware can boot live, while payload_ref controls the offline store.
-    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
-    LIVE_TAG=$(cat "{{target}}/tag" 2>/dev/null | tr -d '[:space:]' || echo "stable")
-    LIVE_REGISTRY=$(cat "{{target}}/registry" 2>/dev/null | tr -d '[:space:]' || echo "projectbluefin")
+    LIVE_TARGET=$(variant_live_target "{{target}}")
+    LIVE_TAG=$(variant_tag "{{target}}")
+    LIVE_REGISTRY=$(variant_registry "{{target}}")
     podman build --cap-add sys_admin --security-opt label=disable \
         --layers \
         --build-arg DEBUG={{debug}} \
@@ -486,6 +487,7 @@ boot-libvirt-debug target:
 luks-install target:
     #!/usr/bin/bash
     set -euo pipefail
+    source scripts/variant-config.sh
 
     VM_NAME="dakota-debug"
     PASSPHRASE="{{luks-passphrase}}"
@@ -534,13 +536,9 @@ luks-install target:
     # just's parser (it sees the closing ) at column 0 as a delimiter).
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
-    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
-    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
-    BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
-    if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
+    BOOTLOADER=$(variant_bootloader_recipe "{{target}}")
     printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:'"${PAYLOAD_IMAGE}"'",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
-        "${DISK}" "$([ "${COMPOSEFS_BACKEND}" == "true" ] && echo "true" || echo "false")" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+        "${DISK}" "$(variant_composefs_json "{{target}}")" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@"$GUEST_IP":/tmp/luks-recipe.json
     echo "Uploaded recipe to /tmp/luks-recipe.json"
 
@@ -951,6 +949,7 @@ plain-e2e target:
 plain-enospc-gate target:
     #!/usr/bin/bash
     set -euo pipefail
+    source scripts/variant-config.sh
     PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
     SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}}"
@@ -962,13 +961,9 @@ plain-enospc-gate target:
     fi
     RECIPE_TMP=$(mktemp /tmp/plain-enospc-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
-    LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
-    BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
-    COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
-    BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
-    if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
+    BOOTLOADER=$(variant_bootloader_recipe "{{target}}")
     printf '{\n  "disk": "/dev/vda",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-enospc-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
-        "${INSTALL_IMAGE}" "$([ "${COMPOSEFS_BACKEND}" == "true" ] && echo "true" || echo "false")" "${BOOTLOADER}" > "${RECIPE_TMP}"
+        "${INSTALL_IMAGE}" "$(variant_composefs_json "{{target}}")" "${BOOTLOADER}" > "${RECIPE_TMP}"
     $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/enospc-recipe.json
     echo "Running fisherman (watching for OCI export completion)..."
     # Run fisherman via process substitution (not a pipe) so that exit 0/1
