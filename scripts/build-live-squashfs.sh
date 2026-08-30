@@ -34,6 +34,9 @@
 # Must run as root (sudo).
 
 set -euo pipefail
+# Single host-side reader for per-variant config (see scripts/variant-config.sh).
+# shellcheck source=scripts/variant-config.sh
+source "$(dirname "${BASH_SOURCE[0]}")/variant-config.sh"
 
 OCI_IMAGE=""
 TARGET=""
@@ -55,7 +58,7 @@ if [[ -n "${TARGET}" ]]; then
     # ── Target mode: build live container then squashfs it ────────────────────
     [[ -z "${OUTPUT_DIR}" ]] && { echo "ERROR: --target requires --output-dir" >&2; exit 1; }
 
-    LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
+    LIVE_TARGET=$(variant_live_target "${TARGET}")
     echo ">>> [live-squashfs] building live container: target=${TARGET} live_target=${LIVE_TARGET} channel=${INSTALLER_CHANNEL:-stable} debug=${DEBUG_ARG}"
 
     podman build \
