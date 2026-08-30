@@ -26,6 +26,20 @@ FISH_RC=0
 "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
 cat /tmp/fish.log
 
+# QEMU can briefly keep the install disk busy while udev settles after
+# fisherman repartitions it. Retry only this transient partition-table failure.
+if [[ $FISH_RC -ne 0 ]] &&
+   grep -q "Re-reading the partition table failed" /tmp/fish.log &&
+   grep -q "Device or resource busy" /tmp/fish.log; then
+    echo "==> partition table still busy — waiting for udev and retrying fisherman"
+    sync
+    udevadm settle
+    sleep 3
+    FISH_RC=0
+    "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
+    cat /tmp/fish.log
+fi
+
 PATCH_HOSTNAME=0
 
 if [[ $FISH_RC -ne 0 ]]; then
