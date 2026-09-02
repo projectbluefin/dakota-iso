@@ -291,9 +291,12 @@ dev target:
 boot-iso-serial target:
     #!/usr/bin/bash
     set -euo pipefail
-    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 \
-               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    QEMU=""
+    for candidate in /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+                     /usr/bin/qemu-system-x86_64 \
+                     /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64; do
+        if [[ -x "$candidate" ]]; then QEMU="$candidate"; break; fi
+    done
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=$(ls \
         {{output_dir}}/{{target}}-live.iso \
@@ -708,9 +711,12 @@ luks-test-qemu target installer_channel="dev":
 luks-boot-qemu-live target:
     #!/usr/bin/bash
     set -euo pipefail
-    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 \
-               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    QEMU=""
+    for candidate in /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+                     /usr/bin/qemu-system-x86_64 \
+                     /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64; do
+        if [[ -x "$candidate" ]]; then QEMU="$candidate"; break; fi
+    done
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=$(ls \
         {{output_dir}}/{{target}}-live.iso \
@@ -816,9 +822,12 @@ luks-install-qemu target:
 luks-boot-qemu-installed target:
     #!/usr/bin/bash
     set -euo pipefail
-    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 \
-               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    QEMU=""
+    for candidate in /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+                     /usr/bin/qemu-system-x86_64 \
+                     /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64; do
+        if [[ -x "$candidate" ]]; then QEMU="$candidate"; break; fi
+    done
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     OVMF_CODE=""; OVMF_VARS=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
@@ -1095,9 +1104,12 @@ gui-e2e target:
 plain-boot-qemu-live target:
     #!/usr/bin/bash
     set -euo pipefail
-    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 \
-               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    QEMU=""
+    for candidate in /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+                     /usr/bin/qemu-system-x86_64 \
+                     /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64; do
+        if [[ -x "$candidate" ]]; then QEMU="$candidate"; break; fi
+    done
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=""
     for f in \
