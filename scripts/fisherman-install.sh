@@ -26,20 +26,6 @@ FISH_RC=0
 "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
 cat /tmp/fish.log
 
-# QEMU can briefly keep the install disk busy while udev settles after
-# fisherman repartitions it. Retry only this transient partition-table failure.
-if [[ $FISH_RC -ne 0 ]] &&
-   grep -q "Re-reading the partition table failed" /tmp/fish.log &&
-   grep -q "Device or resource busy" /tmp/fish.log; then
-    echo "==> partition table still busy — waiting for udev and retrying fisherman"
-    sync
-    udevadm settle
-    sleep 3
-    FISH_RC=0
-    "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
-    cat /tmp/fish.log
-fi
-
 PATCH_HOSTNAME=0
 
 if [[ $FISH_RC -ne 0 ]]; then
@@ -52,6 +38,19 @@ if [[ $FISH_RC -ne 0 ]]; then
          grep -q "composefs deploy\|state/deploy\|no such file or directory" /tmp/fish.log; }; then
         echo "==> fisherman hostname write failed (composefs/ostree compat bug) — patching manually"
         PATCH_HOSTNAME=1
+    elif grep -q "Re-reading the partition table failed" /tmp/fish.log &&
+          grep -q "Device or resource busy" /tmp/fish.log; then
+        echo "==> partition table still busy — waiting for udev and retrying fisherman"
+        sync
+        udevadm settle
+        sleep 3
+        FISH_RC=0
+        "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
+        cat /tmp/fish.log
+        if [[ $FISH_RC -ne 0 ]]; then
+            echo "==> fisherman retry failed (rc=$FISH_RC) — propagating"
+            exit "$FISH_RC"
+        fi
     else
         echo "==> fisherman failed for a non-hostname reason (rc=$FISH_RC) — propagating"
         exit "$FISH_RC"
