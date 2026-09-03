@@ -22,8 +22,21 @@ set -euo pipefail
 RECIPE="${1:-/tmp/plain-recipe.json}"
 FISHERMAN_BIN="${FISHERMAN_BIN:-/usr/local/bin/fisherman}"
 
-FISH_RC=0
-"$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
+FISH_RC=1
+for attempt in 1 2 3; do
+    "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 && {
+        FISH_RC=0
+        break
+    }
+    FISH_RC=$?
+    if ! grep -Eiq "device or resource busy|re-reading the partition table|partition table.*busy" /tmp/fish.log ||
+       [[ "$attempt" -eq 3 ]]; then
+        break
+    fi
+    echo "==> transient partition-table contention — settling udev before retry $((attempt + 1))/3"
+    udevadm settle 2>/dev/null || true
+    sleep 10
+done
 cat /tmp/fish.log
 
 # QEMU can briefly keep the install disk busy while udev settles after
