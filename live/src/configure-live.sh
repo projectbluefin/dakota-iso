@@ -294,6 +294,7 @@ fi
 cat > /usr/lib/systemd/system/var-tmp.mount << 'UNITEOF'
 [Unit]
 Description=Large tmpfs for /var/tmp in the live environment
+ConditionKernelCommandLine=rd.live.image
 
 [Mount]
 What=tmpfs
