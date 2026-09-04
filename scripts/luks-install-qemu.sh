@@ -109,9 +109,9 @@ $SSH 'sudo bash -c "
         [[ -f \"\$entry\" ]] || continue
         if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
             if [[ -n \"\$LUKS_UUID\" ]]; then
-                sed -i \"s|^options .*|& console=tty0 console=ttyS0 rd.luks.name=\${LUKS_UUID}=root|\" \"\$entry\"
+                sed -i \"s|^options .*|& console=tty0 console=ttyS0 rd.luks.name=\${LUKS_UUID}=root systemd.mask=bootc-unified-storage.service|\" \"\$entry\"
             else
-                sed -i \"s|^options .*|& console=tty0 console=ttyS0|\" \"\$entry\"
+                sed -i \"s|^options .*|& console=tty0 console=ttyS0 systemd.mask=bootc-unified-storage.service|\" \"\$entry\"
             fi
             COUNT=\$((COUNT+1))
             echo \"  patched: \$(basename \$entry)\"

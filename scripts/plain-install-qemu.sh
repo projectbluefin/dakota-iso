@@ -103,7 +103,7 @@ $SSH "sudo bash -c \"
         echo \\\"=== BLS entry before patch: \\\$(basename \\\$entry) ===\\\"
         cat \\\"\\\$entry\\\"
         if grep -q \\\"^options \\\" \\\"\\\$entry\\\" && ! grep -q \\\"console=tty0\\\" \\\"\\\$entry\\\"; then
-            sed -i \\\"s|^options .*|& console=tty0 console=ttyS0 rd.info systemd.journald.forward_to_console=yes|\\\" \\\"\\\$entry\\\"
+            sed -i \\\"s|^options .*|& console=tty0 console=ttyS0 rd.info systemd.journald.forward_to_console=yes systemd.mask=bootc-unified-storage.service|\\\" \\\"\\\$entry\\\"
             COUNT=\\\$((COUNT+1))
         fi
         echo \\\"=== BLS entry after patch ===\\\"

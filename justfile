@@ -786,6 +786,13 @@ luks-boot-qemu-live target:
         -serial "file:{{luks-qemu-serial-live}}" \
         -display none \
         -daemonize
+    for i in {1..10}; do
+        if [[ -f "{{luks-qemu-serial-live}}" ]]; then
+            sudo chmod a+r "{{luks-qemu-serial-live}}"
+            break
+        fi
+        sleep 1
+    done
     echo "Live QEMU started (monitor: {{luks-qemu-monitor-live}})"
 
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"

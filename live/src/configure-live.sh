@@ -18,6 +18,11 @@ set -exo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Unified storage is not supported by the read-only live image and can
+# repeatedly restart while blocking the graphical target during E2E boots.
+mkdir -p /etc/systemd/system
+ln -sfn /dev/null /etc/systemd/system/bootc-unified-storage.service
+
 cleanup_liveuser_home_bind() {
     if [[ "${LIVEUSER_HOME_BIND_ACTIVE:-0}" == "1" ]]; then
         # Only attempt to umount if /home is a mountpoint to avoid unmounting a
