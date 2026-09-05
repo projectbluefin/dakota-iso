@@ -11,7 +11,7 @@ depends() {
 }
 
 installkernel() {
-    instmods loop isofs squashfs overlay
+    instmods loop iso9660 isofs squashfs overlay
     instmods usb-storage xhci-pci xhci_hcd ehci-pci ehci_hcd uhci-hcd ohci-hcd
     instmods sd_mod sr_mod virtio_blk virtio_pci virtio_scsi
     instmods exfat vfat fat ntfs3 ext4 nls_cp437 nls_iso8859_1 nls_utf8
