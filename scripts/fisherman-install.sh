@@ -22,36 +22,9 @@ set -euo pipefail
 RECIPE="${1:-/tmp/plain-recipe.json}"
 FISHERMAN_BIN="${FISHERMAN_BIN:-/usr/local/bin/fisherman}"
 
-FISH_RC=1
-for attempt in 1 2 3; do
-    "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 && {
-        FISH_RC=0
-        break
-    }
-    FISH_RC=$?
-    if ! grep -Eiq "device or resource busy|re-reading the partition table|partition table.*busy" /tmp/fish.log ||
-       [[ "$attempt" -eq 3 ]]; then
-        break
-    fi
-    echo "==> transient partition-table contention — settling udev before retry $((attempt + 1))/3"
-    udevadm settle 2>/dev/null || true
-    sleep 10
-done
+FISH_RC=0
+"$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
 cat /tmp/fish.log
-
-# QEMU can briefly keep the install disk busy while udev settles after
-# fisherman repartitions it. Retry only this transient partition-table failure.
-if [[ $FISH_RC -ne 0 ]] &&
-   grep -q "Re-reading the partition table failed" /tmp/fish.log &&
-   grep -q "Device or resource busy" /tmp/fish.log; then
-    echo "==> partition table still busy — waiting for udev and retrying fisherman"
-    sync
-    udevadm settle
-    sleep 3
-    FISH_RC=0
-    "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
-    cat /tmp/fish.log
-fi
 
 PATCH_HOSTNAME=0
 

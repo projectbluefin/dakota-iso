@@ -45,6 +45,7 @@ RUN set -e; \
         echo "Building initramfs natively for kernel ${kernel}"; \
         if dracut -v --force --reproducible --no-hostonly \
                 --add "dmsquash-live" \
+                --filesystems "iso9660 squashfs" \
                 --add-drivers "squashfs overlay loop iso9660 sr_mod cdrom" \
                 /tmp/initramfs.img "${kernel}"; then \
             ls -lh /tmp/initramfs.img; \
