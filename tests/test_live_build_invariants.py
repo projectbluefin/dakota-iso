@@ -281,6 +281,23 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
                 if line.strip().endswith(";") or line.strip() == "fi;":
                     break
 
+    def test_initramfs_includes_iso9660_filesystem_driver(self):
+        """Both initramfs paths must include Linux's isofs module."""
+        driver_lines = [
+            line for line in self.content.splitlines() if "--add-drivers" in line
+        ]
+        self.assertGreaterEqual(
+            len(driver_lines),
+            2,
+            "Native and Debian initramfs builds must declare filesystem drivers.",
+        )
+        for line in driver_lines:
+            self.assertIn(
+                "isofs",
+                line,
+                "ISO9660 support requires Linux's isofs kernel module.",
+            )
+
 
 class TestConfigureLiveSyntax(unittest.TestCase):
     """configure-live.sh must have valid bash syntax."""
