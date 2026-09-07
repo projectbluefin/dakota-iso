@@ -46,8 +46,8 @@ RUN set -e; \
         if dracut -v --force --reproducible --no-hostonly \
                 --add "dmsquash-live" \
                 --filesystems "iso9660 squashfs" \
-                --filesystems "iso9660 squashfs" \
                 --add-drivers "squashfs overlay loop iso9660 isofs sr_mod cdrom" \
+                --force-drivers "isofs" \
                 /tmp/initramfs.img "${kernel}"; then \
             ls -lh /tmp/initramfs.img; \
             echo native > /tmp/dracut-status; \
@@ -88,6 +88,7 @@ RUN set -ex; \
             --omit "shutdown" \
             --filesystems "iso9660 squashfs" \
             --add-drivers "squashfs overlay loop iso9660 isofs sr_mod cdrom" \
+            --force-drivers "isofs" \
             /tmp/initramfs.img "${kernel}"; \
     else \
         echo "Using native initramfs"; \

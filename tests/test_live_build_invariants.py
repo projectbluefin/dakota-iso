@@ -250,6 +250,15 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
             "Native dracut must include iso9660 or live boot cannot mount the ISO.",
         )
 
+    def test_initramfs_forces_iso9660_driver_early(self):
+        """Live boot must load isofs before mounting the ISO."""
+        force_lines = [
+            line for line in self.content.splitlines() if "--force-drivers" in line
+        ]
+        self.assertGreaterEqual(len(force_lines), 2)
+        for line in force_lines:
+            self.assertIn("isofs", line)
+
     def test_debian_stage_reads_dracut_status(self):
         """Debian stage must check dracut-status to decide whether to cross-build."""
         self.assertIn(
