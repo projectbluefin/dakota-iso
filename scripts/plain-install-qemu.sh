@@ -116,5 +116,8 @@ echo "Install complete. Shutting down live QEMU..."
 SOCAT_PREFIX=""
 if ! test -w "${MONITOR_LIVE}" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
 echo "system_powerdown" | $SOCAT_PREFIX socat - "UNIX-CONNECT:${MONITOR_LIVE}" 2>/dev/null || true
-sleep 5
+for _ in {1..30}; do
+    [[ ! -S "${MONITOR_LIVE}" ]] && exit 0
+    sleep 2
+done
 echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:${MONITOR_LIVE}" 2>/dev/null || true
