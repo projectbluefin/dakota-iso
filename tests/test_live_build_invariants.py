@@ -239,6 +239,17 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
             "the natively-built initramfs.",
         )
 
+    def test_native_stage_includes_live_filesystems(self):
+        """Native dracut must include filesystems needed to mount the ISO."""
+        native = self.content.split("AS initramfs-native", 1)[1].split(
+            "FROM debian:", 1
+        )[0]
+        self.assertIn(
+            '--filesystems "iso9660 squashfs"',
+            native,
+            "Native dracut must include iso9660 or live boot cannot mount the ISO.",
+        )
+
     def test_debian_stage_reads_dracut_status(self):
         """Debian stage must check dracut-status to decide whether to cross-build."""
         self.assertIn(
