@@ -699,6 +699,15 @@ luks-test-qemu target installer_channel="dev":
     set -euo pipefail
     DISK="/var/tmp/dakota-luks-install-{{target}}-{{installer_channel}}.qcow2"
     SCRATCH="/var/tmp/dakota-luks-scratch-{{target}}-{{installer_channel}}.img"
+    for monitor in "{{luks-qemu-monitor-live}}" "{{luks-qemu-monitor-installed}}"; do
+        if [[ -S "$monitor" ]]; then
+            printf 'quit\n' | sudo socat - "UNIX-CONNECT:$monitor" 2>/dev/null || true
+        fi
+    done
+    sleep 2
+    rm -f "$DISK" "$SCRATCH" "{{luks-qemu-monitor-live}}" \
+          "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-live}}" \
+          "{{luks-qemu-serial-installed}}"
     just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-live {{target}}
     just luks-qemu-ssh-port={{luks-qemu-ssh-port}} luks-install-qemu {{target}}
     just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-installed {{target}}
@@ -1006,6 +1015,12 @@ plain-test-qemu target:
     set -euo pipefail
     # Each matrix variant gets a fresh disk; stale partitions can remain busy
     # when a prior variant was interrupted before its live VM shut down.
+    for monitor in "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}"; do
+        if [[ -S "$monitor" ]]; then
+            printf 'quit\n' | sudo socat - "UNIX-CONNECT:$monitor" 2>/dev/null || true
+        fi
+    done
+    sleep 2
     rm -f "{{plain-qemu-disk}}" "{{plain-scratch-disk}}" \
            "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
            "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
