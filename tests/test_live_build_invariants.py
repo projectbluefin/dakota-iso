@@ -309,6 +309,15 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
                 "ISO9660 support requires Linux's isofs kernel module.",
             )
 
+    def test_initramfs_forces_iso9660_driver_early(self):
+        """Live boot must load isofs before mounting the ISO."""
+        force_lines = [
+            line for line in self.content.splitlines() if "--force-drivers" in line
+        ]
+        self.assertGreaterEqual(len(force_lines), 2)
+        for line in force_lines:
+            self.assertIn("isofs", line)
+
 
 class TestConfigureLiveSyntax(unittest.TestCase):
     """configure-live.sh must have valid bash syntax."""
