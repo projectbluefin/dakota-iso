@@ -1011,6 +1011,11 @@ plain-enospc-gate target:
 plain-test-qemu target:
     #!/usr/bin/bash
     set -euo pipefail
+    # Each matrix variant gets a fresh disk; stale partitions can remain busy
+    # when a prior variant was interrupted before its live VM shut down.
+    rm -f "{{plain-qemu-disk}}" "{{plain-scratch-disk}}" \
+           "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
+           "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-live={{plain-qemu-monitor-live}} \
          plain-qemu-serial-live={{plain-qemu-serial-live}} \
