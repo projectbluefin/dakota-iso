@@ -805,6 +805,11 @@ luks-boot-qemu-live target:
         -serial "file:{{luks-qemu-serial-live}}" \
         -display none \
         -daemonize
+    # QEMU_PREFIX=sudo (the /dev/kvm fallback above) makes this file
+    # root-owned, which silently defeats every `grep` in the readiness loop
+    # below (2>/dev/null on an unreadable file looks identical to "marker not
+    # present yet" — it never becomes true no matter how long the guest runs).
+    sudo chmod a+r "{{luks-qemu-serial-live}}" 2>/dev/null || chmod a+r "{{luks-qemu-serial-live}}" 2>/dev/null || true
     echo "Live QEMU started (monitor: {{luks-qemu-monitor-live}})"
 
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
@@ -918,6 +923,7 @@ luks-boot-qemu-installed target:
         -serial "file:{{luks-qemu-serial-installed}}" \
         -display none \
         -daemonize
+    sudo chmod a+r "{{luks-qemu-serial-installed}}" 2>/dev/null || chmod a+r "{{luks-qemu-serial-installed}}" 2>/dev/null || true
     echo "Installed QEMU started (monitor: {{luks-qemu-monitor-installed}})"
 
     for i in $(seq 1 15); do
@@ -1132,6 +1138,7 @@ plain-boot-qemu-live target:
         -serial "file:{{plain-qemu-serial-live}}" \
         -display none \
         -daemonize
+    sudo chmod a+r "{{plain-qemu-serial-live}}" 2>/dev/null || chmod a+r "{{plain-qemu-serial-live}}" 2>/dev/null || true
     echo "Live QEMU started (monitor: {{plain-qemu-monitor-live}})"
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
     echo "Waiting for live environment on port {{plain-qemu-ssh-port}}..."
@@ -1226,6 +1233,7 @@ plain-boot-qemu-installed target:
         -serial "file:{{plain-qemu-serial-installed}}" \
         -display none \
         -daemonize
+    sudo chmod a+r "{{plain-qemu-serial-installed}}" 2>/dev/null || chmod a+r "{{plain-qemu-serial-installed}}" 2>/dev/null || true
     echo "Installed QEMU started (monitor: {{plain-qemu-monitor-installed}})"
     for i in $(seq 1 15); do
         [[ -S "{{plain-qemu-monitor-installed}}" ]] && break
