@@ -13,6 +13,9 @@
 # All variables have defaults so the script can be run standalone for testing.
 # Usage: TARGET=dakota OUTPUT_DIR=output bash scripts/iso-sd-boot.sh
 set -euo pipefail
+# Single host-side reader for per-variant config (see scripts/variant-config.sh).
+# shellcheck source=scripts/variant-config.sh
+source "$(dirname "${BASH_SOURCE[0]}")/variant-config.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -81,9 +84,7 @@ echo "Building squashfs and boot tar from localhost/${TARGET}-installer..."
 
 printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${OUTPUT_DIR}/.bootc-root-mount.toml"
 
-LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
-BOOTLOADER_VARIANT=$(echo "${LIVE_TARGET}" | sed 's/-nvidia-open$//;s/-nvidia$//')
-COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
+COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")
 echo "=== Building offline OCI store (composefs=${COMPOSEFS_BACKEND}) for ${PAYLOAD_IMAGE} ==="
 
 INJECT_CTR=$(_ns "buildah from --pull-never '${PAYLOAD_IMAGE}'")

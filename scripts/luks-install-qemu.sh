@@ -4,6 +4,9 @@
 # Reuses the same SSH logic as luks-install; install disk is /dev/vda in QEMU.
 
 set -euo pipefail
+# Single host-side reader for per-variant config (see scripts/variant-config.sh).
+# shellcheck source=scripts/variant-config.sh
+source "$(dirname "${BASH_SOURCE[0]}")/variant-config.sh"
 
 if [[ $# -lt 5 ]]; then
     echo "Usage: $0 <target> <luks_passphrase> <ssh_port> <monitor_live_socket> <fisher_repo>" >&2
@@ -34,13 +37,8 @@ fi
 
 RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
 trap 'rm -f "${RECIPE_TMP}"' EXIT
-LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
-BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
-COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
-BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
-
-# Normalise "grub" → "grub2" for fisherman's recipe validator.
-if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
+COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")
+BOOTLOADER=$(variant_bootloader_recipe "${TARGET}")
 
 # Determine target filesystem
 FILESYSTEM="btrfs"
