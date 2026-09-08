@@ -51,8 +51,8 @@ if [[ $FISH_RC -ne 0 ]]; then
          grep -q "composefs deploy\|state/deploy\|no such file or directory" /tmp/fish.log; }; then
         echo "==> fisherman hostname write failed (composefs/ostree compat bug) — patching manually"
         PATCH_HOSTNAME=1
-    elif grep -q "Re-reading the partition table failed" /tmp/fish.log &&
-          grep -q "Device or resource busy" /tmp/fish.log; then
+    elif grep -A5 "Re-reading the partition table failed" /tmp/fish.log |
+          grep -q "Device or resource busy"; then
         echo "==> partition table still busy — waiting for udev and retrying fisherman"
         sync
         udevadm settle
