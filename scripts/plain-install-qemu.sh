@@ -44,7 +44,7 @@ RECIPE_TMP=$(mktemp /tmp/plain-recipe-XXXXXX.json)
 trap 'rm -f "${RECIPE_TMP}"' EXIT
 
 echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
-$SSH 'sudo bash -c "
+printf 'live\n' | $SSH 'sudo -S -p "" bash -c "
     mkfs.ext4 -F /dev/vdb >/dev/null
     umount /var/tmp 2>/dev/null || true
     mount /dev/vdb /var/tmp

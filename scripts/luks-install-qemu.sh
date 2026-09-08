@@ -46,7 +46,7 @@ if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
 FILESYSTEM="btrfs"
 
 echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
-$SSH 'sudo bash -c "
+printf 'live\n' | $SSH 'sudo -S -p "" bash -c "
     mkfs.ext4 -F /dev/vdb >/dev/null
     umount /var/tmp 2>/dev/null || true
     mount /dev/vdb /var/tmp
@@ -91,7 +91,7 @@ else
 fi
 
 echo "Patching BLS entries to enable dual serial+VT console and LUKS unlock..."
-$SSH 'sudo bash -c "
+printf 'live\n' | $SSH 'sudo -S -p "" bash -c "
     set -euo pipefail
     BOOT_PART=\"/dev/vda1\"
     LUKS_PART=\"/dev/vda2\"
