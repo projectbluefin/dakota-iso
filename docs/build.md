@@ -212,14 +212,15 @@ in the image config. Dakota/bootc images have no Entrypoint by design; a fake on
 `bootc install` to fail with "cannot execute binary file". Always use
 `buildah commit --squash` to squash layers cleanly without touching config.
 
-### live/src/install-flatpaks.sh must mirror dakota/src/install-flatpaks.sh (2026-06)
+### dakota/src/install-flatpaks.sh was dead code (removed 2026-09)
 
-`live/src/install-flatpaks.sh` is a parallel copy of `dakota/src/install-flatpaks.sh`
-for the live-squashfs build path. When the installer source logic changes in one, it
-must be replicated in the other. After PR fc0346d added primary/fallback logic to the
-`dakota` copy, the `live` copy was left behind still pointing only at `tuna-os/tuna-installer`.
-Both files now use `projectbluefin/bootc-installer` as primary (with `--fail` so curl
-exits non-zero on HTTP errors) and fall back to `tuna-os/tuna-installer` automatically.
+`dakota/src/install-flatpaks.sh` used to be a parallel copy of
+`live/src/install-flatpaks.sh`, kept in sync by hand. It stopped being referenced by
+any Containerfile once all variants moved onto `live/Containerfile` / `live/src/`, but
+the file (and this note telling people to keep it in sync) stuck around — silently
+drifting to a release-tag scheme (`continuous`/`continuous-dev`) that no longer exists
+upstream. Removed rather than fixed, since nothing built from it.
+`live/src/install-flatpaks.sh` is the only copy; there is nothing left to mirror.
 
 ### filesystem choice: always btrfs for dakota (2026-06)
 

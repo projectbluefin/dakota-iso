@@ -201,23 +201,24 @@ installer nobody ships. Every fisherman fix merged after mid-June was invisible 
 including the scratch-cache ENOSPC fix the gate should have caught
 ([`install-failures.md`](install-failures.md) Failure 5).
 
-**Fixed:** both workflows now clone `--branch main` and log the resolved commit, so the
+**Fixed:** both workflows clone a long-lived branch and log the resolved commit, so the
 job output records exactly which installer was tested.
 
 **Guarded:** `TestE2EFishermanRef` in `tests/test_live_build_invariants.py` fails the
 build if either workflow clones anything other than a long-lived branch (`main`/`dev`).
 
-**Branch note:** fisherman's *default* branch is `dev`, but `main` is the active line
-(`main` was 25 commits ahead of `dev` on 2026-08-01). A PR opened with the default base
-lands on the branch nobody ships. Target `main`.
+**Branch note (2026-09):** `projectbluefin/fisherman` is retired; both workflows now
+clone `tuna-os/fisherman`, the sole upstream. Unlike the old fork, it has no
+`main`/`prod` split — `dev` is both its default and active line, so that's what the
+clone step targets.
 
 ---
 
 ## Rolling installer release tags are impossible now (2026-08-01)
 
 `live/src/install-flatpaks.sh` fetches the installer Flatpak from a
-`projectbluefin/bootc-installer` **release asset**, not from a branch. Both channels
-now use the same versioned-release redirect and differ only in filename:
+`tuna-os/bootc-installer` **release asset**, not from a branch. Both channels
+use the same versioned-release redirect and differ only in filename:
 
 | channel | URL |
 |---|---|
