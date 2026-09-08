@@ -46,7 +46,7 @@ Currently advisory (warns but does not block merge). Treat warnings as hard requ
 | `.github/workflows/test-*.yml` | `docs/skills/e2e-ci.md` or `docs/luks-testing.md` |
 | `.github/workflows/skill-drift.yml` | `docs/skills/skill-drift.md` (this file) |
 | `justfile` | whichever skill owns the changed recipe |
-| `dakota/src/build-iso.sh`, `live/src/build-iso.sh` | `docs/architecture.md` or `docs/build.md` |
+| `live/src/build-iso.sh` | `docs/architecture.md` or `docs/build.md` |
 | `live/src/configure-live.sh` | `docs/architecture.md` |
 | `live/src/install-flatpaks.sh` | `docs/build.md` |
 | `scripts/build-live-squashfs.sh` | `docs/build.md` |
