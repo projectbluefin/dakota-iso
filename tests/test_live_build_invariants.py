@@ -1141,10 +1141,12 @@ class TestE2EFishermanRef(unittest.TestCase):
     """
 
     E2E_WORKFLOWS = ("test-plain-install.yml", "test-luks-install.yml")
+    # tuna-os/fisherman (the sole upstream after projectbluefin/fisherman was
+    # retired) has no main/prod split — dev is both its default and active line.
     LONG_LIVED = {"main", "dev"}
 
     CLONE_RE = re.compile(
-        r"git clone\s+\S*github\.com/projectbluefin/fisherman\.git\s*\\?\s*\n"
+        r"git clone\s+\S*github\.com/tuna-os/fisherman\.git\s*\\?\s*\n"
         r"\s*--branch\s+(?P<branch>\S+)",
     )
 
