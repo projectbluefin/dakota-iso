@@ -22,9 +22,12 @@ ARG TARGET=dakota-nvidia
 ARG TAG=stable
 # REGISTRY selects the OCI registry org. Defaults to projectbluefin.
 ARG REGISTRY=projectbluefin
+# BASE_DIGEST pins the reference image to a cosign-verified digest
+# (e.g. "@sha256:..."). Empty = resolve the mutable tag (unverified).
+ARG BASE_DIGEST=""
 
 # ── Stage 1: Reference image (kernel modules source) ─────────────────────────
-FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG} AS ref
+FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG}${BASE_DIGEST} AS ref
 
 # ── Stage 2a: Native initramfs (for images that have dracut, e.g. Fedora/bluefin)
 # If dracut is available on the target image, build the initramfs there so
