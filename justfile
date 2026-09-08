@@ -801,13 +801,23 @@ luks-boot-qemu-live target:
 
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
     echo "Waiting for live environment on port {{luks-qemu-ssh-port}}..."
-    # Check for DAKOTA_LIVE_READY serial marker OR SSH connectivity.
-    # The serial marker requires live-ready.service to print to journal+console.
-    # On some installer channel builds (e.g. dev) the service starts but never
-    # writes to the serial console; SSH still works because debug-ssh-banner
-    # confirms sshd is up.  Either path means the live env is ready.
-    for i in $(seq 1 60); do
-        if grep -q "DAKOTA_LIVE_READY" "{{luks-qemu-serial-live}}" 2>/dev/null; then
+    # Check for DAKOTA_LIVE_READY/debug-ssh-banner serial markers OR SSH
+    # connectivity. The DAKOTA_LIVE_READY marker requires live-ready.service to
+    # print to journal+console; on some installer channel builds the service
+    # starts but never writes to the serial console, so debug-ssh-banner
+    # (which fires earlier, right when sshd comes up) or a live SSH connection
+    # attempt are accepted as equivalent readiness signals.
+    #
+    # Loop bound: each non-ready iteration costs ~10s (SSH's own 5s
+    # ConnectTimeout plus the 5s sleep below), so 150 iterations is a ~25min
+    # ceiling, not the ~12.5min the iteration count alone suggests. The
+    # `stable` (full GNOME desktop) variant has been observed taking ~8min to
+    # become reachable under loaded CI runners — GDM plus its full unit set
+    # boots meaningfully slower than the lighter dakota/lts variants — while
+    # still making steady progress (not hung), so this widens the ceiling
+    # rather than fixing a stall.
+    for i in $(seq 1 150); do
+        if grep -qE "DAKOTA_LIVE_READY|debug-ssh-banner" "{{luks-qemu-serial-live}}" 2>/dev/null; then
             echo "Live environment ready (serial marker seen)"
             break
         fi
@@ -815,7 +825,7 @@ luks-boot-qemu-live target:
             echo "Live environment ready (SSH connected)"
             break
         fi
-        [[ "$i" -eq 60 ]] && { echo "ERROR: live env not ready after 5m"; tail -30 "{{luks-qemu-serial-live}}" || true; exit 1; }
+        [[ "$i" -eq 150 ]] && { echo "ERROR: live env not ready after ~25m"; tail -30 "{{luks-qemu-serial-live}}" || true; exit 1; }
         sleep 5
     done
 
