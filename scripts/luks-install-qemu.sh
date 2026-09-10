@@ -91,7 +91,7 @@ else
 fi
 
 echo "Patching BLS entries to enable dual serial+VT console and LUKS unlock..."
-$SSH 'sudo bash -c "
+printf 'live\n' | $SSH 'sudo -S -p "" bash -c "
     set -euo pipefail
     BOOT_PART=\"/dev/vda1\"
     LUKS_PART=\"/dev/vda2\"

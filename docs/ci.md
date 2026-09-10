@@ -683,22 +683,19 @@ Fix: `build-live-squashfs.sh` detects `composeFsBackend` from `recipe.json` and:
 - composefs: `"image": "containers-storage:<ref>"`
 - non-composefs: `"image": "oci:/var/lib/containers/oci-store"`
 
-fisherman needs the `bootcDirectOCI` code path (projectbluefin/fisherman dev→prod merge,
-bootc-installer PR #192) to handle `oci:` source refs.
+fisherman needs the `bootcDirectOCI` code path (originally landed via
+projectbluefin/fisherman dev→prod merge, bootc-installer PR #192) to handle `oci:`
+source refs.
 
-### fisherman prod branch must be kept in sync with dev (2026-06)
+### fisherman submodule pin can lag behind dev (2026-09)
 
-`projectbluefin/fisherman` has two branches: `dev` (active development) and `prod`
-(what bootc-installer submodule points at). They diverge and must be explicitly merged.
-
-To land dev fixes in a released bootc-installer:
-1. `git checkout origin/prod && git merge dev --no-ff` (resolve any conflicts)
-2. `git push origin HEAD:prod`
-3. Update fisherman submodule in `projectbluefin/bootc-installer` to the new prod SHA
-4. Open a PR in bootc-installer → CI builds and publishes a new Flatpak release
-
-The fisherman submodule in bootc-installer points to `prod`, not `dev`. Changes on `dev`
-do **not** automatically land in released installer builds.
+`projectbluefin/bootc-installer` and `projectbluefin/fisherman` are retired.
+`tuna-os/bootc-installer`'s `fisherman` submodule now points at `tuna-os/fisherman`
+(bootc-installer#73). `tuna-os/fisherman` has no `main`/`prod` split — `dev` is both
+its default and active line — so there's no branch-sync step to run. The remaining gap
+is simpler: the submodule is a pinned SHA, so a fix merged to `tuna-os/fisherman`'s
+`dev` still needs the submodule pin in `tuna-os/bootc-installer` bumped and a new
+Flatpak release cut before it reaches a dakota ISO.
 
 ### Workflow matrix must be kept in sync with variant config files (2026-06)
 

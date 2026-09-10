@@ -302,6 +302,32 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
                 if line.strip().endswith(";") or line.strip() == "fi;":
                     break
 
+    def test_initramfs_includes_iso9660_filesystem_driver(self):
+        """Both initramfs paths must include Linux's isofs module."""
+        driver_lines = [
+            line for line in self.content.splitlines() if "--add-drivers" in line
+        ]
+        self.assertGreaterEqual(
+            len(driver_lines),
+            2,
+            "Native and Debian initramfs builds must declare filesystem drivers.",
+        )
+        for line in driver_lines:
+            self.assertIn(
+                "isofs",
+                line,
+                "ISO9660 support requires Linux's isofs kernel module.",
+            )
+
+    def test_initramfs_forces_iso9660_driver_early(self):
+        """Live boot must load isofs before mounting the ISO."""
+        force_lines = [
+            line for line in self.content.splitlines() if "--force-drivers" in line
+        ]
+        self.assertGreaterEqual(len(force_lines), 2)
+        for line in force_lines:
+            self.assertIn("isofs", line)
+
 
 class TestConfigureLiveSyntax(unittest.TestCase):
     """configure-live.sh must have valid bash syntax."""
@@ -1360,10 +1386,12 @@ class TestE2EFishermanRef(unittest.TestCase):
     """
 
     E2E_WORKFLOWS = ("test-plain-install.yml", "test-luks-install.yml")
+    # tuna-os/fisherman (the sole upstream after projectbluefin/fisherman was
+    # retired) has no main/prod split — dev is both its default and active line.
     LONG_LIVED = {"main", "dev"}
 
     CLONE_RE = re.compile(
-        r"git clone\s+\S*github\.com/projectbluefin/fisherman\.git\s*\\?\s*\n"
+        r"git clone\s+\S*github\.com/tuna-os/fisherman\.git\s*\\?\s*\n"
         r"\s*--branch\s+(?P<branch>\S+)",
     )
 

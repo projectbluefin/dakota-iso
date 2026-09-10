@@ -644,7 +644,15 @@ luks-boot target:
 # reliably triggers ENOSPC if fisherman writes scratch to /var/tmp instead
 # of the target disk.  Override with qemu-mem=8192 for interactive debugging.
 qemu-mem := "8192"
-qemu-smp := "8"
+# 4, not 8: GitHub-hosted runners provide 4 vCPUs, and KVM itself warns
+# "Number of SMP cpus requested (8) exceeds the recommended cpus supported
+# by KVM (4)" on every boot. The resulting 2x oversubscription measurably
+# slows guest boot under CI load — the `stable` (full GNOME desktop) variant
+# was observed printing its DAKOTA_LIVE_READY marker only right at a 25-minute
+# wait ceiling, while lighter variants (dakota, lts) stayed comfortably under
+# 10 minutes on the same oversubscribed CPU. Matching vCPU count to the host
+# removes the scheduling contention rather than just waiting it out.
+qemu-smp := "4"
 
 # QEMU install disk path (override with: just luks-qemu-disk=/path/to/disk.qcow2 ...)
 # Default includes the target variant so parallel CI jobs don't contend.
@@ -797,24 +805,32 @@ luks-boot-qemu-live target:
         -serial "file:{{luks-qemu-serial-live}}" \
         -display none \
         -daemonize
-    for i in {1..10}; do
-        if [[ -f "{{luks-qemu-serial-live}}" ]]; then
-            sudo chmod a+r "{{luks-qemu-serial-live}}"
-            break
-        fi
-        sleep 1
-    done
+    # QEMU_PREFIX=sudo (the /dev/kvm fallback above) makes this file
+    # root-owned, which silently defeats every `grep` in the readiness loop
+    # below (2>/dev/null on an unreadable file looks identical to "marker not
+    # present yet" — it never becomes true no matter how long the guest runs).
+    sudo chmod a+r "{{luks-qemu-serial-live}}" 2>/dev/null || chmod a+r "{{luks-qemu-serial-live}}" 2>/dev/null || true
     echo "Live QEMU started (monitor: {{luks-qemu-monitor-live}})"
 
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
     echo "Waiting for live environment on port {{luks-qemu-ssh-port}}..."
-    # Check for DAKOTA_LIVE_READY serial marker OR SSH connectivity.
-    # The serial marker requires live-ready.service to print to journal+console.
-    # On some installer channel builds (e.g. dev) the service starts but never
-    # writes to the serial console; SSH still works because debug-ssh-banner
-    # confirms sshd is up.  Either path means the live env is ready.
-    for i in $(seq 1 60); do
-        if grep -q "DAKOTA_LIVE_READY" "{{luks-qemu-serial-live}}" 2>/dev/null; then
+    # Check for DAKOTA_LIVE_READY/debug-ssh-banner serial markers OR SSH
+    # connectivity. The DAKOTA_LIVE_READY marker requires live-ready.service to
+    # print to journal+console; on some installer channel builds the service
+    # starts but never writes to the serial console, so debug-ssh-banner
+    # (which fires earlier, right when sshd comes up) or a live SSH connection
+    # attempt are accepted as equivalent readiness signals.
+    #
+    # Loop bound: each non-ready iteration costs ~10s (SSH's own 5s
+    # ConnectTimeout plus the 5s sleep below), so 150 iterations is a ~25min
+    # ceiling, not the ~12.5min the iteration count alone suggests. The
+    # `stable` (full GNOME desktop) variant has been observed taking ~8min to
+    # become reachable under loaded CI runners — GDM plus its full unit set
+    # boots meaningfully slower than the lighter dakota/lts variants — while
+    # still making steady progress (not hung), so this widens the ceiling
+    # rather than fixing a stall.
+    for i in $(seq 1 150); do
+        if grep -qE "DAKOTA_LIVE_READY|debug-ssh-banner" "{{luks-qemu-serial-live}}" 2>/dev/null; then
             echo "Live environment ready (serial marker seen)"
             break
         fi
@@ -822,7 +838,7 @@ luks-boot-qemu-live target:
             echo "Live environment ready (SSH connected)"
             break
         fi
-        [[ "$i" -eq 60 ]] && { echo "ERROR: live env not ready after 5m"; tail -30 "{{luks-qemu-serial-live}}" || true; exit 1; }
+        [[ "$i" -eq 150 ]] && { echo "ERROR: live env not ready after ~25m"; tail -30 "{{luks-qemu-serial-live}}" || true; exit 1; }
         sleep 5
     done
 
@@ -907,6 +923,7 @@ luks-boot-qemu-installed target:
         -serial "file:{{luks-qemu-serial-installed}}" \
         -display none \
         -daemonize
+    sudo chmod a+r "{{luks-qemu-serial-installed}}" 2>/dev/null || chmod a+r "{{luks-qemu-serial-installed}}" 2>/dev/null || true
     echo "Installed QEMU started (monitor: {{luks-qemu-monitor-installed}})"
 
     for i in $(seq 1 15); do
@@ -1200,6 +1217,7 @@ plain-boot-qemu-live target:
         -serial "file:{{plain-qemu-serial-live}}" \
         -display none \
         -daemonize
+    sudo chmod a+r "{{plain-qemu-serial-live}}" 2>/dev/null || chmod a+r "{{plain-qemu-serial-live}}" 2>/dev/null || true
     echo "Live QEMU started (monitor: {{plain-qemu-monitor-live}})"
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
     echo "Waiting for live environment on port {{plain-qemu-ssh-port}}..."
@@ -1294,6 +1312,7 @@ plain-boot-qemu-installed target:
         -serial "file:{{plain-qemu-serial-installed}}" \
         -display none \
         -daemonize
+    sudo chmod a+r "{{plain-qemu-serial-installed}}" 2>/dev/null || chmod a+r "{{plain-qemu-serial-installed}}" 2>/dev/null || true
     echo "Installed QEMU started (monitor: {{plain-qemu-monitor-installed}})"
     for i in $(seq 1 15); do
         [[ -S "{{plain-qemu-monitor-installed}}" ]] && break
