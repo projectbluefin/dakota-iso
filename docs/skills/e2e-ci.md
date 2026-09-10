@@ -16,6 +16,8 @@ version: "1.0"
 last_updated: "2026-07-30"
 metadata:
   type: reference
+context7_sources:
+  - /websites/api_pygobject_gnome
 ---
 
 # E2E CI — Plain Install Test
@@ -37,6 +39,20 @@ Skill for the plain composefs install E2E gate in `build-iso.yml`.
 - For R2 promotion — use `docs/r2-promotion.md`
 - For LUKS-specific failures — use `docs/luks-testing.md`
 - For build-time container failures — use `docs/build.md`
+
+## Core Process
+
+1. Build the ISO with `debug=1`; never enable test-only access in production.
+2. Boot a fresh QEMU guest and wait for both the serial readiness marker and SSH.
+3. Run the test path against that fresh guest, then boot the installed disk.
+4. Preserve serial logs and guest diagnostics on failure.
+
+## Common Rationalizations
+
+- “The production ISO booted, so the E2E is covered.” — It lacks debug-only
+  SSH and accessibility setup; validate the debug artifact separately.
+- “The driver imported on the build host.” — Import it in the booted guest,
+  whose GNOME OS runtime supplies the actual binding and session bus.
 
 ---
 
@@ -325,8 +341,42 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 - Using `-smp 4 -m 4096` in a QEMU command (too slow; use `{{qemu-smp}}` / `{{qemu-mem}}` justfile vars)
 - Using bare `-e sys` or `-e dev` in mksquashfs (4.7+ removes the dir; use `-wildcards -e "sys/*"`)
 - Declaring an install verified without booting the installed disk
-- Using `installer_channel=dev` in CI or production builds (active fisherman regression)
+- Using `installer_channel=dev` in production builds; the scheduled GUI
+  acceptance matrix deliberately tests both dev and stable
 - SSH connecting to a production ISO that has sshd disabled (build with `debug=1` for testing)
+
+### Drive the auto-launched installer through AT-SPI
+
+`scripts/atspi-installer-driver.py` runs inside a fresh debug ISO guest as
+`liveuser`. It discovers the existing `org.bootcinstaller.Installer` Flatpak
+on that user's session bus, selects `/dev/vda`, completes the visible
+confirmations, and waits for completion. It must not launch the Flatpak: the
+acceptance test validates the normal desktop auto-launch path.
+
+The driver uses `gi.repository.Atspi`, the GNOME OS PyGObject introspection
+binding already included by the live image, rather than `pyatspi`, which the
+image does not package. Before driving the UI, `just gui-e2e dakota` runs the
+driver's `--check-dependencies` probe in the booted debug guest.
+
+```python
+import gi
+
+gi.require_version("Atspi", "2.0")
+from gi.repository import Atspi
+```
+
+Only `DEBUG=1` sets and locks
+`org.gnome.desktop.interface toolkit-accessibility=true` and adds
+`GTK_MODULES=atk-bridge` to the desktop entry, so the auto-launched Flatpak
+exposes its tree on the live user's AT-SPI bus. Production ISOs receive none
+of those forcing settings. `just gui-e2e dakota` then uses the existing plain
+QEMU boot and verification recipes around the guest driver. On a failure,
+retain the driver's tree/log diagnostics and the serial logs.
+
+Source: Context7 `/websites/api_pygobject_gnome` confirms the
+`gi.require_version(...); from gi.repository import ...` binding pattern.
+The current GNOME OS image is the authority for the `Atspi` namespace used by
+the driver.
 
 ## Verification
 

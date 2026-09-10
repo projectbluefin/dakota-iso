@@ -18,6 +18,11 @@ set -exo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Unified storage is not supported by the read-only live image and can
+# repeatedly restart while blocking the graphical target during E2E boots.
+mkdir -p /etc/systemd/system
+ln -sfn /dev/null /etc/systemd/system/bootc-unified-storage.service
+
 cleanup_liveuser_home_bind() {
     if [[ "${LIVEUSER_HOME_BIND_ACTIVE:-0}" == "1" ]]; then
         # Only attempt to umount if /home is a mountpoint to avoid unmounting a
@@ -187,10 +192,14 @@ INSTALLER_APP_ID="org.bootcinstaller.Installer"
 # /usr/local -> /var/usrlocal and /var/usrlocal doesn't exist at build time.
 mkdir -p /usr/share/applications
 INSTALLER_DESKTOP_ID="${INSTALLER_APP_ID}.desktop"
+INSTALLER_ATSPI_ARGS=()
+if [[ "${DEBUG:-0}" == "1" ]]; then
+    INSTALLER_ATSPI_ARGS=(--env=GTK_MODULES=atk-bridge)
+fi
 cat > "/usr/share/applications/${INSTALLER_DESKTOP_ID}" << DESKTOPEOF
 [Desktop Entry]
 Name=Dakota Installer
-Exec=/usr/bin/flatpak run --branch=master --arch=x86_64 --command=bootc-installer ${INSTALLER_APP_ID}
+Exec=/usr/bin/flatpak run ${INSTALLER_ATSPI_ARGS[*]} --branch=master --arch=x86_64 --command=bootc-installer ${INSTALLER_APP_ID}
 Icon=dakota
 Terminal=false
 Type=Application
@@ -239,6 +248,18 @@ cat > /etc/dconf/db/distro.d/locks/50-live-iso << 'LOCKSEOF'
 /org/gnome/settings-daemon/plugins/power/sleep-inactive-battery-timeout
 LOCKSEOF
 
+if [[ "${DEBUG:-0}" == "1" ]]; then
+    cat >> /etc/dconf/db/distro.d/50-live-iso << 'DCONFEOF'
+
+[org/gnome/desktop/interface]
+toolkit-accessibility=true
+DCONFEOF
+
+    cat >> /etc/dconf/db/distro.d/locks/50-live-iso << 'LOCKSEOF'
+/org/gnome/desktop/interface/toolkit-accessibility
+LOCKSEOF
+fi
+
 dconf update || echo 'Warning: dconf update failed (will compile on first boot)'
 
 # Mask systemd sleep/suspend targets so the kernel never suspends regardless
@@ -273,6 +294,7 @@ fi
 cat > /usr/lib/systemd/system/var-tmp.mount << 'UNITEOF'
 [Unit]
 Description=Large tmpfs for /var/tmp in the live environment
+ConditionKernelCommandLine=rd.live.image
 
 [Mount]
 What=tmpfs
@@ -472,7 +494,7 @@ mkdir -p /etc/xdg/autostart
 cat > /etc/xdg/autostart/tuna-installer.desktop << DTEOF
 [Desktop Entry]
 Name=Dakota Installer
-Exec=flatpak run --env=BOOTC_CUSTOM_RECIPE=/run/host/etc/bootc-installer/recipe.json ${INSTALLER_APP_ID}
+Exec=flatpak run ${INSTALLER_ATSPI_ARGS[*]} --env=BOOTC_CUSTOM_RECIPE=/run/host/etc/bootc-installer/recipe.json ${INSTALLER_APP_ID}
 Icon=dakota
 Type=Application
 X-GNOME-Autostart-enabled=true
@@ -486,7 +508,7 @@ cat > /usr/share/applications/dakota-installer.desktop << DTEOF
 [Desktop Entry]
 Name=Dakota Installer
 Comment=Install Dakota to your computer
-Exec=flatpak run --env=BOOTC_CUSTOM_RECIPE=/run/host/etc/bootc-installer/recipe.json ${INSTALLER_APP_ID}
+Exec=flatpak run ${INSTALLER_ATSPI_ARGS[*]} --env=BOOTC_CUSTOM_RECIPE=/run/host/etc/bootc-installer/recipe.json ${INSTALLER_APP_ID}
 Icon=dakota
 Type=Application
 Categories=System;

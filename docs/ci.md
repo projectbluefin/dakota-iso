@@ -28,6 +28,7 @@ gh workflow run build-iso-bluefin.yml --ref main
 | Bluefin Build & Publish | `build-iso-bluefin.yml` | 1st of month 05:00 UTC, `workflow_dispatch` |
 | LUKS E2E Test | `test-luks-install.yml` | PRs to main, weekly Mon 04:00 UTC, `workflow_dispatch` |
 | Plain Install E2E | `test-plain-install.yml` | PRs to main, weekly Tue 04:00 UTC, `workflow_dispatch` |
+| GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
 | ShellCheck Lint | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
 
@@ -200,12 +201,27 @@ This workflow builds a debug Dakota ISO and runs the full plain-install QEMU pat
 (`just ... plain-test-qemu dakota`) to catch unencrypted installer regressions,
 including the tight-memory ENOSPC class.
 
+## scheduled-gui-installer.yml
+
+**Matrix:** `dakota × installer_channel: [dev, stable]` (fail-fast: false)
+**Timeout:** 120 minutes
+**Triggers:** weekly Wednesday 04:00 UTC and `workflow_dispatch` only
+
+This acceptance workflow builds a debug ISO for each installer channel and runs
+`just gui-e2e dakota`. The recipe drives the desktop's already auto-launched
+installer over the live user's AT-SPI bus, patches the installed boot entries
+for serial verification, and boots the target disk. It always uploads serial
+logs, screenshots, AT-SPI diagnostics, and guest installer logs. Its token has
+only `contents: read` and `packages: read` permissions.
+
 ## Adding a new workflow
 
 All workflow files go in `.github/workflows/`. Before adding:
 - Run `actionlint`
 - Check matrix `fail-fast: false` for variant builds
-- Do not use `installer_channel=dev` in scheduled/release builds
+- Do not use `installer_channel=dev` in release builds. The scheduled GUI
+  acceptance workflow is the explicit exception because it detects installer
+  regressions before the stable bundle is published.
 
 ## lint.yml — ShellCheck
 
