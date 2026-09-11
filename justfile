@@ -174,7 +174,15 @@ chunkify src dst:
 
     echo "==> Tagging and pushing to {{dst}}..."
     podman tag "${LOADED_ID}" "{{dst}}"
-    podman push --tls-verify=false "{{dst}}"
+    # Only skip TLS verification for clearly local registries. Pushing to a
+    # remote registry (e.g. ghcr.io) with --tls-verify=false exposes the
+    # registry credentials to MITM credential theft.
+    push_tls_args=()
+    case "{{dst}}" in
+        localhost*|127.*|192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|*.local*)
+            push_tls_args+=(--tls-verify=false) ;;
+    esac
+    podman push "${push_tls_args[@]}" "{{dst}}"
 
     echo "==> Done: {{dst}}"
 
