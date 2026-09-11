@@ -22,6 +22,18 @@ SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLeve
 SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p ${SSH_PORT}"
 SCP="sshpass -p live scp $SSH_OPTS -P ${SSH_PORT}"
 
+# On any unhandled failure, dump the VM's SSH/auth state before exiting. A
+# wrong-password rejection (sshpass exit 5) otherwise leaves no evidence of
+# whether sshd offered password auth or liveuser's password survived boot.
+# passwd -S reports only lock status, never the hash.
+dump_vm_diagnostics() {
+    rc=$?
+    echo "=== VM SSH DIAGNOSTICS (script failed, rc=${rc}) ==="
+    $SSH 'sudo passwd -S liveuser; sudo sshd -T 2>/dev/null | grep -iE "^(passwordauthentication|permitrootlogin|usepam) " ; sudo journalctl -u sshd -u ssh -n 30 --no-pager 2>/dev/null' || true
+    echo "=== END VM SSH DIAGNOSTICS ==="
+}
+trap dump_vm_diagnostics ERR
+
 # Use local containers-storage if the image is cached there (offline install);
 # otherwise fall back to a network pull via docker://.
 if $SSH "sudo podman image exists '${PAYLOAD_IMAGE}' 2>/dev/null"; then
