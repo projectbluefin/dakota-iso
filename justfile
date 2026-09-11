@@ -162,7 +162,9 @@ chunkify src dst:
         --entrypoint="" \
         -v "${CHUNK_OUT}:/run/out:Z" \
         --mount "type=image,source={{src}},target=/chunkah" \
-        ghcr.io/tuna-os/chunkah:latest \
+        # Pinned digest (resolved from :latest 2026-09-10) — mutable :latest
+        # re-tags would run attacker-controlled code in the publish pipeline.
+        ghcr.io/tuna-os/chunkah:latest@sha256:338ac4086ed919cf511cfca5e00317a3f65db27df86d76e833775ed07237b2dc \
         sh -c 'chunkah build > /run/out/out.ociarchive'
 
     echo "==> Loading rechunked archive..."
@@ -271,7 +273,9 @@ run-iso target:
     run_args+=(--env "GPU=Y")
     run_args+=(--device=/dev/kvm)
     run_args+=(--volume "${PWD}/output/${image_name}":"/boot.iso")
-    run_args+=(ghcr.io/qemus/qemu)
+    # Pinned digest (resolved from :latest 2026-09-10) — this image runs
+    # --privileged with /dev/kvm on the developer workstation.
+    run_args+=(ghcr.io/qemus/qemu:latest@sha256:e7f6fda52503a546fd649670ba46e4bc23dc6dcef275bc3fac48877fbbc430df)
     xdg-open http://localhost:${port} &
     podman run "${run_args[@]}"
     echo "Connect to http://localhost:${port}"
