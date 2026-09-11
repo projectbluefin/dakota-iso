@@ -1,6 +1,6 @@
 #!/usr/bin/bash
-# build-iso.sh [--store <store-squashfs>] <boot-files-tar> <squashfs-img> <output-iso>
-# build-iso.sh [--store <store-squashfs>] --arch <arch>:<boot-tar>:<squashfs> [...] <output-iso>
+# build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>
+# build-iso.sh --arch <arch>:<boot-tar>:<squashfs> [...] <output-iso>
 #
 # Creates a UEFI-bootable systemd-boot live ISO from pre-built components.
 #
@@ -17,9 +17,6 @@
 # "fat ESP" so UEFI firmware on either architecture finds its boot binary.
 #
 # Options:
-#   --store <path>    — optional: squashfs of offline OCI image store; placed at
-#                       LiveOS/store.squashfs.img so the live superiso-store.mount
-#                       unit can loop-mount it for offline installation
 #   --arch <spec>     — arch:boot-tar:squashfs triplet (repeatable)
 #
 # Boot architecture (no GRUB2, no shim):
@@ -35,7 +32,6 @@
 #     boot/grub/loopback.cfg    metadata for Ventoy/GRUB-style loopback boot
 #     LiveOS/squashfs.img       squashfs of the full Dakota live rootfs (single-arch)
 #     LiveOS/squashfs-<arch>.img  per-arch squashfs (multi-arch)
-#     LiveOS/store.squashfs.img offline OCI image store (if --store was given)
 #
 # Live boot flow:
 #   UEFI firmware → El Torito → FAT ESP → systemd-boot → kernel+initramfs
@@ -45,11 +41,9 @@
 
 set -euo pipefail
 
-STORE_SFS=""
 ARCH_SPECS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --store) STORE_SFS="${2:?--store requires a path}"; shift 2 ;;
         --arch)  ARCH_SPECS+=("${2:?--arch requires arch:boot-tar:squashfs}"); shift 2 ;;
         --title) LIVE_TITLE="${2:?--title requires a string}"; shift 2 ;;
         *)       break ;;
@@ -67,9 +61,9 @@ if [[ ${#ARCH_SPECS[@]} -gt 0 ]]; then
     echo ">>> Multi-arch mode: ${#ARCH_SPECS[@]} architecture(s)"
 else
     # Single-arch mode (backwards compatible)
-    BOOT_TAR="${1:?Usage: build-iso.sh [--store <store-squashfs>] <boot-files-tar> <squashfs-img> <output-iso>}"
-    SQUASHFS_SRC="${2:?Usage: build-iso.sh [--store <store-squashfs>] <boot-files-tar> <squashfs-img> <output-iso>}"
-    OUTPUT_ISO="${3:?Usage: build-iso.sh [--store <store-squashfs>] <boot-files-tar> <squashfs-img> <output-iso>}"
+    BOOT_TAR="${1:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>}"
+    SQUASHFS_SRC="${2:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>}"
+    OUTPUT_ISO="${3:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>}"
 fi
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/iso-build.XXXXXX")
@@ -310,12 +304,6 @@ EOF
     INITRD_MB=$(du -m "${INITRD}"  | cut -f1)
     VMLINUZ_MB=$(du -m "${VMLINUZ}" | cut -f1)
     ESP_TOTAL_MB=$(( INITRD_MB + VMLINUZ_MB + 4 + 32 ))
-fi
-
-# ── Optional offline image store ─────────────────────────────────────────────
-if [[ -n "${STORE_SFS}" ]]; then
-    cp "${STORE_SFS}" "${ISO_ROOT}/LiveOS/store.squashfs.img"
-    echo ">>> Offline store: $(du -sh "${ISO_ROOT}/LiveOS/store.squashfs.img" | cut -f1)"
 fi
 
 # ── Create the FAT ESP image ────────────────────────────────────────────────
