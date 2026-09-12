@@ -83,6 +83,26 @@ passwd --delete liveuser
 if [[ "${DEBUG:-0}" == "1" ]]; then
     echo "liveuser:live" | chpasswd
 
+    # livesys-scripts (shipped in Bluefin bases, absent in GNOME OS) runs
+    # `passwd -d liveuser`/`passwd -d root` at every boot, wiping the debug
+    # passwords set here at build time.  Re-assert them at boot, ordered
+    # after livesys, so ssh stays reachable on those variants.
+    cat > /usr/lib/systemd/system/live-debug-passwords.service << 'PWUNIT'
+[Unit]
+Description=Re-assert live debug passwords (livesys wipes them at boot)
+After=livesys.service livesys-late.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c "echo 'liveuser:live' | /usr/sbin/chpasswd; echo 'root:root' | /usr/sbin/chpasswd"
+
+[Install]
+WantedBy=multi-user.target
+PWUNIT
+    mkdir -p /etc/systemd/system/multi-user.target.wants
+    ln -sf /usr/lib/systemd/system/live-debug-passwords.service \
+        /etc/systemd/system/multi-user.target.wants/live-debug-passwords.service
+
     # Enable root login with a known password so hotfixes can be applied
     # directly via `ssh root@<ip>` or `su -` without going through sudo.
     passwd --unlock root
