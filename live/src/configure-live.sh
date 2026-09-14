@@ -381,19 +381,42 @@ TARGET="${TARGET:-dakota-nvidia}"
 VARIANT=$(echo "$TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
 VARIANT_DIR="/tmp/src/${VARIANT}"
 
-# Read per-variant config with defaults
+# Read per-variant config with fail-closed semantics for known non-default variants
 if [[ -f "$VARIANT_DIR/base_imgref" ]]; then
     BASE_IMGREF=$(cat "$VARIANT_DIR/base_imgref")
-else
+elif [[ "$VARIANT" == "dakota" ]]; then
     BASE_IMGREF="ghcr.io/projectbluefin/dakota:stable"
+else
+    echo "ERROR: $VARIANT_DIR/base_imgref not found for variant $VARIANT" >&2
+    exit 1
 fi
+
 if [[ -f "$VARIANT_DIR/nvidia_imgref" ]]; then
     NVIDIA_IMGREF=$(cat "$VARIANT_DIR/nvidia_imgref")
-else
+elif [[ "$VARIANT" == "dakota" ]]; then
     NVIDIA_IMGREF="ghcr.io/projectbluefin/dakota-nvidia:stable"
+else
+    echo "ERROR: $VARIANT_DIR/nvidia_imgref not found for variant $VARIANT" >&2
+    exit 1
 fi
-BOOTLOADER=$(cat "$VARIANT_DIR/bootloader" 2>/dev/null || echo "systemd")
-COMPOSEFS=$(cat "$VARIANT_DIR/composefs" 2>/dev/null || echo "true")
+
+if [[ -f "$VARIANT_DIR/bootloader" ]]; then
+    BOOTLOADER=$(cat "$VARIANT_DIR/bootloader" | tr -d '[:space:]')
+elif [[ "$VARIANT" == "dakota" ]]; then
+    BOOTLOADER="systemd"
+else
+    echo "ERROR: $VARIANT_DIR/bootloader not found for variant $VARIANT" >&2
+    exit 1
+fi
+
+if [[ -f "$VARIANT_DIR/composefs" ]]; then
+    COMPOSEFS=$(cat "$VARIANT_DIR/composefs" | tr -d '[:space:]')
+elif [[ "$VARIANT" == "dakota" ]]; then
+    COMPOSEFS="true"
+else
+    echo "ERROR: $VARIANT_DIR/composefs not found for variant $VARIANT" >&2
+    exit 1
+fi
 
 mkdir -p /etc/bootc-installer
 # Use variant-specific images.json if present, otherwise use the shared one.

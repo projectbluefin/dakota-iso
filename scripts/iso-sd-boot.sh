@@ -81,9 +81,8 @@ echo "Building squashfs and boot tar from localhost/${TARGET}-installer..."
 
 printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${OUTPUT_DIR}/.bootc-root-mount.toml"
 
-LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
-BOOTLOADER_VARIANT=$(echo "${LIVE_TARGET}" | sed 's/-nvidia-open$//;s/-nvidia$//')
-COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
+source "${SCRIPT_DIR}/variant-config.sh"
+COMPOSEFS_BACKEND=$(get_variant_config "${TARGET}" composefs)
 echo "=== Building offline OCI store (composefs=${COMPOSEFS_BACKEND}) for ${PAYLOAD_IMAGE} ==="
 
 INJECT_CTR=$(_ns "buildah from --pull-never '${PAYLOAD_IMAGE}'")
@@ -249,7 +248,7 @@ echo "=== Disk space after squashfs, before ISO assembly ==="
 df -h "${OUTPUT_DIR}"
 du -sh "${SQUASHFS}" "${BOOT_TAR}" 2>/dev/null || true
 
-LIVE_TITLE=$(cat "${TARGET}/live_title" 2>/dev/null || echo 'Dakota Live')
+LIVE_TITLE=$(get_variant_config "${TARGET}" live_title)
 TMPDIR="${OUTPUT_DIR}" \
 PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}" \
     bash "live/src/build-iso.sh" \

@@ -875,6 +875,52 @@ class TestVariantConfig(unittest.TestCase):
                     f"got: {payload!r}",
                 )
 
+    def test_variant_config_helper_validates_all_known_variants(self):
+        """scripts/variant-config.sh --validate-all must succeed."""
+        script = REPO / "scripts" / "variant-config.sh"
+        self.assertTrue(script.exists(), "scripts/variant-config.sh must exist.")
+        result = subprocess.run(
+            [str(script), "--validate-all"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"scripts/variant-config.sh --validate-all failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+        )
+
+    def test_namespaces_agree_on_registry_and_tag(self):
+        """For any variant present in both namespaces, registry and tag must match."""
+        for variant in ["bluefin", "bluefin-lts-hwe"]:
+            top_registry = REPO / variant / "registry"
+            live_registry = REPO / "live" / "src" / variant / "registry"
+            if top_registry.exists() and live_registry.exists():
+                self.assertEqual(
+                    top_registry.read_text().strip(),
+                    live_registry.read_text().strip(),
+                    f"Registry mismatch for {variant}: {top_registry} vs {live_registry}",
+                )
+
+            top_tag = REPO / variant / "tag"
+            live_tag = REPO / "live" / "src" / variant / "tag"
+            if top_tag.exists() and live_tag.exists():
+                self.assertEqual(
+                    top_tag.read_text().strip(),
+                    live_tag.read_text().strip(),
+                    f"Tag mismatch for {variant}: {top_tag} vs {live_tag}",
+                )
+
+    def test_variant_config_fails_closed_on_missing_required_keys(self):
+        """scripts/variant-config.sh must fail closed on invalid/missing variants."""
+        script = REPO / "scripts" / "variant-config.sh"
+        result = subprocess.run(
+            [str(script), "nonexistent-variant", "composefs"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0, "Missing composefs must fail closed.")
+        self.assertIn("ERROR:", result.stderr)
 
 class TestBuildIsoScript(unittest.TestCase):
     """Static analysis of build-iso.sh for correctness invariants."""
