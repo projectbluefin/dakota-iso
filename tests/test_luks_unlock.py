@@ -10,7 +10,7 @@ import importlib.util
 
 spec = importlib.util.spec_from_file_location(
     "luks_unlock",
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../dakota/src/luks-unlock.py"))
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../live/src/luks-unlock.py"))
 )
 luks_unlock = importlib.util.module_from_spec(spec)
 sys.modules["luks_unlock"] = luks_unlock
