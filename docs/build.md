@@ -126,8 +126,8 @@ Two parallel source trees exist:
 
 | Path | Used by | Notes |
 |---|---|---|
-| `live/src/` | CI (`build-iso.yml`), `live/Containerfile` | Canonical for CI; `build-iso.sh` here supports `--store` for offline OCI store |
-| `dakota/src/` | Local justfile (`iso-sd-boot`, `luks-*` recipes) | `build-iso.sh` here is the simpler local variant without `--store` |
+| `live/src/` | CI (`build-iso.yml`), `live/Containerfile` | Canonical for CI and multi-arch builds |
+| `dakota/src/` | Local justfile (`iso-sd-boot`, `luks-*` recipes) | `build-iso.sh` here is the simpler local variant |
 
 The live container (`live/Containerfile`) is used for **both** local and CI builds.
 `live/src/flatpaks` is the definitive list of bundled Flatpaks.
