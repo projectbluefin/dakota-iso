@@ -122,8 +122,7 @@ container target:
 # Builds the live environment container from live/Containerfile, then assembles
 # the ISO on the host using build-iso.sh.  This produces a single-variant ISO
 # for local testing.  CI builds a unified ISO with both NVIDIA (live) and
-# non-NVIDIA (offline store) variants — see scripts/build-live-squashfs.sh and
-# scripts/build-offline-store.sh.
+# non-NVIDIA (offline store) variants — see scripts/build-live-squashfs.sh.
 #
 # Output: output/<target>-live.iso
 iso-sd-boot target:
