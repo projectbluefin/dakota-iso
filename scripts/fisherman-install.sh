@@ -22,19 +22,54 @@ set -euo pipefail
 RECIPE="${1:-/tmp/plain-recipe.json}"
 FISHERMAN_BIN="${FISHERMAN_BIN:-/usr/local/bin/fisherman}"
 
+cleanup_disk() {
+    local disk_dev="${1:-/dev/vda}"
+    echo "==> releasing device holders and settling partition table on ${disk_dev}"
+    sync
+    # Unmount any mounts using this disk or its partitions
+    awk -v d="${disk_dev}" '$1 ~ "^" d {print $2}' /proc/mounts | sort -r | while read -r mp; do
+        [ -n "$mp" ] && umount -l "$mp" 2>/dev/null || true
+    done
+    # Close any device-mapper devices holding this disk
+    if command -v dmsetup >/dev/null 2>&1; then
+        local base
+        base="$(basename "${disk_dev}")"
+        for dm in $(dmsetup ls 2>/dev/null | awk '{print $1}'); do
+            if dmsetup deps -o devname "$dm" 2>/dev/null | grep -q "${base}"; then
+                dmsetup remove --force "$dm" 2>/dev/null || true
+            fi
+        done
+    fi
+    # Kill remaining process holders on disk and partition nodes
+    fuser -km "${disk_dev}"* 2>/dev/null || true
+    blockdev --flushbufs "${disk_dev}" 2>/dev/null || true
+    udevadm settle 2>/dev/null || true
+    partprobe "${disk_dev}" 2>/dev/null || true
+    udevadm settle 2>/dev/null || true
+}
+
+DISK_TARGET=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get('disk', '/dev/vda'))
+except Exception:
+    print('/dev/vda')
+" "$RECIPE" 2>/dev/null || echo "/dev/vda")
+
 FISH_RC=1
-for attempt in 1 2 3; do
+for attempt in 1 2 3 4; do
     "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 && {
         FISH_RC=0
         break
     }
     FISH_RC=$?
-    if ! grep -Eiq "device or resource busy|re-reading the partition table|partition table.*busy" /tmp/fish.log ||
-       [[ "$attempt" -eq 3 ]]; then
+    if ! grep -Eiq "device or resource busy|re-reading the partition table|partition table.*busy|unable to open /dev/vda" /tmp/fish.log ||
+       [[ "$attempt" -eq 4 ]]; then
         break
     fi
-    echo "==> transient partition-table contention — settling udev before retry $((attempt + 1))/3"
-    udevadm settle 2>/dev/null || true
+    echo "==> transient partition-table contention — releasing holders and settling udev before retry $((attempt + 1))/4"
+    cleanup_disk "${DISK_TARGET}"
     sleep 10
 done
 cat /tmp/fish.log
@@ -53,10 +88,9 @@ if [[ $FISH_RC -ne 0 ]]; then
         PATCH_HOSTNAME=1
     elif grep -A5 "Re-reading the partition table failed" /tmp/fish.log |
           grep -q "Device or resource busy"; then
-        echo "==> partition table still busy — waiting for udev and retrying fisherman"
-        sync
-        udevadm settle
-        sleep 3
+        echo "==> partition table still busy — performing teardown and final retry"
+        cleanup_disk "${DISK_TARGET}"
+        sleep 10
         FISH_RC=0
         "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
         cat /tmp/fish.log
