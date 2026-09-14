@@ -135,15 +135,24 @@ fi
 #     bootcDirect resolves containers-storage:<ref> via the additional store.
 #     Mirrors projectbluefin/iso commit 34fe6659.
 #
-# Detect composefs from the recipe.json baked into the live container.
-# Run python3 directly (not via sh -c) to avoid nested double-quote parsing
-# failures: sh -c 'python3 -c "...open("...")"' breaks because the inner
-# double-quotes terminate the outer sh argument prematurely.
+# Resolve composefs backend setting.
+# In --target mode, variant-config.sh is the single authority for the variant.
+# In positional mode (pre-built image, no --target), introspect the recipe.json
+# baked into the image and fail closed if the introspection fails.
 COMPOSEFS_BACKEND=false
-if podman run --rm --entrypoint="" "${IMAGE}" \
-       grep -qi '"composeFsBackend": *true' /etc/bootc-installer/recipe.json \
-       2>/dev/null; then
-    COMPOSEFS_BACKEND=true
+if [[ -n "${TARGET}" ]]; then
+    COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")
+else
+    if podman run --rm --entrypoint="" "${IMAGE}" \
+           grep -qi '"composeFsBackend": *true' /etc/bootc-installer/recipe.json; then
+        COMPOSEFS_BACKEND=true
+    elif podman run --rm --entrypoint="" "${IMAGE}" \
+           grep -qi '"composeFsBackend": *false' /etc/bootc-installer/recipe.json; then
+        COMPOSEFS_BACKEND=false
+    else
+        echo "ERROR: [live-squashfs] failed to determine composeFsBackend from ${IMAGE}:/etc/bootc-installer/recipe.json" >&2
+        exit 1
+    fi
 fi
 echo ">>> [live-squashfs] composeFsBackend=${COMPOSEFS_BACKEND}"
 if [[ -n "${OCI_IMAGE}" ]]; then
