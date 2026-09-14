@@ -34,13 +34,10 @@ fi
 
 RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
 trap 'rm -f "${RECIPE_TMP}"' EXIT
-LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
-BOOTLOADER_VARIANT=$(echo "$LIVE_TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
-COMPOSEFS_BACKEND=$(cat "live/src/${BOOTLOADER_VARIANT}/composefs" 2>/dev/null | tr -d '[:space:]' || echo "true")
-BOOTLOADER=$(cat "live/src/${BOOTLOADER_VARIANT}/bootloader" 2>/dev/null | tr -d '[:space:]' || echo "systemd")
-
-# Normalise "grub" → "grub2" for fisherman's recipe validator.
-if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
+source "$(dirname "$0")/variant-config.sh"
+LIVE_TARGET=$(get_variant_config "${TARGET}" live_target)
+COMPOSEFS_BACKEND=$(get_variant_config "${TARGET}" composefs)
+BOOTLOADER=$(get_variant_config "${TARGET}" bootloader)
 
 # Determine target filesystem
 FILESYSTEM="btrfs"

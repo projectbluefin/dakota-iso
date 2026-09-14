@@ -46,6 +46,28 @@ container target:
 The installer configs inside the ISO (`images.json`, `recipe.json`) are patched at
 build time to reference the correct image via `configure-live.sh`.
 
+## Variant Configuration Schema
+
+Variant configuration is structured across two namespaces:
+
+1. **Host-side variant directory (`<variant>/`)**:
+   - `payload_ref` (required): Full container image reference for offline payload (e.g. `ghcr.io/projectbluefin/dakota-nvidia:stable`).
+   - `live_target` (optional, default: `<variant>`): Containerfile build target / live image name (e.g. `dakota-nvidia`).
+   - `live_title` (optional, default: `Dakota Live`): Bootloader entry label.
+   - `registry` (optional, default: `projectbluefin`): Image registry namespace.
+   - `tag` (optional, default: `stable`): Release tag.
+
+2. **Live container build context (`live/src/<variant>/` / `/tmp/src/<variant>/`)**:
+   - `composefs` (required for non-dakota, default: `true` for dakota): `"true"` or `"false"`.
+   - `bootloader` (required for non-dakota, default: `systemd` for dakota): `"systemd"` or `"grub"`.
+   - `base_imgref` (required for non-dakota): Base non-nvidia image reference.
+   - `nvidia_imgref` (required for non-dakota): NVIDIA image reference for local offline install.
+   - `flatpak_var_path` (optional, default: `state/os/default/var` for dakota, `var/lib/flatpak` for others): Flatpak storage path.
+   - `images.json` (optional): Variant-specific installer catalog override.
+   - `registry` & `tag` (optional): If present, must match `<variant>/registry` and `<variant>/tag`.
+
+The helper `scripts/variant-config.sh` resolves and validates these keys across both namespaces with fail-closed semantics for required values.
+
 ## Adding a custom build target
 
 For local testing, create a directory with `payload_ref` and optionally `live_target`:
@@ -57,7 +79,6 @@ just iso-sd-boot my-variant
 ```
 
 Output: `output/my-variant-live.iso`
-
 ## `images.json` — catalog lock
 
 `live/src/etc/bootc-installer/images.json` locks the installer to show only the
