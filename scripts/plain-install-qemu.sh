@@ -31,7 +31,6 @@ else
 fi
 
 source "$(dirname "$0")/variant-config.sh"
-LIVE_TARGET=$(get_variant_config "${TARGET}" live_target)
 COMPOSEFS_BACKEND=$(get_variant_config "${TARGET}" composefs)
 BOOTLOADER=$(get_variant_config "${TARGET}" bootloader)
 

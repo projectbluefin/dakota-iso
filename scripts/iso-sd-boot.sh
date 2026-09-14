@@ -82,7 +82,6 @@ echo "Building squashfs and boot tar from localhost/${TARGET}-installer..."
 printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${OUTPUT_DIR}/.bootc-root-mount.toml"
 
 source "${SCRIPT_DIR}/variant-config.sh"
-LIVE_TARGET=$(get_variant_config "${TARGET}" live_target)
 COMPOSEFS_BACKEND=$(get_variant_config "${TARGET}" composefs)
 echo "=== Building offline OCI store (composefs=${COMPOSEFS_BACKEND}) for ${PAYLOAD_IMAGE} ==="
 
