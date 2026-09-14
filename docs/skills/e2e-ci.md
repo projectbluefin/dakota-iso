@@ -13,7 +13,7 @@ tags:
   - testing
 description: Architecture, QEMU disk configuration, ENOSPC prevention, and live/installed boot verification for dakota-iso.
 version: "1.0"
-last_updated: "2026-07-30"
+last_updated: "2026-07-31"
 metadata:
   type: reference
 ---
@@ -318,6 +318,18 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 
 ---
 
+## Post-boot assertions need SSH into the *installed* system, not just the live env (2026-06-25, dakota#651)
+
+**Symptom:**
+`efibootmgr -v` written by fisherman lives in host UEFI NVRAM and `/proc/cmdline` is a kernel-runtime artifact — neither can be checked from a BLS entry file or from the live environment. The live-env-only SSH (`debug-ssh-banner`, `configure-live.sh`) doesn't help here because it only covers the *live ISO*, not the freshly-installed target disk before its first boot.
+
+**The fix:**
+`scripts/fisherman-install.sh --enable-debug-ssh` mounts the freshly-installed deployment (same mount/unlock logic already used for the hostname-write workaround) and patches `root:root` + a `sshd.service` system-preset + `PermitRootLogin`/`PasswordAuthentication` directly onto disk — mirroring `configure-live.sh`'s `DEBUG=1` convention but applied to the *installed* system instead of the live squashfs. `luks-boot-qemu-installed`/`plain-boot-qemu-installed` forward a second SSH port (`*-qemu-ssh-port-installed`) to this now-enabled sshd. `scripts/verify-post-install.sh` then SSHes in as `root` once the installed system reaches its boot target and asserts `efibootmgr -v`, `flatpak list --system --app`, and (LUKS only) `/proc/cmdline`. Test-only — never shipped in a production image.
+
+**Lesson:** when a post-boot invariant can only be observed at runtime (firmware NVRAM state, live kernel cmdline, running daemon output), don't try to approximate it from static files during install — enable a throwaway debug path into the actual booted target instead.
+
+---
+
 ## Red Flags
 
 - Claiming "tests pass" without specifying which gate (`plain-e2e`, `luks-test-qemu`, or unit tests)
@@ -327,6 +339,7 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 - Declaring an install verified without booting the installed disk
 - Using `installer_channel=dev` in CI or production builds (active fisherman regression)
 - SSH connecting to a production ISO that has sshd disabled (build with `debug=1` for testing)
+- Claiming post-boot assertions (UEFI/Flatpak/LUKS cmdline, dakota#651) pass without SSHing into the *installed, booted* disk — a BLS entry or live-env check is not equivalent
 
 ## Verification
 
@@ -336,6 +349,9 @@ Before marking any E2E work complete:
 - [ ] fisherman install exits `EXIT:0` in install.log
 - [ ] Installed system boots to Graphical target (not just QEMU started)
 - [ ] `just plain-test-qemu <target>` completed with `✅ Installed system boot verified`
+- [ ] `just plain-test-qemu <target>` / `just luks-test-qemu <target>` also report
+      `✅ All post-boot assertions passed` (UEFI entry, Flatpak exclusion, and for
+      LUKS, cmdline UUID — see `scripts/verify-post-install.sh`, dakota#651)
 - [ ] ISO size ~5.3 GB (release) or ~6.5 GB (fast) — not 8+ GB (double-embedded store)
 - [ ] squashfs root contains `proc/`, `sys/`, `dev/` as empty dirs
 - [ ] GPT type GUID = `28732ac1...` (EFI System Partition, not Basic Data)
