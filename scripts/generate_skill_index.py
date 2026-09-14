@@ -87,12 +87,12 @@ def build_skill_entry(path: Path) -> dict:
 def build_catalog() -> dict:
     skills = [build_skill_entry(p) for p in find_skill_files()]
     skills.sort(key=lambda s: s["id"])
+    generated_at = max((s["last_updated"] for s in skills if s.get("last_updated")), default="1970-01-01")
     return {
-        "generated_at": date.today().isoformat(),
+        "generated_at": generated_at,
         "schema_version": SCHEMA_VERSION,
         "skills": skills,
     }
-
 
 def validate_catalog(catalog: dict) -> None:
     schema = json.loads(SCHEMA_PATH.read_text())
