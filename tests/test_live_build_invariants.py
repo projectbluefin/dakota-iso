@@ -764,6 +764,16 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             TEST_LUKS_WORKFLOW.read_text(),
             "test-luks-install.yml must gate luks-e2e on unit-tests.",
         )
+    def test_e2e_workflows_support_4gb_ram_simulation(self):
+        """E2E workflows must support simulating 4GB of RAM for min system requirements."""
+        plain_wf = TEST_PLAIN_WORKFLOW.read_text()
+        luks_wf = TEST_LUKS_WORKFLOW.read_text()
+        self.assertIn("qemu_mem:", plain_wf)
+        self.assertIn("default: '4096'", plain_wf)
+        self.assertIn("qemu_mem:", luks_wf)
+        self.assertIn("default: '4096'", luks_wf)
+        self.assertIn("qemu-mem=", plain_wf)
+        self.assertIn("qemu-mem=", luks_wf)
 
     def test_luks_unlock_copies_are_identical(self):
         """live/ and dakota/ luks-unlock helpers must stay byte-for-byte aligned."""
