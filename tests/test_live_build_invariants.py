@@ -1005,6 +1005,29 @@ class TestBuildLiveSquashfs(unittest.TestCase):
                     "when QEMU runs with sudo."
                 )
 
+    def test_justfile_defines_verify_image_recipe(self):
+        """justfile must define verify-image recipe using cosign with pinned version and sha256."""
+        justfile = REPO / "justfile"
+        content = justfile.read_text()
+        self.assertIn("verify-image image:", content)
+        self.assertIn('COSIGN_VERSION="v3.1.1"', content)
+        self.assertIn('COSIGN_SHA256="ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc"', content)
+        self.assertIn('https://token.actions.githubusercontent.com', content)
+        self.assertIn('https://github.com/projectbluefin/', content)
+
+    def test_justfile_container_verifies_base_and_payload_images(self):
+        """justfile container recipe must invoke verify-image for base and payload refs."""
+        justfile = REPO / "justfile"
+        content = justfile.read_text()
+        self.assertIn('just verify-image "${BASE_REF}"', content)
+        self.assertIn('just verify-image "${PAYLOAD_REF}"', content)
+
+    def test_justfile_chunkify_verifies_source_image(self):
+        """justfile chunkify recipe must verify projectbluefin source images."""
+        justfile = REPO / "justfile"
+        content = justfile.read_text()
+        self.assertIn('just verify-image "{{src}}"', content)
+
 
 class TestPayloadPristine(unittest.TestCase):
     """The embedded payload image must ship the same content the registry serves.

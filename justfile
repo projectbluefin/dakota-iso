@@ -97,6 +97,50 @@ build-bg target:
 _payload_ref_flag target:
     @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
 
+# Verify OCI image signature using keyless Cosign verification against the projectbluefin org.
+# Ensures pulled base and payload images were built by official CI workflows.
+verify-image image:
+    #!/usr/bin/bash
+    set -euo pipefail
+    if [[ "${SKIP_IMAGE_VERIFY:-0}" == "1" && "${CI:-}" != "true" ]]; then
+        echo "WARNING: Skipping image signature verification (SKIP_IMAGE_VERIFY=1, local dev only)"
+        exit 0
+    fi
+    IMAGE="{{image}}"
+    COSIGN_VERSION="v3.1.1"
+    COSIGN_SHA256="ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc"
+    COSIGN_BIN="$(command -v cosign || true)"
+    if [[ -z "${COSIGN_BIN}" ]]; then
+        COSIGN_INSTALL_PATH="$(mktemp)"
+        trap 'rm -f "${COSIGN_INSTALL_PATH}"' EXIT
+        echo "Installing cosign ${COSIGN_VERSION} for image verification..."
+        curl -fsSL "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" \
+            -o "${COSIGN_INSTALL_PATH}"
+        echo "${COSIGN_SHA256}  ${COSIGN_INSTALL_PATH}" | sha256sum -c -
+        chmod 0755 "${COSIGN_INSTALL_PATH}"
+        COSIGN_BIN="${COSIGN_INSTALL_PATH}"
+    fi
+    CERT_IDENTITY_REGEXP="https://github.com/projectbluefin/(bluefin|bluefin-lts|dakota|common|aurora|actions)/"
+    CERT_OIDC_ISSUER="https://token.actions.githubusercontent.com"
+    echo "==> Verifying cosign signature for ${IMAGE}..."
+    MAX_RETRIES=5
+    RETRY_DELAY=10
+    for attempt in $(seq 1 ${MAX_RETRIES}); do
+        if "${COSIGN_BIN}" verify \
+            --certificate-identity-regexp="${CERT_IDENTITY_REGEXP}" \
+            --certificate-oidc-issuer="${CERT_OIDC_ISSUER}" \
+            "${IMAGE}" >/dev/null; then
+            echo "==> Cosign signature verified successfully for ${IMAGE}"
+            exit 0
+        fi
+        if [[ "${attempt}" -eq "${MAX_RETRIES}" ]]; then
+            echo "ERROR: Cosign signature verification failed for ${IMAGE} after ${MAX_RETRIES} attempts." >&2
+            exit 1
+        fi
+        echo "NOTICE: Verification attempt ${attempt}/${MAX_RETRIES} failed, retrying in ${RETRY_DELAY}s..."
+        sleep "${RETRY_DELAY}"
+    done
+
 container target:
     #!/usr/bin/bash
     test -f "{{target}}/payload_ref" || { echo "ERROR: {{target}}/payload_ref not found — create it with the base image reference, e.g.: echo 'ghcr.io/projectbluefin/dakota:latest' > {{target}}/payload_ref"; exit 1; }
@@ -107,6 +151,12 @@ container target:
     LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
     LIVE_TAG=$(cat "{{target}}/tag" 2>/dev/null | tr -d '[:space:]' || echo "stable")
     LIVE_REGISTRY=$(cat "{{target}}/registry" 2>/dev/null | tr -d '[:space:]' || echo "projectbluefin")
+    BASE_REF="ghcr.io/${LIVE_REGISTRY}/${LIVE_TARGET}:${LIVE_TAG}"
+    PAYLOAD_REF=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
+    just verify-image "${BASE_REF}"
+    if [[ -n "${PAYLOAD_REF}" && "${PAYLOAD_REF}" != "${BASE_REF}" ]]; then
+        just verify-image "${PAYLOAD_REF}"
+    fi
     podman build --cap-add sys_admin --security-opt label=disable \
         --layers \
         --build-arg DEBUG={{debug}} \
@@ -149,6 +199,9 @@ chunkify src dst:
     #!/usr/bin/bash
     set -euo pipefail
 
+    if [[ "{{src}}" =~ ^ghcr\.io/projectbluefin/ ]]; then
+        just verify-image "{{src}}"
+    fi
     echo "==> Pulling source image: {{src}}"
     podman pull {{src}}
 
