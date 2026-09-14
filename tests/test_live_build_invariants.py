@@ -1005,6 +1005,25 @@ class TestBuildLiveSquashfs(unittest.TestCase):
                     "when QEMU runs with sudo."
                 )
 
+    def test_justfile_third_party_images_are_digest_pinned(self):
+        """Third-party container images in justfile recipes must be digest-pinned.
+
+        Prevents supply-chain tampering where mutable tags (e.g. :latest)
+        execute attacker-controlled code with elevated privileges.
+        """
+        justfile = REPO / "justfile"
+        content = justfile.read_text()
+        self.assertRegex(
+            content,
+            r"ghcr\.io/tuna-os/chunkah:latest@sha256:[0-9a-f]{64}",
+            "chunkah image in justfile must be pinned with sha256 digest",
+        )
+        self.assertRegex(
+            content,
+            r"ghcr\.io/qemus/qemu:7\.50@sha256:[0-9a-f]{64}",
+            "qemus/qemu image in justfile must be pinned with version tag and sha256 digest",
+        )
+
 
 class TestPayloadPristine(unittest.TestCase):
     """The embedded payload image must ship the same content the registry serves.
