@@ -1005,6 +1005,16 @@ class TestBuildLiveSquashfs(unittest.TestCase):
                     "when QEMU runs with sudo."
                 )
 
+    def test_justfile_chunkify_does_not_unconditionally_disable_tls_verify(self):
+        """justfile chunkify must not push with unconditional --tls-verify=false."""
+        justfile = REPO / "justfile"
+        content = justfile.read_text()
+        self.assertNotIn(
+            "podman push --tls-verify=false",
+            content,
+            "justfile chunkify must not unconditionally disable TLS verification on push",
+        )
+
 
 class TestPayloadPristine(unittest.TestCase):
     """The embedded payload image must ship the same content the registry serves.

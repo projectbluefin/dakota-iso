@@ -174,7 +174,13 @@ chunkify src dst:
 
     echo "==> Tagging and pushing to {{dst}}..."
     podman tag "${LOADED_ID}" "{{dst}}"
-    podman push --tls-verify=false "{{dst}}"
+    PUSH_TLS_ARGS=()
+    case "{{dst}}" in
+        localhost/*|127.*|192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|*.local/*)
+            PUSH_TLS_ARGS+=(--tls-verify=false)
+            ;;
+    esac
+    podman push "${PUSH_TLS_ARGS[@]}" "{{dst}}"
 
     echo "==> Done: {{dst}}"
 
