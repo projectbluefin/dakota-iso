@@ -34,6 +34,9 @@
 # Must run as root (sudo).
 
 set -euo pipefail
+# Single host-side reader for per-variant config (see scripts/variant-config.sh).
+# shellcheck source=scripts/variant-config.sh
+source "$(dirname "${BASH_SOURCE[0]}")/variant-config.sh"
 
 OCI_IMAGE=""
 TARGET=""
@@ -55,7 +58,7 @@ if [[ -n "${TARGET}" ]]; then
     # ── Target mode: build live container then squashfs it ────────────────────
     [[ -z "${OUTPUT_DIR}" ]] && { echo "ERROR: --target requires --output-dir" >&2; exit 1; }
 
-    LIVE_TARGET=$(cat "${TARGET}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "${TARGET}")
+    LIVE_TARGET=$(variant_live_target "${TARGET}")
     echo ">>> [live-squashfs] building live container: target=${TARGET} live_target=${LIVE_TARGET} channel=${INSTALLER_CHANNEL:-stable} debug=${DEBUG_ARG}"
 
     podman build \
@@ -132,15 +135,24 @@ fi
 #     bootcDirect resolves containers-storage:<ref> via the additional store.
 #     Mirrors projectbluefin/iso commit 34fe6659.
 #
-# Detect composefs from the recipe.json baked into the live container.
-# Run python3 directly (not via sh -c) to avoid nested double-quote parsing
-# failures: sh -c 'python3 -c "...open("...")"' breaks because the inner
-# double-quotes terminate the outer sh argument prematurely.
+# Resolve composefs backend setting.
+# In --target mode, variant-config.sh is the single authority for the variant.
+# In positional mode (pre-built image, no --target), introspect the recipe.json
+# baked into the image and fail closed if the introspection fails.
 COMPOSEFS_BACKEND=false
-if podman run --rm --entrypoint="" "${IMAGE}" \
-       grep -qi '"composeFsBackend": *true' /etc/bootc-installer/recipe.json \
-       2>/dev/null; then
-    COMPOSEFS_BACKEND=true
+if [[ -n "${TARGET}" ]]; then
+    COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")
+else
+    if podman run --rm --entrypoint="" "${IMAGE}" \
+           grep -qi '"composeFsBackend": *true' /etc/bootc-installer/recipe.json; then
+        COMPOSEFS_BACKEND=true
+    elif podman run --rm --entrypoint="" "${IMAGE}" \
+           grep -qi '"composeFsBackend": *false' /etc/bootc-installer/recipe.json; then
+        COMPOSEFS_BACKEND=false
+    else
+        echo "ERROR: [live-squashfs] failed to determine composeFsBackend from ${IMAGE}:/etc/bootc-installer/recipe.json" >&2
+        exit 1
+    fi
 fi
 echo ">>> [live-squashfs] composeFsBackend=${COMPOSEFS_BACKEND}"
 if [[ -n "${OCI_IMAGE}" ]]; then

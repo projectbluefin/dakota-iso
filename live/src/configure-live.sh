@@ -383,17 +383,25 @@ VARIANT_DIR="/tmp/src/${VARIANT}"
 
 # Read per-variant config with defaults
 if [[ -f "$VARIANT_DIR/base_imgref" ]]; then
-    BASE_IMGREF=$(cat "$VARIANT_DIR/base_imgref")
+    BASE_IMGREF=$(tr -d '[:space:]' < "$VARIANT_DIR/base_imgref")
 else
     BASE_IMGREF="ghcr.io/projectbluefin/dakota:stable"
 fi
 if [[ -f "$VARIANT_DIR/nvidia_imgref" ]]; then
-    NVIDIA_IMGREF=$(cat "$VARIANT_DIR/nvidia_imgref")
+    NVIDIA_IMGREF=$(tr -d '[:space:]' < "$VARIANT_DIR/nvidia_imgref")
 else
     NVIDIA_IMGREF="ghcr.io/projectbluefin/dakota-nvidia:stable"
 fi
-BOOTLOADER=$(cat "$VARIANT_DIR/bootloader" 2>/dev/null || echo "systemd")
-COMPOSEFS=$(cat "$VARIANT_DIR/composefs" 2>/dev/null || echo "true")
+BOOTLOADER="systemd"
+if [[ -f "$VARIANT_DIR/bootloader" ]]; then
+    _BL=$(tr -d '[:space:]' < "$VARIANT_DIR/bootloader")
+    [[ -n "$_BL" ]] && BOOTLOADER="$_BL"
+fi
+COMPOSEFS="true"
+if [[ -f "$VARIANT_DIR/composefs" ]]; then
+    _CFS=$(tr -d '[:space:]' < "$VARIANT_DIR/composefs")
+    [[ -n "$_CFS" ]] && COMPOSEFS="$_CFS"
+fi
 
 mkdir -p /etc/bootc-installer
 # Use variant-specific images.json if present, otherwise use the shared one.
