@@ -26,6 +26,10 @@ on:
         description: 'Installer channel to test (dev or stable)'
         required: false
         default: ''
+      qemu_mem:
+        description: 'QEMU memory in MiB (default: 4096 for tight 4GB RAM simulation)'
+        required: false
+        default: '4096'
   schedule:
     # Run weekly on Tuesday 04:00 UTC (staggered from the LUKS test on Monday)
     - cron: '0 4 * * 2'
@@ -161,7 +165,8 @@ jobs:
           # and runs VCS stamping against the user-owned /tmp/fisherman clone — both
           # break under sudo. QEMU/KVM access uses an internal sudo fallback in the
           # recipe, and all guest-side install steps run via ssh with guest sudo.
-          just qemu-mem=4096 installer_channel="$INSTALLER_CHANNEL" plain-test-qemu ${{ matrix.variant }}
+          QEMU_MEM="${{ github.event.inputs.qemu_mem || '4096' }}"
+          just qemu-mem="$QEMU_MEM" installer_channel="$INSTALLER_CHANNEL" plain-test-qemu ${{ matrix.variant }}
           echo "duration=$((SECONDS - START))" >> "$GITHUB_OUTPUT"
 
       - name: Capture serial logs and screenshot
@@ -197,6 +202,7 @@ jobs:
           BUILD_S:           ${{ steps.build.outputs.duration }}
           PLAIN_S:           ${{ steps.plain_test.outputs.duration }}
           ISO_BYTES:         ${{ steps.build.outputs.iso_size }}
+          QEMU_MEM:          ${{ github.event.inputs.qemu_mem || '4096' }}
         with:
           script: |
             const variant = process.env.VARIANT || 'dakota';
@@ -214,7 +220,7 @@ jobs:
               '|------|---------|',
               `| ISO build    | ${fmtMiB(process.env.ISO_BYTES)} · ${fmtDur(process.env.BUILD_S)} |`,
               `| Plain E2E    | ${fmtDur(process.env.PLAIN_S)} |`,
-              `| QEMU RAM     | 4096 MiB (tight overlay tmpfs) |`,
+              `| QEMU RAM     | ${process.env.QEMU_MEM || '4096'} MiB (simulated 4GB RAM) |`,
               `| Result       | ${icon} ${result} |`,
               '',
               `<sub>[Workflow run](${runUrl})</sub>`,
@@ -241,7 +247,7 @@ jobs:
             echo "| ISO size     | $(numfmt --to=iec ${{ steps.build.outputs.iso_size }} 2>/dev/null || echo N/A) |"
             echo "| Build time   | ${{ steps.build.outputs.duration }}s |"
             echo "| Plain E2E    | ${{ steps.plain_test.outputs.duration }}s |"
-            echo "| QEMU RAM     | 4096 MiB |"
+            echo "| QEMU RAM     | ${{ github.event.inputs.qemu_mem || '4096' }} MiB |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail if plain test failed
