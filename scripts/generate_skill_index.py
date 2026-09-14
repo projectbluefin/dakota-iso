@@ -15,9 +15,8 @@ import argparse
 import json
 import re
 import sys
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-
 import yaml
 from jsonschema import Draft202012Validator
 
@@ -88,7 +87,7 @@ def build_catalog() -> dict:
     skills = [build_skill_entry(p) for p in find_skill_files()]
     skills.sort(key=lambda s: s["id"])
     return {
-        "generated_at": date.today().isoformat(),
+        "generated_at": datetime.now(timezone.utc).date().isoformat(),
         "schema_version": SCHEMA_VERSION,
         "skills": skills,
     }
