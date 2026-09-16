@@ -13,13 +13,18 @@ CI (build-iso.yml) — same entry point:
   └─ sudo just ... iso-sd-boot dakota → container build + VFS store + squashfs + ISO
 ```
 
-### Container: `<target>-installer` (`live/Containerfile` — 3 stages)
+### Container: `<target>-installer` (`live/Containerfile` — 4 stages)
 
 | Stage | Base | Purpose |
 |---|---|---|
-| `dakota-ref` | Dakota image | Provides kernel modules |
-| `initramfs-builder` | Debian | Builds dmsquash-live initramfs against Dakota's kernel modules |
-| final | Dakota | Receives rebuilt initramfs + live-env setup + Flatpaks |
+| `ref` | Target image | Provides kernel modules |
+| `initramfs-native` | `ref` | Builds the initramfs with the target's own dracut when it has one (Fedora/CentOS); writes `debian` to `/tmp/dracut-status` to hand off otherwise |
+| `initramfs-builder` | Debian | Cross-builds the dmsquash-live initramfs when the target has no usable dracut (GNOME OS / dakota) |
+| `final` | Target image | Receives rebuilt initramfs + live-env setup + Flatpaks |
+
+This table is enforced against `live/Containerfile` by
+`tests/test_containerfile_stage_inventory.py` — adding, removing or renaming a
+build stage without updating the table fails CI.
 
 **Why Debian for initramfs?**
 Dakota is GNOME OS / freedesktop-sdk based — no package manager, no dracut.
