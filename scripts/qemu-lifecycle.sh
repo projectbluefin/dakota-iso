@@ -114,11 +114,12 @@ wait_live() {
     echo "Waiting for live environment on port ${ssh_port}..."
     # Loop bound: each non-ready iteration costs ~10s (SSH's own 5s ConnectTimeout
     # plus the 5s sleep below), so 150 iterations is a ~25min ceiling, not the
-    # ~12.5min the iteration count alone suggests. The `stable` (full GNOME
+    # ~12.5min the iteration count alone suggests. The `bluefin` (full GNOME
     # desktop) variant has been observed taking ~8min to become reachable under
     # loaded CI runners — GDM plus its full unit set boots meaningfully slower
-    # than the lighter dakota/lts variants — while still making steady progress
-    # (not hung), so this widens the ceiling rather than fixing a stall.
+    # than the lighter dakota/bluefin-lts-hwe variants — while still making
+    # steady progress (not hung), so this widens the ceiling rather than fixing
+    # a stall.
     for i in $(seq 1 150); do
         if grep -q "DAKOTA_LIVE_READY\|debug-ssh-banner" "$serial" 2>/dev/null; then
             echo "Serial marker seen — polling SSH..."

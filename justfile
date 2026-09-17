@@ -26,8 +26,8 @@ installer_channel := "stable"
 luks-passphrase := "testpassphrase"
 
 # Path to the tuna-os/fisherman repo for building the fisherman binary used in
-# bootcDirect mode (ostree variants: stable, lts). CI clones branch `dev`.
-# Override with: just fisher_repo=/path/to/fisherman/fisherman luks-test-qemu stable
+# bootcDirect mode (ostree variants: bluefin, bluefin-lts-hwe). CI clones branch `dev`.
+# Override with: just fisher_repo=/path/to/fisherman/fisherman luks-test-qemu bluefin
 fisher_repo := "/tmp/fisherman/fisherman"
 
 # Squashfs compression preset:
@@ -653,9 +653,9 @@ qemu-mem := "8192"
 # 4, not 8: GitHub-hosted runners provide 4 vCPUs, and KVM itself warns
 # "Number of SMP cpus requested (8) exceeds the recommended cpus supported
 # by KVM (4)" on every boot. The resulting 2x oversubscription measurably
-# slows guest boot under CI load — the `stable` (full GNOME desktop) variant
+# slows guest boot under CI load — the `bluefin` (full GNOME desktop) variant
 # was observed printing its DAKOTA_LIVE_READY marker only right at a 25-minute
-# wait ceiling, while lighter variants (dakota, lts) stayed comfortably under
+# wait ceiling, while lighter variants (dakota, bluefin-lts-hwe) stayed comfortably under
 # 10 minutes on the same oversubscribed CPU. Matching vCPU count to the host
 # removes the scheduling contention rather than just waiting it out.
 qemu-smp := "4"
