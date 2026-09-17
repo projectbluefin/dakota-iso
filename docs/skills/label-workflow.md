@@ -10,100 +10,75 @@ tags:
   - labels
   - issue-tracking
   - governance
-description: Label taxonomy, queue states, and lifecycle rules for issues and pull requests in dakota-iso.
+description: Use when finding, claiming, labeling, or commenting on projectbluefin work items.
 version: "1.0"
-last_updated: "2026-07-30"
+last_updated: "2026-08-01"
 metadata:
   type: procedure
 ---
 
 # Label Workflow — dakota-iso
 
-## The one-line model
+## Canonical policy
 
-**Humans decide what gets built. Agents build it.**
+The shared [Project Bluefin label workflow](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md)
+defines the lifecycle and label taxonomy. Do not maintain a local fork of those
+definitions.
 
-Humans file, triage, and approve work. Agents claim, implement, and ship it.
-Labels are the handoff signal between the two.
+Humans triage and approve work. Agents work only on human-approved tasks and
+must not self-apply priority, queue, or claim labels.
 
----
-
-## Issue lifecycle
-
-```
-filed → triage → queue/agent-ready → queue/claimed → done (closed)
-```
-
-| Label | Actor | Next action |
-|---|---|---|
-| *(no queue label)* | **Human** triager | Review, set `kind/` label, then add `queue/agent-ready` when ready |
-| `queue/agent-ready` | **Agent** / contributor | Self-assign and start work; change to `queue/claimed` |
-| `queue/claimed` | **Agent** | Implement → open PR with `Closes #NNN` |
-| `queue/hold` | *nobody* | Intentionally paused — read comments for reason |
-| `needs-human` | **Human** | Agent is blocked — read the issue comment, unblock |
-
-## PR lifecycle
-
-```
-opened ──▶ review ──▶ lgtm + CI green ──▶ merged
-           [needs-human]   [human approves]
-```
-
-- PRs need a human `lgtm` or review approval before merge
-- Add `queue/hold` at any time to pause automation
-- Close stale PRs after 30 days of inactivity
-
----
-
-## Label reference
-
-| Label | Meaning |
-|---|---|
-| `bug` | Something is broken |
-| `enhancement` | New feature or improvement |
-| `documentation` | Docs-only change |
-| `queue/agent-ready` | Approved and ready for agent pickup |
-| `queue/claimed` | An agent or contributor is actively working this |
-| `queue/hold` | Intentionally paused |
-| `needs-human` | Agent is blocked; human input required |
-| `source:agent` | Filed or changed by an AI agent |
-| `source:gha` | Filed by GitHub Actions / automation |
-| `source:manual` | Filed by a human |
-| `good first issue` | Good for first-time contributors |
-
----
-
-## Finding work
+Before relying on a shared label, confirm that the repository's labels have
+been synchronized:
 
 ```bash
-# Agent-ready issues in this repo
-gh issue list --repo projectbluefin/dakota-iso \
-  --label "queue/agent-ready" --assignee ""
-
-# P0 blockers across the org
-gh search issues --label "hive/p0" --owner projectbluefin --state open \
-  --json number,title,repository
+gh label list --repo projectbluefin/dakota-iso --limit 200 --json name
+gh search issues --label "status/queued" --owner projectbluefin --state open
 ```
 
----
-
-## Filing an issue
-
-When you discover a bug or gap:
-
-1. Check for duplicates first
-2. Use a descriptive title (Conventional Commits style: `type: description`)
-3. Include reproduction steps or context
-4. Add `source:agent` if filed by an AI agent
-5. **Do not** self-apply `queue/agent-ready` — that's a human triage decision
+If a required shared label is absent, do not replace it with a legacy local
+label. Report the synchronization gap to a maintainer and wait for direction.
 
 ---
+
+## When Not to Use
+
+Do not use this procedure to bypass human triage, claim an unapproved issue,
+or create labels locally. For repository-specific implementation guidance, use
+the relevant local skill instead.
+
+## Core Process
+
+1. Read the shared label workflow for the canonical lifecycle.
+2. Verify the target repository exposes the required shared labels.
+3. Work only after human approval and follow the shared claim procedure.
+4. If labels are out of sync, report the gap and wait rather than using a
+   legacy substitute.
 
 ## PR comment policy
 
-(Inherited from org-level model in [`common/docs/factory/agentic-model.md`](https://github.com/projectbluefin/common/blob/main/docs/factory/agentic-model.md))
+Inherited from the [org-level agentic model](https://github.com/projectbluefin/common/blob/main/docs/factory/agentic-model.md):
 
 - **One comment per PR event, max.** Combine all findings into one comment.
 - Never duplicate GitHub UI state (approvals, CI status, labels).
 - `@` mentions only when asking someone to do something specific.
 - When in doubt, post nothing. **Never post multiple comments on the same issue/PR.**
+
+## Red Flags
+
+- Using `queue/*` labels as substitutes for the shared `status/*` lifecycle
+- Self-applying priority, queue, or claim labels
+- Posting a second comment that repeats GitHub UI state
+
+## Common Rationalizations
+
+| Rationalization | Reality |
+|---|---|
+| "The old label is close enough." | A legacy label can bypass or misrepresent the shared lifecycle. |
+| "I can claim it now and sort out labels later." | Claiming follows human approval and verified label availability. |
+
+## Verification
+
+- [ ] Required labels were verified with `gh label list`.
+- [ ] The work item follows the shared lifecycle.
+- [ ] Any PR or issue comment is necessary, consolidated, and human-directed.

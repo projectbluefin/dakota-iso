@@ -190,7 +190,7 @@ INSTALLER_DESKTOP_ID="${INSTALLER_APP_ID}.desktop"
 cat > "/usr/share/applications/${INSTALLER_DESKTOP_ID}" << DESKTOPEOF
 [Desktop Entry]
 Name=Dakota Installer
-Exec=/usr/bin/flatpak run --branch=master --arch=x86_64 --command=bootc-installer ${INSTALLER_APP_ID}
+Exec=/usr/bin/flatpak run --env=GTK_MODULES=atk-bridge --branch=master --arch=x86_64 --command=bootc-installer ${INSTALLER_APP_ID}
 Icon=dakota
 Terminal=false
 Type=Application
@@ -220,6 +220,12 @@ idle-activation-enabled=false
 [org/gnome/desktop/session]
 idle-delay=uint32 0
 
+[org/gnome/desktop/interface]
+toolkit-accessibility=true
+
+[org/gnome/desktop/interface]
+toolkit-accessibility=true
+
 [org/gnome/settings-daemon/plugins/power]
 sleep-inactive-ac-type='nothing'
 sleep-inactive-battery-type='nothing'
@@ -232,6 +238,8 @@ cat > /etc/dconf/db/distro.d/locks/50-live-iso << 'LOCKSEOF'
 /org/gnome/desktop/screensaver/lock-enabled
 /org/gnome/desktop/screensaver/idle-activation-enabled
 /org/gnome/desktop/session/idle-delay
+/org/gnome/desktop/interface/toolkit-accessibility
+/org/gnome/desktop/interface/toolkit-accessibility
 /org/gnome/shell/favorite-apps
 /org/gnome/settings-daemon/plugins/power/sleep-inactive-ac-type
 /org/gnome/settings-daemon/plugins/power/sleep-inactive-battery-type

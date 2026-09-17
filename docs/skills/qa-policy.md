@@ -72,6 +72,9 @@ just debug=1 plain-e2e dakota
 
 ## What counts as proof
 
+### Boot ≠ Install (Issue #86)
+**"ISO built and booted" is NOT proof of a working installer or image.** A live ISO can boot into the live desktop environment while the installer fails, or the installed system fails to boot after installation. The mandatory verification criterion for any PR or release promotion is: **Full install completed AND installed system boots**.
+
 Per the AGENTS.md verification requirements — **do not claim the build works unless all three pass:**
 
 | Gate | What it proves | Command |

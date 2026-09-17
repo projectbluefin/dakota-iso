@@ -15,8 +15,9 @@ workdir := output_dir
 # Never use debug=1 for production/release ISOs.
 debug := "0"
 
-# Set to "dev" to pull the tuna-installer dev build (continuous-dev release).
-# Useful for testing PRs on the dev branch before they land in a stable release.
+# Set to "dev" to install the Devel-branded bootc-installer bundle
+# (org.bootcinstaller.Installer.Devel) instead of the production one. Both come
+# from the same tuna-os/bootc-installer release; "dev" is a branding/app-id switch.
 # Example: just installer_channel=dev iso-sd-boot dakota
 installer_channel := "stable"
 
@@ -24,8 +25,8 @@ installer_channel := "stable"
 # Example: just luks-passphrase=MySecret luks-install dakota
 luks-passphrase := "testpassphrase"
 
-# Path to the projectbluefin/fisherman repo for building the patched fisherman binary
-# used in bootcDirect mode (ostree variants: stable, lts).
+# Path to the tuna-os/fisherman repo for building the fisherman binary used in
+# bootcDirect mode (ostree variants: stable, lts). CI clones branch `dev`.
 # Override with: just fisher_repo=/path/to/fisherman/fisherman luks-test-qemu stable
 fisher_repo := "/tmp/fisherman/fisherman"
 
@@ -34,6 +35,11 @@ fisher_repo := "/tmp/fisherman/fisherman"
 #   release           — zstd level 15, 1M blocks   — ~20% smaller, ~5× slower
 # Example: just compression=release iso-sd-boot dakota
 compression := "fast"
+
+# Run static unit tests and pre-commit checks
+check:
+    pytest tests/
+    pre-commit run --all-files
 
 # Map target to filesystem: btrfs for all targets to avoid boot timeout on LTS.
 _filesystem_for target:
@@ -597,7 +603,7 @@ luks-unlock target:
     fi
     echo "Waiting for Plymouth passphrase prompt (VM MAC: ${MAC})..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "dakota/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
+    sudo python3 "live/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
 
 # Connect to the serial console of the dakota-debug VM to watch boot after
 # luks-install.  At the LUKS passphrase prompt type the passphrase (default:
@@ -706,104 +712,9 @@ luks-test-qemu target installer_channel="dev":
 # Boot the live ISO in QEMU (daemonized) with a blank install disk attached.
 # Creates the install disk if it doesn't exist.
 luks-boot-qemu-live target:
-    #!/usr/bin/bash
-    set -euo pipefail
-    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 \
-               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
-    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
-    ISO=$(ls \
-        {{output_dir}}/{{target}}-live.iso \
-        output/bootiso/install.iso \
-        output/bootc-{{target}}*.iso \
-        2>/dev/null | head -1 || true)
-    if [[ -z "$ISO" ]]; then
-        echo "No ISO found — run: just debug=1 iso-sd-boot {{target}}" >&2
-        exit 1
-    fi
-
-    OVMF_CODE=""; OVMF_VARS=""
-    for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
-              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
-              /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
-              /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
-        [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
-    done
-    for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
-              /usr/share/edk2/ovmf/OVMF_VARS.fd \
-              /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
-              /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
-              /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
-              /home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd; do
-        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-qemu-live-vars.fd; OVMF_VARS=/var/tmp/dakota-qemu-live-vars.fd; break; fi
-    done
-    [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
-
-    [[ -f "{{luks-qemu-disk}}" ]] || qemu-img create -f qcow2 "{{luks-qemu-disk}}" 64G
-    # Scratch disk: 16G sparse file mounted over /var/tmp in the live VM to
-    # give skopeo disk-backed space for VFS blob extraction (~9 GB blob).
-    [[ -f "{{luks-scratch-disk}}" ]] || truncate -s 16G "{{luks-scratch-disk}}"
-    rm -f "{{luks-qemu-monitor-live}}" "{{luks-qemu-serial-live}}"
-
-    echo "Booting live ISO: $ISO"
-    # KVM access: try direct, then sudo, then fall back to TCG
-    QEMU_ACCEL="-accel kvm"
-    QEMU_PREFIX=""
-    if ! test -r /dev/kvm 2>/dev/null; then
-        if sudo test -r /dev/kvm 2>/dev/null; then
-            echo "Using sudo for KVM access"
-            QEMU_PREFIX="sudo"
-        else
-            echo "KVM not available, falling back to TCG emulation (slower)"
-            QEMU_ACCEL="-accel tcg,thread=multi"
-            QEMU_PREFIX=""
-        fi
-    fi
-    CPU_FLAG="-cpu host"
-    if [[ "$QEMU_ACCEL" =~ tcg ]]; then
-        CPU_FLAG="-cpu qemu64"
-    fi
-    $QEMU_PREFIX "$QEMU" \
-        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
-        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
-        -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
-        -drive "if=none,id=iso,file=${ISO},media=cdrom,readonly=on,format=raw" \
-        -device virtio-scsi-pci,id=scsi \
-        -device scsi-cd,drive=iso \
-        -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
-        -device virtio-blk-pci,drive=disk \
-        -drive "if=none,id=scratch,file={{luks-scratch-disk}},format=raw,cache=unsafe" \
-        -device virtio-blk-pci,drive=scratch \
-        -netdev "user,id=net0,hostfwd=tcp::{{luks-qemu-ssh-port}}-:22" \
-        -device virtio-net-pci,netdev=net0 \
-        -monitor "unix:{{luks-qemu-monitor-live}},server,nowait" \
-        -serial "file:{{luks-qemu-serial-live}}" \
-        -display none \
-        -daemonize
-    echo "Live QEMU started (monitor: {{luks-qemu-monitor-live}})"
-
-    SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
-    echo "Waiting for live environment on port {{luks-qemu-ssh-port}}..."
-    # Check for DAKOTA_LIVE_READY serial marker OR SSH connectivity.
-    # The serial marker requires live-ready.service to print to journal+console.
-    # On some installer channel builds (e.g. dev) the service starts but never
-    # writes to the serial console; SSH still works because debug-ssh-banner
-    # confirms sshd is up.  Either path means the live env is ready.
-    for i in $(seq 1 60); do
-        if grep -q "DAKOTA_LIVE_READY" "{{luks-qemu-serial-live}}" 2>/dev/null; then
-            echo "Live environment ready (serial marker seen)"
-            break
-        fi
-        if sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} true 2>/dev/null; then
-            echo "Live environment ready (SSH connected)"
-            break
-        fi
-        [[ "$i" -eq 60 ]] && { echo "ERROR: live env not ready after 5m"; tail -30 "{{luks-qemu-serial-live}}" || true; exit 1; }
-        sleep 5
-    done
-
-    # Wait for the live boot GUI to render and stabilize before taking screenshot
-    sudo python3 "dakota/src/luks-unlock.py" wait-live \
+    QEMU_MEM={{qemu-mem}} QEMU_SMP={{qemu-smp}} scripts/qemu-lifecycle.sh boot-live "{{target}}" "{{output_dir}}" "{{luks-qemu-disk}}" qcow2 "{{luks-scratch-disk}}" "{{luks-qemu-monitor-live}}" "{{luks-qemu-serial-live}}" "{{luks-qemu-ssh-port}}" "/var/tmp/dakota-qemu-live-vars.fd"
+    scripts/qemu-lifecycle.sh wait-live "{{luks-qemu-ssh-port}}" "{{luks-qemu-serial-live}}"
+    sudo python3 "live/src/luks-unlock.py" wait-live \
         "{{luks-qemu-monitor-live}}" \
         "/tmp/luks-screenshot-live.ppm" || true
 
@@ -814,78 +725,7 @@ luks-install-qemu target:
 
 # Boot the installed disk in QEMU (no ISO). Called after luks-install-qemu.
 luks-boot-qemu-installed target:
-    #!/usr/bin/bash
-    set -euo pipefail
-    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 \
-               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
-    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
-    OVMF_CODE=""; OVMF_VARS=""
-    for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
-              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
-              /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
-              /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
-        [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
-    done
-    for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
-              /usr/share/edk2/ovmf/OVMF_VARS.fd \
-              /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
-              /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
-              /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
-              /home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd; do
-        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-qemu-installed-vars.fd; OVMF_VARS=/var/tmp/dakota-qemu-installed-vars.fd; break; fi
-    done
-    [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
-
-    rm -f "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-installed}}"
-
-    echo "Booting installed disk: {{luks-qemu-disk}}"
-    # The install recipe sends system_powerdown + quit via QEMU monitor
-    # but the daemonized QEMU may hold the qcow2 file lock briefly.
-    # Wait for the QEMU process matching THIS variant's disk to exit.
-    DISK_PATTERN="$(echo '{{luks-qemu-disk}}' | sed 's/\./\\./g')"
-    for i in {1..15}; do
-        if ! sudo pgrep -f "qemu-system.*${DISK_PATTERN}" >/dev/null 2>&1; then
-            break
-        fi
-        echo "Waiting for live QEMU to exit (attempt $i)..."
-        sleep 2
-    done
-    # KVM access: try direct, then sudo, then fall back to TCG
-    QEMU_ACCEL="-accel kvm"
-    QEMU_PREFIX=""
-    if ! test -r /dev/kvm 2>/dev/null; then
-        if sudo test -r /dev/kvm 2>/dev/null; then
-            echo "Using sudo for KVM access"
-            QEMU_PREFIX="sudo"
-        else
-            echo "KVM not available, falling back to TCG emulation (slower)"
-            QEMU_ACCEL="-accel tcg,thread=multi"
-            QEMU_PREFIX=""
-        fi
-    fi
-    CPU_FLAG="-cpu host"
-    if [[ "$QEMU_ACCEL" =~ tcg ]]; then
-        CPU_FLAG="-cpu qemu64"
-    fi
-    $QEMU_PREFIX "$QEMU" \
-        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
-        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
-        -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
-        -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
-        -device virtio-blk-pci,drive=disk \
-        -netdev user,id=net0 \
-        -device virtio-net-pci,netdev=net0 \
-        -monitor "unix:{{luks-qemu-monitor-installed}},server,nowait" \
-        -serial "file:{{luks-qemu-serial-installed}}" \
-        -display none \
-        -daemonize
-    echo "Installed QEMU started (monitor: {{luks-qemu-monitor-installed}})"
-
-    for i in $(seq 1 15); do
-        [[ -S "{{luks-qemu-monitor-installed}}" ]] && break
-        sleep 2
-    done
+    QEMU_MEM={{qemu-mem}} QEMU_SMP={{qemu-smp}} scripts/qemu-lifecycle.sh boot-installed "{{luks-qemu-disk}}" qcow2 "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-installed}}" "{{luks-qemu-monitor-live}}" "/var/tmp/dakota-qemu-installed-vars.fd"
 
 # Send LUKS passphrase to installed QEMU VM via monitor screendump + sendkey.
 # Polls screendump size to detect Plymouth takeover, then injects keystrokes.
@@ -895,7 +735,7 @@ luks-unlock-qemu target:
     PASSPHRASE="{{luks-passphrase}}"
     echo "Unlocking LUKS on installed QEMU VM..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "dakota/src/luks-unlock.py" qemu \
+    sudo python3 "live/src/luks-unlock.py" qemu \
         "{{luks-qemu-monitor-installed}}" \
         "$PASSPHRASE" \
         "{{luks-qemu-serial-installed}}"
@@ -903,7 +743,7 @@ luks-unlock-qemu target:
     # Show key screenshots inline for terminals that support it (Kitty, iTerm2, etc.)
     for label in "Plymouth prompt" "Final boot"; do
         key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
-        bash "dakota/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
+        bash "live/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
     done
 
 # Run Python unit tests.
@@ -942,6 +782,10 @@ plain-e2e target:
                "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
                "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-test-qemu {{target}}
+
+# Offline store E2E test: verifies install completes strictly from embedded VFS containers-storage
+offline-e2e target:
+    OFFLINE_REQUIRED=1 just plain-e2e {{target}}
 
 # ENOSPC regression gate: boot live ISO + run fisherman only through the OCI
 # export step, then exit.  Passes when skopeo copies the blob without hitting
@@ -1012,104 +856,52 @@ plain-test-qemu target:
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
          plain-verify-qemu {{target}}
 
-# Boot the live ISO in QEMU for a plain install test.
-plain-boot-qemu-live target:
+# Drive the auto-launched graphical installer in a fresh debug ISO QEMU guest.
+# Expects output/<target>-debug-live.iso; unlike plain-e2e, this does not build it.
+gui-e2e target:
     #!/usr/bin/bash
     set -euo pipefail
-    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 \
-               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
-    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
-    ISO=""
-    for f in \
-        "{{output_dir}}/{{target}}-debug-live.iso" \
-        "{{output_dir}}/{{target}}-live.iso" \
-        {{output_dir}}/{{target}}-live-*.iso; do
-        [[ -f "$f" ]] && { ISO="$f"; break; }
-    done
-    [[ -z "$ISO" ]] && { echo "No ISO found — run: just debug=1 iso-sd-boot {{target}}" >&2; exit 1; }
-    OVMF_CODE=""; OVMF_VARS=""
-    for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
-              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
-              /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
-              /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
-        [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
-    done
-    for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
-              /usr/share/edk2/ovmf/OVMF_VARS.fd \
-              /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
-              /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
-              /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
-              /home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd; do
-        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-plain-qemu-live-vars.fd; OVMF_VARS=/var/tmp/dakota-plain-qemu-live-vars.fd; break; fi
-    done
-    [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
-    [[ -f "{{plain-qemu-disk}}" ]] || truncate -s 64G "{{plain-qemu-disk}}"
-    # Scratch disk: 16G sparse file mounted over /var/tmp in the live VM to
-    # give skopeo disk-backed space for VFS blob extraction (~9 GB blob).
-    [[ -f "{{plain-scratch-disk}}" ]] || truncate -s 16G "{{plain-scratch-disk}}"
-    rm -f "{{plain-qemu-monitor-live}}" "{{plain-qemu-serial-live}}"
-    QEMU_ACCEL="-accel kvm"
-    QEMU_PREFIX=""
-    if ! test -r /dev/kvm 2>/dev/null; then
-        if sudo test -r /dev/kvm 2>/dev/null; then
-            QEMU_PREFIX="sudo"
-        else
-            QEMU_ACCEL="-accel tcg,thread=multi"
-        fi
-    fi
-    CPU_FLAG="-cpu host"
-    [[ "$QEMU_ACCEL" =~ tcg ]] && CPU_FLAG="-cpu qemu64"
-    echo "Booting live ISO: $ISO (qemu-mem={{qemu-mem}} MiB)"
-    $QEMU_PREFIX "$QEMU" \
-        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
-        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
-        -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
-        -drive "if=none,id=iso,file=${ISO},media=cdrom,readonly=on,format=raw" \
-        -device virtio-scsi-pci,id=scsi \
-        -device scsi-cd,drive=iso \
-        -drive "if=none,id=disk,file={{plain-qemu-disk}},format=raw,cache=unsafe" \
-        -device virtio-blk-pci,drive=disk \
-        -drive "if=none,id=scratch,file={{plain-scratch-disk}},format=raw,cache=unsafe" \
-        -device virtio-blk-pci,drive=scratch \
-        -netdev "user,id=net0,hostfwd=tcp::{{plain-qemu-ssh-port}}-:22" \
-        -device virtio-net-pci,netdev=net0 \
-        -monitor "unix:{{plain-qemu-monitor-live}},server,nowait" \
-        -serial "file:{{plain-qemu-serial-live}}" \
-        -display none \
-        -daemonize
-    echo "Live QEMU started (monitor: {{plain-qemu-monitor-live}})"
+    DRIVER_LOG="{{plain-qemu-serial-live}}.atspi.log"
+    INSTALLER_LOG="{{output_dir}}/{{target}}-gui-installer-logs.txt"
+    [[ -f "{{output_dir}}/{{target}}-debug-live.iso" ]] || {
+        echo "No debug ISO found — run: just debug=1 iso-sd-boot {{target}}" >&2
+        exit 1
+    }
+    rm -f "{{plain-qemu-disk}}" "{{plain-scratch-disk}}" \
+           "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
+           "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}" \
+           "${DRIVER_LOG}" "${INSTALLER_LOG}"
+    just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
+         plain-qemu-monitor-live={{plain-qemu-monitor-live}} \
+         plain-qemu-serial-live={{plain-qemu-serial-live}} \
+         plain-qemu-ssh-port={{plain-qemu-ssh-port}} \
+         plain-boot-qemu-live {{target}}
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
-    echo "Waiting for live environment on port {{plain-qemu-ssh-port}}..."
-    for i in $(seq 1 60); do
-        if grep -q "DAKOTA_LIVE_READY\|debug-ssh-banner" "{{plain-qemu-serial-live}}" 2>/dev/null; then
-            echo "Serial marker seen — polling SSH (sshd lags systemd-ready by ~10-20 s on KVM)..."
-            # The serial marker fires when systemd declares the target reached,
-            # but sshd finishes host-key generation after that and temporarily
-            # resets connections (kex_exchange_identification: read: Connection
-            # reset by peer).  Poll until SSH accepts, then add a small settling
-            # sleep before handing control to plain-install-qemu.
-            for j in $(seq 1 30); do
-                if sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}} true 2>/dev/null; then
-                    echo "Live environment ready (serial marker + SSH confirmed)."
-                    sleep 3
-                    break 2
-                fi
-                sleep 3
-            done
-            echo "ERROR: serial marker seen but SSH not ready after 90 s" >&2
-            cat "{{plain-qemu-serial-live}}" >&2
-            exit 1
-        fi
-        if sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}} true 2>/dev/null; then
-            # SSH up before marker — add settling sleep
-            echo "SSH responded (pre-marker) — waiting 15 s for sshd to stabilise..."
-            sleep 15
-            break
-        fi
-        [[ $i -eq 60 ]] && { echo "Timeout waiting for live environment" >&2; cat "{{plain-qemu-serial-live}}" >&2; exit 1; }
-        sleep 5
-    done
+    SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}}"
+    SCP="sshpass -p live scp $SSH_OPTS -P {{plain-qemu-ssh-port}}"
+    $SCP scripts/atspi-installer-driver.py liveuser@127.0.0.1:/home/liveuser/atspi-installer-driver.py
+    $SSH 'XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus python3 /home/liveuser/atspi-installer-driver.py --disk /dev/vda --timeout 2700' 2>&1 | tee "${DRIVER_LOG}"
+    {
+        echo "=== /var/log/bootc-installer.log ==="
+        $SSH 'sudo cat /var/log/bootc-installer.log' 2>&1 || true
+        echo "=== fisherman output ==="
+        $SSH 'cat /home/liveuser/.cache/bootc-installer/fisherman-output.log' 2>&1 || true
+    } > "${INSTALLER_LOG}"
+    scripts/qemu-lifecycle.sh patch-bls-console "{{plain-qemu-ssh-port}}" plain
+    scripts/qemu-lifecycle.sh verify-efi "{{plain-qemu-ssh-port}}"
+    scripts/qemu-lifecycle.sh shutdown "{{plain-qemu-monitor-live}}"
+    just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
+         plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
+         plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-boot-qemu-installed {{target}}
+    just output_dir={{output_dir}} plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
+         plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-verify-qemu {{target}}
+
+# Boot the live ISO in QEMU for a plain install test.
+plain-boot-qemu-live target:
+    QEMU_MEM={{qemu-mem}} QEMU_SMP={{qemu-smp}} scripts/qemu-lifecycle.sh boot-live "{{target}}" "{{output_dir}}" "{{plain-qemu-disk}}" raw "{{plain-scratch-disk}}" "{{plain-qemu-monitor-live}}" "{{plain-qemu-serial-live}}" "{{plain-qemu-ssh-port}}" "/var/tmp/dakota-plain-qemu-live-vars.fd"
+    scripts/qemu-lifecycle.sh wait-live "{{plain-qemu-ssh-port}}" "{{plain-qemu-serial-live}}"
 
 # Run fisherman plain (no-encryption) composefs install via SSH.
 plain-install-qemu target:
@@ -1117,100 +909,11 @@ plain-install-qemu target:
 
 # Boot the installed disk (no ISO) after plain-install-qemu.
 plain-boot-qemu-installed target:
-    #!/usr/bin/bash
-    set -euo pipefail
-    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 \
-               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
-    [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
-    OVMF_CODE=""; OVMF_VARS=""
-    for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
-              /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
-              /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
-              /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
-        [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
-    done
-    for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
-              /usr/share/edk2/ovmf/OVMF_VARS.fd \
-              /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
-              /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
-              /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
-              /home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd; do
-        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-plain-qemu-installed-vars.fd; OVMF_VARS=/var/tmp/dakota-plain-qemu-installed-vars.fd; break; fi
-    done
-    [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
-    rm -f "{{plain-qemu-monitor-installed}}" "{{plain-qemu-serial-installed}}"
-    # Wait for the live QEMU to release the disk (monitor socket disappears on exit)
-    for i in $(seq 1 20); do
-        [[ -S "{{plain-qemu-monitor-live}}" ]] || break
-        sleep 2
-    done
-    QEMU_ACCEL="-accel kvm"
-    QEMU_PREFIX=""
-    if ! test -r /dev/kvm 2>/dev/null; then
-        if sudo test -r /dev/kvm 2>/dev/null; then
-            QEMU_PREFIX="sudo"
-        else
-            QEMU_ACCEL="-accel tcg,thread=multi"
-        fi
-    fi
-    CPU_FLAG="-cpu host"
-    [[ "$QEMU_ACCEL" =~ tcg ]] && CPU_FLAG="-cpu qemu64"
-    echo "Booting installed disk: {{plain-qemu-disk}} (qemu-mem={{qemu-mem}} MiB)"
-    $QEMU_PREFIX "$QEMU" \
-        -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
-        -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
-        -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
-        -drive "if=none,id=disk,file={{plain-qemu-disk}},format=raw,cache=unsafe" \
-        -device virtio-blk-pci,drive=disk \
-        -netdev user,id=net0 \
-        -device virtio-net-pci,netdev=net0 \
-        -monitor "unix:{{plain-qemu-monitor-installed}},server,nowait" \
-        -serial "file:{{plain-qemu-serial-installed}}" \
-        -display none \
-        -daemonize
-    echo "Installed QEMU started (monitor: {{plain-qemu-monitor-installed}})"
-    for i in $(seq 1 15); do
-        [[ -S "{{plain-qemu-monitor-installed}}" ]] && break
-        sleep 2
-    done
+    QEMU_MEM={{qemu-mem}} QEMU_SMP={{qemu-smp}} scripts/qemu-lifecycle.sh boot-installed "{{plain-qemu-disk}}" raw "{{plain-qemu-monitor-installed}}" "{{plain-qemu-serial-installed}}" "{{plain-qemu-monitor-live}}" "/var/tmp/dakota-plain-qemu-installed-vars.fd"
 
 # Verify the plain-installed system reaches the graphical target.
 # Polls the serial log (console=ttyS0 is patched in by plain-install-qemu)
 # for systemd's "Reached target Graphical Interface" message.
 # Also screenshots the framebuffer for CI artifact upload.
 plain-verify-qemu target:
-    #!/usr/bin/bash
-    set -euo pipefail
-    SERIAL="{{plain-qemu-serial-installed}}"
-    MONITOR="{{plain-qemu-monitor-installed}}"
-    SCREENSHOT="/tmp/plain-screenshot-final.ppm"
-    echo "Waiting for installed system to reach Graphical Interface (up to 5 min)..."
-    DEADLINE=$((SECONDS + 300))
-    while [[ $SECONDS -lt $DEADLINE ]]; do
-        LOG=$(cat "$SERIAL" 2>/dev/null || true)
-        if echo "$LOG" | grep -q "Reached target.*Graphical\|Reached target.*Multi-User\|login:"; then
-            echo "✅ Installed system boot verified — plain composefs install succeeded"
-            SOCAT_PREFIX=""
-            if ! test -w "$MONITOR" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
-            echo "screendump $SCREENSHOT" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
-            bash "dakota/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
-            echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
-            exit 0
-        fi
-        # Detect emergency shell / kernel panic — fast-fail
-        if echo "$LOG" | grep -q "Emergency mode\|You are in emergency mode\|Kernel panic"; then
-            echo "❌ Emergency shell or kernel panic detected" >&2
-            echo "--- last 30 lines of serial log ---" >&2
-            echo "$LOG" | tail -30 >&2
-            exit 1
-        fi
-        sleep 5
-    done
-    echo "❌ Timeout: installed system did not reach graphical target in 5 minutes" >&2
-    echo "--- last 30 lines of serial log ---" >&2
-    cat "$SERIAL" 2>/dev/null | tail -30 >&2
-    SOCAT_PREFIX=""
-    if ! test -w "$MONITOR" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
-    echo "screendump $SCREENSHOT" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
-    exit 1
+    scripts/qemu-lifecycle.sh verify-installed "{{plain-qemu-monitor-installed}}" "{{plain-qemu-serial-installed}}" "/tmp/plain-screenshot-final.ppm"

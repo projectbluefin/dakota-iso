@@ -35,11 +35,10 @@ Agent entry point for `projectbluefin/dakota-iso`. Load only the skill(s) that m
 | Org structure, parity matrix, open gaps | [common: `docs/factory/README.md`](https://github.com/projectbluefin/common/blob/main/docs/factory/README.md) |
 | **Skill improvement** | |
 | Writing a skill update alongside a PR | [`docs/skills/skill-improvement.md`](skills/skill-improvement.md) |
-| Skill-drift CI check failing on a PR | [`docs/skills/skill-drift.md`](skills/skill-drift.md) |
 
 ## Skill index
 
-For the full list of skills in this repo, see [`docs/skills/INDEX.md`](skills/INDEX.md).
+For the full list of skills in this repo, see [`docs/skills/index.md`](skills/index.md).
 
 ## How to add a skill
 

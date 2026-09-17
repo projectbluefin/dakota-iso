@@ -12,7 +12,7 @@ tags:
   - fisherman
 description: Known failure modes for Dakota and Bluefin ISO installations, including ENOSPC, emergency shells, and bootloader missing.
 version: "1.0"
-last_updated: "2026-07-30"
+last_updated: "2026-09-17"
 metadata:
   type: reference
 ---
@@ -140,7 +140,8 @@ All variants: filesystem=btrfs. XFS is a UI option only, never the default.
 
 ## How fisherman uses additionalImageStores
 
-Source: `tuna-os/fisherman` v0.2.0, `fisherman/internal/install/bootc.go`
+Source: `tuna-os/fisherman` (branch `dev`), `fisherman/internal/install/bootc.go`.
+`projectbluefin/fisherman` is archived — do not read or pin it.
 
 `appendImageStoreArgs()` is called when `NeedsContainerStorageMount(opts)` is true
 (i.e., `!ComposeFsBackend`). If `opts.AdditionalImageStores` is non-empty:

@@ -1,7 +1,7 @@
 ---
 id: skill-drift
 name: Skill Drift
-one_line_purpose: How the skill-drift CI check works and path mapping for doc updates.
+one_line_purpose: Legacy advisory workflow for documentation-update feedback.
 entry_point: docs/skills/skill-drift.md
 category: ci-ops
 status: active
@@ -10,20 +10,36 @@ tags:
   - skill-drift
   - documentation
   - validation
-description: Operation of the skill-drift CI check, path-to-skill mappings, and satisfying update requirements for PRs.
+description: Use when interpreting the legacy advisory workflow for documentation-update feedback.
 version: "1.0"
-last_updated: "2026-07-30"
+last_updated: "2026-08-01"
 metadata:
   type: procedure
 ---
 
-# Skill Drift — dakota-iso
+# Legacy Skill Drift Advisory — dakota-iso
 
-`skill-drift.yml` warns when a PR changes implementation files without updating the matching skill documentation. The goal: keep agent-facing docs in sync with real repo behavior while the implementation context is still fresh.
+`skill-drift.yml` is a legacy advisory workflow that warns when a PR changes
+implementation files without updating matching documentation. The shared
+factory policy has retired bespoke skill-drift checks as release gates:
+documentation quality belongs in developer-time checks and review, not a
+separate CI gate.
 
-The mandate for *why* you must write skill updates is in [`skill-improvement.md`](./skill-improvement.md).
+The durable-learning mandate remains in [`skill-improvement.md`](./skill-improvement.md).
+Treat this workflow's feedback as useful context, not a merge-blocking policy.
 
 ---
+
+## When to Use
+
+Use this procedure when the legacy workflow reports missing documentation after
+an implementation change. Do not use it to determine whether a release may
+ship; follow the shared skill-improvement procedure and repository checks.
+
+## When Not to Use
+
+Do not use this advisory workflow to justify unrelated documentation changes,
+waivers, or a release decision.
 
 ## How it works
 
@@ -34,7 +50,9 @@ PR opened
        └─ if code-paths hit and no skill-paths hit → WARN
 ```
 
-Currently advisory (warns but does not block merge). Treat warnings as hard requirements.
+This workflow is advisory only. Follow the shared skill-improvement procedure
+and the repository's pre-commit checks rather than inventing a local waiver
+process.
 
 ---
 
@@ -46,7 +64,7 @@ Currently advisory (warns but does not block merge). Treat warnings as hard requ
 | `.github/workflows/test-*.yml` | `docs/skills/e2e-ci.md` or `docs/luks-testing.md` |
 | `.github/workflows/skill-drift.yml` | `docs/skills/skill-drift.md` (this file) |
 | `justfile` | whichever skill owns the changed recipe |
-| `dakota/src/build-iso.sh`, `live/src/build-iso.sh` | `docs/architecture.md` or `docs/build.md` |
+| `live/src/build-iso.sh` | `docs/architecture.md` or `docs/build.md` |
 | `live/src/configure-live.sh` | `docs/architecture.md` |
 | `live/src/install-flatpaks.sh` | `docs/build.md` |
 | `scripts/build-live-squashfs.sh` | `docs/build.md` |
@@ -70,28 +88,41 @@ A passing update must:
 
 ---
 
-## Waiver process
+## Core Process
 
-For refactoring changes with no functional impact:
-
-1. Add to your PR description:
-   ```markdown
-   ## Skill drift waiver
-   Changed: `live/src/configure-live.sh`
-   Reason: Internal variable rename only — no behavior change, no operator impact.
-   ```
-2. A maintainer can override the check. Do not self-waive.
-
----
+1. Identify the changed implementation path.
+2. Use the mapping to locate the relevant local documentation.
+3. Update the procedure only when the behavior or operator action changed.
+4. Run the repository's developer-time checks and treat the workflow output as
+   advisory feedback.
 
 ## Common failure modes
 
 - Changing a workflow and forgetting to update `docs/ci.md`
 - Updating the wrong skill file for the behavior that changed
 - Adding a placeholder doc that does not explain the change
-- Assuming advisory = optional
+- Treating an advisory signal as an independent release gate
 
 ---
+
+## Red Flags
+
+- Adding a waiver instead of documenting a real behavior change
+- Updating unrelated Markdown solely to satisfy the workflow
+- Treating an advisory result as a substitute for review or verification
+
+## Common Rationalizations
+
+| Rationalization | Reality |
+|---|---|
+| "Any Markdown change satisfies the warning." | Documentation must explain the changed operator behavior. |
+| "The warning blocks the release." | The workflow is advisory; the real release gates remain authoritative. |
+
+## Verification
+
+- [ ] The documented behavior corresponds to the changed implementation.
+- [ ] The relevant local skill, not an unrelated document, was updated.
+- [ ] The workflow was not used as a release or merge gate.
 
 ## See Also
 

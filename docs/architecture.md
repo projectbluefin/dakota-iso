@@ -129,10 +129,12 @@ Requirements:
 - `fisherman` scratch dir: on live ISOs `/var` is a small RAM overlay. fisherman detects
   tmpfs `/var` and uses a self-bind-mounted scratch dir on the target disk.
 
-## Installer: tuna-installer / bootc-installer
+## Installer: bootc-installer
 
 - **Flatpak:** `org.bootcinstaller.Installer` (stable) / `org.bootcinstaller.Installer.Devel` (dev)
-- **Source:** `projectbluefin/bootc-installer` (primary), `tuna-os/tuna-installer` (fallback)
+- **Source:** `tuna-os/bootc-installer` — sole upstream, no fallback.
+  `projectbluefin/bootc-installer`, `projectbluefin/fisherman` and `tuna-os/tuna-installer`
+  are all archived and MUST NOT be referenced by build scripts.
 - **Backend binary:** `fisherman` → symlinked to `/usr/local/bin/fisherman` by `configure-live.sh`
 - **Config:** `/etc/bootc-installer/images.json` (catalog) + `recipe.json` (branding)
 - **Flatpak sandbox:** Inside the Flatpak, `/etc` is reserved. Host `/etc` is at `/run/host/etc`.
@@ -294,5 +296,10 @@ sudo just debug=1 installer_channel=${{ matrix.installer_channel }} \
   output_dir=/var/iso-build iso-sd-boot dakota
 ```
 
-**Dev channel fallback tag:** `tuna-os/tuna-installer` uses tag `continuous-dev` for
-dev rolling releases, NOT `latest-dev`. `projectbluefin/bootc-installer` uses `latest-dev`.
+**Dev channel tag:** neither channel uses a rolling tag. `tuna-os/bootc-installer`
+auto-cuts a non-prerelease `v<date>-<sha>` release on every push to `dev` and attaches
+both `org.bootcinstaller.Installer.flatpak` and `org.bootcinstaller.Installer.Devel.flatpak`
+to it, so both channels resolve through `/releases/latest/download/`. Rolling tags
+(`latest-dev`, `continuous-dev`, `latest-stable`) are banned: GitHub's immutable-release
+ruleset permanently bars a tag name from re-creation once a release has used it, which is
+how projectbluefin lost `latest-dev` on 2026-08-01.

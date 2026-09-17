@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
-      contents: write
+      contents: read
       packages: read
 
     steps:
@@ -378,47 +378,6 @@ jobs:
             echo "- [dakota-live-latest.iso](https://projectbluefin.dev/dakota-live-latest.iso)"
             echo "- [dakota-live-latest.iso-CHECKSUM](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM)"
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Refresh README dakota table
-        if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success' && steps.boot_verify.outcome == 'success' }}
-        env:
-          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          ISO="${{ steps.iso.outputs.path }}"
-          CHECKSUM="$(cut -d' ' -f1 "${{ steps.checksum.outputs.latest_path }}")"
-          CHECKSUM_SHORT="${CHECKSUM:0:8}…"
-          SIZE_BYTES="$(stat -c%s "$ISO")"
-          SIZE_GIB="$(awk -v b="$SIZE_BYTES" 'BEGIN { printf "%.2f", b/1024/1024/1024 }')"
-          PUBLISHED_UTC="$(date -u '+%Y-%m-%d %H:%M')"
-          RUN_LINK="[run #${{ github.run_number }}](${RUN_URL})"
-          BACKUPS="[b1](https://projectbluefin.dev/dakota-live-backup-1.iso) · [b2](https://projectbluefin.dev/dakota-live-backup-2.iso) · [b3](https://projectbluefin.dev/dakota-live-backup-3.iso)"
-          DAKOTA_ROW="| \`dakota\` | [⬇ \`dakota-live-latest.iso\`](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum \`${CHECKSUM_SHORT}\`](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) | ${SIZE_GIB} GiB | ${PUBLISHED_UTC} | ${RUN_LINK} | ${BACKUPS} |"
-          export DAKOTA_ROW
-
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          readme = Path("README.md")
-          lines = readme.read_text().splitlines()
-          row = os.environ["DAKOTA_ROW"]
-          for i, line in enumerate(lines):
-              if line.startswith("| `dakota` |"):
-                  lines[i] = row
-                  break
-          else:
-              raise SystemExit("Dakota row not found in README.md")
-          readme.write_text("\n".join(lines) + "\n")
-          PY
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          if ! git diff --cached --quiet; then
-            git commit -m "docs(readme): refresh dakota latest build table"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

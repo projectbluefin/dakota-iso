@@ -5,8 +5,6 @@ opened ──▶ review ──▶ lgtm + CI green ──▶ merged
            [needs-human]   [human approves]
 ```
 
-> Add `queue/hold` at any time to block merge.
-
 ## What does this change?
 
 <!-- Required: one sentence -->
@@ -20,7 +18,8 @@ Closes #
 
 <!-- Required: describe what you built and tested -->
 - [ ] ISO built: `just iso-sd-boot <target>` completed successfully
-- [ ] ISO booted: `just boot-iso-serial <target>` showed `DAKOTA_LIVE_READY` (or describe alternative test)
+- [ ] Installer/ISO behavior change: `just debug=1 plain-e2e <target>` completed and the installed system booted
+- [ ] Live boot smoke: `just boot-iso-serial <target>` showed `DAKOTA_LIVE_READY` (optional; does not prove installation)
 - [ ] Container-only change (no ISO boot required — state reason)
 
 ## Checklist

@@ -35,10 +35,21 @@
 
 set -euo pipefail
 
+if [[ $(id -u) -ne 0 ]]; then
+    if command -v podman >/dev/null 2>&1; then
+        echo ">>> [live-squashfs] Non-root user detected: re-executing inside user namespace via podman unshare ..."
+        exec podman unshare bash "$0" "$@"
+    else
+        echo "ERROR: must run as root (use sudo) or have podman available for unshare" >&2
+        exit 1
+    fi
+fi
+
 OCI_IMAGE=""
 TARGET=""
 OUTPUT_DIR=""
 DEBUG_ARG="0"
+COMPRESSION="${SUPERISO_COMPRESSION:-fast}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -47,6 +58,7 @@ while [[ $# -gt 0 ]]; do
         --installer-channel) INSTALLER_CHANNEL="${2:?--installer-channel requires a value}"; export INSTALLER_CHANNEL; shift 2 ;;
         --output-dir)        OUTPUT_DIR="${2:?--output-dir requires a path}"; shift 2 ;;
         --debug)             DEBUG_ARG="${2:?--debug requires 0 or 1}"; shift 2 ;;
+        --compression)       COMPRESSION="${2:?--compression requires fast or release}"; shift 2 ;;
         *) break ;;
     esac
 done
@@ -65,6 +77,7 @@ if [[ -n "${TARGET}" ]]; then
         --build-arg INSTALLER_CHANNEL="${INSTALLER_CHANNEL:-stable}" \
         --build-arg TARGET="${LIVE_TARGET}" \
         --build-arg DEBUG="${DEBUG_ARG}" \
+        --build-arg CACHE_BUST="$(date +%Y%m%d%H%M%S)" \
         -t "${TARGET}-installer" \
         -f ./live/Containerfile ./live
 
@@ -76,11 +89,6 @@ else
     IMAGE="${1:?Usage: build-live-squashfs.sh [--oci-image <ref>] <image> <output-squashfs> <output-boot-tar>}"
     OUTPUT_SFS="${2:?}"
     OUTPUT_BOOT_TAR="${3:?}"
-fi
-
-if [[ $(id -u) -ne 0 ]]; then
-    echo "ERROR: must run as root (use sudo)" >&2
-    exit 1
 fi
 
 # SUPERISO_TMPDIR lets CI redirect scratch space to a large disk-backed path
@@ -123,7 +131,7 @@ fi
 #     Fisherman exports VFS → OCI at install time and passes
 #     --source-imgref oci:... --composefs-backend to bootc.
 #
-#   standard-ostree / non-composefs (e.g. stable, lts):
+#   standard-ostree / non-composefs (e.g. bluefin, bluefin-lts-hwe):
 #     Embed into VFS containers-storage at /usr/lib/containers/storage
 #     (additionalimagestore).  VFS driver is required — the live ISO rootfs
 #     is an overlayfs and el10 (LTS) lacks native overlay-on-overlay; an
@@ -158,7 +166,7 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         SQUASH_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
         printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
         buildah copy "${SQUASH_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
-        buildah run  "${SQUASH_CTR}" -- sh -c 'cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
+        buildah run --network=none "${SQUASH_CTR}" -- sh -c 'cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
         # The payload ships verbatim to installed systems — never bake a
         # storage.conf into it (installed podman would inherit VFS storage).
         # VFS config for reading the embedded store lives in the live env
@@ -208,7 +216,7 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
         INJECT_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
         buildah copy "${INJECT_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
-        buildah run  "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
+        buildah run --network=none "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
 
         OCI_ARCHIVE="${WORK}/payload.oci.tar"
         CS_STAGING="${WORK}/overlay-storage"
@@ -249,7 +257,7 @@ if [[ -n "${OCI_IMAGE}" ]]; then
 fi
 
 SFS_LEVEL=3; SFS_BLOCK=131072
-[[ "${SUPERISO_COMPRESSION:-}" == "release" ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
+[[ "${COMPRESSION}" == "release" || "${SUPERISO_COMPRESSION:-}" == "release" ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
 
 echo ">>> [live-squashfs] mksquashfs -> ${OUTPUT_SFS} (zstd-${SFS_LEVEL}) ..."
 mkdir -p "$(dirname "${OUTPUT_SFS}")"

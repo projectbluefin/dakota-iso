@@ -9,20 +9,33 @@ tags:
   - governance
   - human-gates
   - process
-description: The four decision gates where AI agents must pause and request human maintainer review.
+description: Use when work may cross a design, security, breakage, or merge decision gate.
 version: "1.0"
-last_updated: "2026-07-30"
+last_updated: "2026-08-01"
 metadata:
   type: procedure
 ---
 
 # Human Decision Gates — dakota-iso
 
-Agents implement autonomously **except** at these four gates. At each gate, stop work, open a draft PR or issue comment, and request human input explicitly. Never guess past a gate.
+Agents implement autonomously **except** at these four gates. At each gate,
+stop and request human input explicitly. Never guess past a gate or create a
+PR, issue, or comment autonomously to obtain that input.
 
 ---
 
-## The Four Gates
+## When to Use
+
+Use this procedure before changing architecture, security-sensitive paths,
+cross-repository contracts, or merge state. Do not use it for a small,
+source-backed correction with no behavior or compatibility impact.
+
+## When Not to Use
+
+Do not invoke a decision gate to avoid a routine, reversible implementation
+choice that is already specified by the repository's source and policy.
+
+## Core Process: The Four Gates
 
 ### 1. Design Gate
 
@@ -35,7 +48,8 @@ Examples for this repo:
 - Changing how variants are defined or how `payload_ref` works
 - Adding a new Flatpak to the live environment bundle
 
-**Action:** Open a draft PR with your proposed design. Describe what you're changing and why. Tag with `needs-human` and state you are at a design gate.
+**Action:** Describe the proposed design and the decision required to the human
+operator. Wait for explicit direction before creating an external artifact.
 
 ---
 
@@ -49,7 +63,8 @@ Examples for this repo:
 - Modifying R2 credentials or upload logic
 - Adding or changing GitHub Actions secrets usage
 
-**Action:** Open a draft PR. State exactly which security property is affected and what your approach preserves or changes.
+**Action:** State exactly which security property is affected and what the
+approach preserves or changes. Wait for explicit human direction.
 
 ---
 
@@ -62,7 +77,8 @@ Examples for this repo:
 - Modifying the fisherman recipe format or `images.json` schema
 - Changing a justfile variable that CI workflows depend on
 
-**Action:** Identify all affected consumers first. List them in the PR description.
+**Action:** Identify all affected consumers first, then present that impact to
+the human operator before proceeding.
 
 ---
 
@@ -80,20 +96,13 @@ Agents never self-merge, never bypass branch protection, and never force-push to
 
 When you hit a gate:
 
-1. **Open a draft PR** (or comment on the issue if no code is ready yet)
-2. State which gate you've hit and why
-3. Add label `needs-human`
-4. Stop. Do not continue implementation until a human responds.
+1. State which gate you've hit and why.
+2. Present the options, recommendation, and affected consumers or security
+   properties as applicable.
+3. Stop. Do not continue implementation until a human responds.
 
-```bash
-# Open a draft PR
-gh pr create --repo projectbluefin/dakota-iso --base main --draft \
-  --title "feat: <your change>" \
-  --body "At Design Gate: <describe the decision needed>"
-
-# Add needs-human label
-gh pr edit <number> --repo projectbluefin/dakota-iso --add-label "needs-human"
-```
+Only create or update a PR, issue, or label after the human explicitly directs
+that action. Verify any required label exists before using it.
 
 ---
 
@@ -102,7 +111,8 @@ gh pr edit <number> --repo projectbluefin/dakota-iso --add-label "needs-human"
 Before requesting PR review, provide:
 
 - [ ] CI run link (must be green or explain any failing steps)
-- [ ] For ISO changes: statement that ISO built and booted (`just boot-iso-serial dakota` output or QEMU screenshot)
+- [ ] For installer or ISO behavior changes: full install completed and the
+      installed system booted (`just debug=1 plain-e2e dakota` or equivalent)
 - [ ] For container-only changes: statement this is container-only (no ISO boot required)
 - [ ] Skill file update committed in **this same PR**
 - [ ] PR title follows Conventional Commits format
@@ -116,3 +126,22 @@ If you're unsure whether you've hit a gate:
 - For architecture or security questions → **always stop and ask**
 - For small bug fixes with clear scope → proceed, but document in the PR description
 - For anything touching `.github/workflows/` → stop, that's sensitive path territory
+
+## Red Flags
+
+- Continuing implementation after identifying a gate
+- Opening a PR, issue, or comment to request approval without explicit direction
+- Treating a successful smoke boot as install verification
+
+## Common Rationalizations
+
+| Rationalization | Reality |
+|---|---|
+| "The design is obvious." | User-visible architecture still requires human direction. |
+| "I can open a draft PR to ask." | External writes require explicit human direction first. |
+
+## Verification
+
+- [ ] The applicable gate was identified before the affected action.
+- [ ] The human decision and any constraints are recorded before work resumes.
+- [ ] Verification evidence matches the change type.

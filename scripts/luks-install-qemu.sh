@@ -62,7 +62,7 @@ if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
     $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
     $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/luks-recipe.json'
 else
-    # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
+    # Ostree path (bluefin, bluefin-lts-hwe): bootcDirect — fisherman runs bootc natively.
     # Empty image triggers bootcDirect; targetImgref sets the day-2 rebase ref.
     # Fisherman emits --source-imgref containers-storage:<targetImgref> when
     # targetImgref is present and image is empty, resolving the payload from
@@ -91,38 +91,7 @@ else
 fi
 
 echo "Patching BLS entries to enable dual serial+VT console and LUKS unlock..."
-$SSH 'sudo bash -c "
-    set -euo pipefail
-    BOOT_PART=\"/dev/vda1\"
-    LUKS_PART=\"/dev/vda2\"
-    if ls /dev/vda3 >/dev/null 2>&1; then
-        echo \"Detected 3 partitions layout (separate boot partition for GRUB)\"
-        BOOT_PART=\"/dev/vda2\"
-        LUKS_PART=\"/dev/vda3\"
-    fi
-    LUKS_UUID=\$(cryptsetup luksUUID \"\$LUKS_PART\" 2>/dev/null || echo \"\")
-    TMP=\$(mktemp -d)
-    trap \"umount \$TMP 2>/dev/null || true; rmdir \$TMP\" EXIT
-    mount \"\$BOOT_PART\" \$TMP
-    COUNT=0
-    for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
-        [[ -f \"\$entry\" ]] || continue
-        if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
-            if [[ -n \"\$LUKS_UUID\" ]]; then
-                sed -i \"s|^options .*|& console=tty0 console=ttyS0 rd.luks.name=\${LUKS_UUID}=root|\" \"\$entry\"
-            else
-                sed -i \"s|^options .*|& console=tty0 console=ttyS0|\" \"\$entry\"
-            fi
-            COUNT=\$((COUNT+1))
-            echo \"  patched: \$(basename \$entry)\"
-        fi
-    done
-    echo \"BLS patch: \$COUNT entries updated\"
-"'
+scripts/qemu-lifecycle.sh patch-bls-console "${SSH_PORT}" luks
 
 echo "Install complete. Shutting down live QEMU..."
-SOCAT_PREFIX=""
-if ! test -w "${MONITOR_LIVE}" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
-echo "system_powerdown" | $SOCAT_PREFIX socat - "UNIX-CONNECT:${MONITOR_LIVE}" 2>/dev/null || true
-sleep 5
-echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:${MONITOR_LIVE}" 2>/dev/null || true
+scripts/qemu-lifecycle.sh shutdown "${MONITOR_LIVE}"

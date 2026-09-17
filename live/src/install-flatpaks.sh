@@ -36,34 +36,29 @@ flatpak remote-add --system --if-not-exists flathub \
 
 # bootc-installer bundle
 # INSTALLER_CHANNEL controls which release to pull from:
-#   stable (default) → GitHub "latest" release (non-pre-release)
-#   dev              → latest-dev rolling pre-release (tracks dev branch)
-# Primary source: projectbluefin/bootc-installer (Project Bluefin's fork).
-# Fallback: tuna-os/tuna-installer (upstream) if projectbluefin assets are unavailable.
-# v2.6.1 adds nvidia_imgref GPU auto-detection support.
-INSTALLER_REPO="projectbluefin/bootc-installer"
-FALLBACK_REPO="tuna-os/tuna-installer"
+#   stable (default) → org.bootcinstaller.Installer.flatpak
+#   dev              → org.bootcinstaller.Installer.Devel.flatpak
+# Both bundles are attached to the same versioned release, so both channels
+# resolve through /releases/latest/download/.
+#
+# Source: tuna-os/bootc-installer — the sole upstream for bootc-installer and
+# its fisherman backend.  projectbluefin/bootc-installer, projectbluefin/fisherman
+# and tuna-os/tuna-installer are all archived; there is no fallback repo.
+#
+# Do NOT reintroduce a rolling tag (latest-dev / continuous-dev).  A published
+# release accepts no new assets under GitHub's immutable-release ruleset, and
+# deleting one to start over permanently bans the tag name from re-creation.
+# projectbluefin lost "latest-dev" exactly that way on 2026-08-01: the tag now
+# 404s and the old fallback masked it by silently installing a four-month-old
+# tuna-installer build.
+INSTALLER_REPO="tuna-os/bootc-installer"
 FLATPAK_FILENAME="org.bootcinstaller.Installer.flatpak"
 if [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]]; then
     FLATPAK_FILENAME="org.bootcinstaller.Installer.Devel.flatpak"
-    # projectbluefin/bootc-installer uses tag "latest-dev" for dev builds.
-    # tuna-os/tuna-installer uses tag "continuous-dev" — different naming convention.
-    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/download/latest-dev/${FLATPAK_FILENAME}"
-    FALLBACK_URL="https://github.com/${FALLBACK_REPO}/releases/download/continuous-dev/${FLATPAK_FILENAME}"
-else
-    # Use GitHub's /releases/latest/download/ redirect — always resolves to the
-    # current latest stable release without needing to know the version tag.
-    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
-    FALLBACK_URL="https://github.com/${FALLBACK_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
 fi
-if ! curl --retry 3 --fail --location \
-    "${PRIMARY_URL}" \
-    -o /tmp/tuna-installer.flatpak 2>/dev/null; then
-    echo "Primary source unavailable, falling back to ${FALLBACK_REPO}..."
-    curl --retry 3 --fail --location \
-        "${FALLBACK_URL}" \
-        -o /tmp/tuna-installer.flatpak
-fi
+curl --retry 3 --fail --location \
+    "https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}" \
+    -o /tmp/tuna-installer.flatpak
 INSTALLER_APP_ID="org.bootcinstaller.Installer"
 [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
 

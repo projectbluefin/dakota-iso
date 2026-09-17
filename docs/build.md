@@ -34,7 +34,7 @@ Output: `output/<target>-live.iso`
 | Variable | Default | Override example |
 |---|---|---|
 | `debug` | `0` | `debug=1` → SSH enabled (`liveuser`/`live`, `root`/`root`) |
-| `installer_channel` | `stable` | `installer_channel=dev` → continuous-dev Flatpak |
+| `installer_channel` | `stable` | `installer_channel=dev` → Devel-branded bundle from the same release |
 | `output_dir` | `output` | `output_dir=/var/data/iso` |
 | `workdir` | `output_dir` | `workdir=/mnt` → use XFS loopback on BTRFS hosts |
 | `compression` | `fast` | `compression=release` → ~20% smaller, ~5× slower |
@@ -120,20 +120,11 @@ the image to one layer before VFS import. The squash uses `buildah from --pull-n
 + `buildah commit --squash` — NOT `podman create --entrypoint ... && podman commit`
 (the latter corrupts the Entrypoint config, breaking `bootc install`).
 
-## Source layout: `live/src/` vs `dakota/src/`
+## Source layout: `live/src/`
 
-Two parallel source trees exist:
-
-| Path | Used by | Notes |
-|---|---|---|
-| `live/src/` | CI (`build-iso.yml`), `live/Containerfile` | Canonical for CI; `build-iso.sh` here supports `--store` for offline OCI store |
-| `dakota/src/` | Local justfile (`iso-sd-boot`, `luks-*` recipes) | `build-iso.sh` here is the simpler local variant without `--store` |
-
-The live container (`live/Containerfile`) is used for **both** local and CI builds.
+All live environment assembly scripts, Flatpak manifests, and unlock helpers live in `live/src/`.
+This tree is used by `live/Containerfile`, the `justfile`, and CI (`build-iso.yml`).
 `live/src/flatpaks` is the definitive list of bundled Flatpaks.
-
-`dakota/src/flatpaks` is a legacy copy — it may diverge. Use `live/src/flatpaks` as the
-source of truth when adding or removing apps.
 
 
 
@@ -194,12 +185,6 @@ step, producing zstd-15 compression. Local `just iso-sd-boot` defaults to `compr
 just compression=release iso-sd-boot dakota
 ```
 
-### `dakota/src/flatpaks` diverged from `live/src/flatpaks` (2026-06)
-
-`dakota/src/flatpaks` contains `be.alexandervanhee.gradia` but `live/src/flatpaks` does not.
-Since `live/Containerfile` uses `live/src/flatpaks`, CI builds omit Gradia. Keep `live/src/flatpaks`
-as the source of truth and sync `dakota/src/flatpaks` to match it.
-
 
 `/tmp` is a 16 GB tmpfs on this host. A Dakota build needs ~22 GB peak. The build
 does not fail immediately — it runs out of space mid-squash and produces a truncated
@@ -212,14 +197,18 @@ in the image config. Dakota/bootc images have no Entrypoint by design; a fake on
 `bootc install` to fail with "cannot execute binary file". Always use
 `buildah commit --squash` to squash layers cleanly without touching config.
 
-### live/src/install-flatpaks.sh must mirror dakota/src/install-flatpaks.sh (2026-06)
+### Flatpak installation during image build
 
-`live/src/install-flatpaks.sh` is a parallel copy of `dakota/src/install-flatpaks.sh`
+`live/src/install-flatpaks.sh` bakes Flatpaks into the live image during container creation.
 for the live-squashfs build path. When the installer source logic changes in one, it
 must be replicated in the other. After PR fc0346d added primary/fallback logic to the
 `dakota` copy, the `live` copy was left behind still pointing only at `tuna-os/tuna-installer`.
-Both files now use `projectbluefin/bootc-installer` as primary (with `--fail` so curl
-exits non-zero on HTTP errors) and fall back to `tuna-os/tuna-installer` automatically.
+
+That primary/fallback split is gone. Every projectbluefin fork of the installer stack
+(`projectbluefin/bootc-installer`, `projectbluefin/fisherman`) and the old upstream
+(`tuna-os/tuna-installer`) are archived; `tuna-os/bootc-installer` is the single source,
+fetched with `curl --fail` so an HTTP error is a hard build failure instead of a silent
+downgrade to a stale fallback.
 
 ### filesystem choice: always btrfs for dakota (2026-06)
 
@@ -437,8 +426,10 @@ stays in the image indefinitely — even though `install-flatpaks.sh` calls curl
 
 To verify installer version: the metainfo XML in the flatpak may say an old version (not
 updated by upstream). The real check is the fisherman binary at
-`var/lib/flatpak/app/org.bootcinstaller.Installer/.../files/bin/fisherman` — v3.x is a
-Go binary containing `[fisherman] version:` strings and LUKS/flatpak/composefs logic.
+`var/lib/flatpak/app/org.bootcinstaller.Installer/.../files/bin/fisherman` — a Go binary
+containing `[fisherman] version:` strings and LUKS/flatpak/composefs logic. Upstream
+releases are date-tagged (`v<date>-<sha>`), so the release tag, not a semver, identifies
+the build.
 
 ### CI bluefin OCI store verification (2026-06)
 
