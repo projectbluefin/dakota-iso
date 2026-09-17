@@ -45,8 +45,8 @@ gh workflow run build-iso-bluefin.yml --ref main
 1. **Free disk space** — `ublue-os/remove-unwanted-software` reclaims ~119 GB at `/var/iso-build`
 2. **Install deps** — `apt-get install podman buildah skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
-4. **Pull payload image** — pulls only `dakota-nvidia:stable` (the unified ISO base)
-5. **Build live container** — `podman build live/ --build-arg TARGET=dakota-nvidia` → `localhost/dakota-nvidia-live:latest`
+4. **Pull payload image** — removes any local `dakota-nvidia:stable` tag, then pulls the current unified ISO base
+5. **Build live container** — `podman build --pull=always --no-cache live/ --build-arg TARGET=dakota-nvidia` → `localhost/dakota-nvidia-live:latest`
 6. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `<target>.rootfs.sfs` + `<target>-boot.tar` (~4.5 GB dakota, ~6 GB bluefin/lts-hwe)
 7. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (no `--store` flag — OCI already embedded in squashfs as VFS)
 8. **Generate checksum** — latest variant
@@ -678,23 +678,19 @@ Fix: `build-live-squashfs.sh` detects `composeFsBackend` from `recipe.json` and:
 - composefs: `"image": "containers-storage:<ref>"`
 - non-composefs: `"image": "oci:/var/lib/containers/oci-store"`
 
-fisherman needs the `bootcDirectOCI` code path (projectbluefin/fisherman dev→prod merge,
-bootc-installer PR #192) to handle `oci:` source refs.
+fisherman needs the `bootcDirectOCI` code path (originally landed via
+projectbluefin/fisherman dev→prod merge, bootc-installer PR #192) to handle `oci:`
+source refs.
 
-### fisherman lands in a released installer via the dev submodule (2026-09-17)
+### fisherman submodule pin can lag behind dev (2026-09)
 
-`tuna-os/fisherman` has no `dev`/`prod` split to reconcile: `dev` is its default and
-only active line, and `tuna-os/bootc-installer` pins its `fisherman` submodule to `dev`.
-
-To land a fisherman fix in a released installer:
-1. Merge the fix into `tuna-os/fisherman` `dev`
-2. Bump the `fisherman` submodule pointer in `tuna-os/bootc-installer` and merge to `dev`
-3. That push auto-cuts a non-prerelease `v<date>-<sha>` release carrying both the
-   production and Devel bundles — `/releases/latest/download/` picks it up on the next
-   dakota-iso build (subject to the daily `CACHE_BUST` layer invalidation)
-
-A merge into `tuna-os/fisherman` `dev` alone does **not** reach a released installer;
-the submodule bump is the step that ships it.
+`projectbluefin/bootc-installer` and `projectbluefin/fisherman` are retired.
+`tuna-os/bootc-installer`'s `fisherman` submodule now points at `tuna-os/fisherman`
+(bootc-installer#73). `tuna-os/fisherman` has no `main`/`prod` split — `dev` is both
+its default and active line — so there's no branch-sync step to run. The remaining gap
+is simpler: the submodule is a pinned SHA, so a fix merged to `tuna-os/fisherman`'s
+`dev` still needs the submodule pin in `tuna-os/bootc-installer` bumped and a new
+Flatpak release cut before it reaches a dakota ISO.
 
 ### Workflow matrix must be kept in sync with variant config files (2026-06)
 

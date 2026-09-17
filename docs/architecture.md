@@ -296,10 +296,7 @@ sudo just debug=1 installer_channel=${{ matrix.installer_channel }} \
   output_dir=/var/iso-build iso-sd-boot dakota
 ```
 
-**Dev channel tag:** neither channel uses a rolling tag. `tuna-os/bootc-installer`
-auto-cuts a non-prerelease `v<date>-<sha>` release on every push to `dev` and attaches
-both `org.bootcinstaller.Installer.flatpak` and `org.bootcinstaller.Installer.Devel.flatpak`
-to it, so both channels resolve through `/releases/latest/download/`. Rolling tags
-(`latest-dev`, `continuous-dev`, `latest-stable`) are banned: GitHub's immutable-release
-ruleset permanently bars a tag name from re-creation once a release has used it, which is
-how projectbluefin lost `latest-dev` on 2026-08-01.
+**Dev channel:** no rolling tag, no fallback repo. Both channels take
+`tuna-os/bootc-installer`'s `/releases/latest/download/` redirect and differ only in
+filename (`org.bootcinstaller.Installer.flatpak` vs `...Installer.Devel.flatpak`) — see
+`TestInstallerChannelURLs` in `tests/test_live_build_invariants.py`.

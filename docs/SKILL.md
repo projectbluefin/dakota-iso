@@ -19,6 +19,8 @@ Agent entry point for `projectbluefin/dakota-iso`. Load only the skill(s) that m
 | Unified nvidia ISO — size, compression, composefs vs non-composefs variants | [`docs/build.md`](build.md) |
 | ISO is wrong size | [`docs/build.md`](build.md) → ISO size table at top |
 | Installed system drops to emergency shell or won't boot | [`docs/skills/install-failures.md`](skills/install-failures.md) |
+| Install fails with "error writing hostname" or any target-write error | [`docs/skills/install-failures.md`](skills/install-failures.md) |
+| Read an installer log out of a running VM with no SSH (virt-manager/QMP) | [`docs/skills/install-failures.md`](skills/install-failures.md) |
 | UEFI falls to PXE after install (no bootloader found) | [`docs/skills/install-failures.md`](skills/install-failures.md) |
 | Add or modify variants (`payload_ref` pattern) | [`docs/variants.md`](variants.md) |
 | **Architecture** | |
@@ -26,7 +28,7 @@ Agent entry point for `projectbluefin/dakota-iso`. Load only the skill(s) that m
 | GPT layout, El Torito, systemd-boot, dmsquash-live | [`docs/architecture.md`](architecture.md) |
 | **CI/CD** | |
 | `build-iso.yml`, smoke test, R2 uploads, unified ISO pipeline | [`docs/ci.md`](ci.md) |
-| Backup rotation, variant matrix, AHCI smoke boot, README auto-refresh | [`docs/skills/ci-tooling.md`](skills/ci-tooling.md) |
+| Backup rotation, variant matrix, AHCI smoke boot | [`docs/skills/ci-tooling.md`](skills/ci-tooling.md) |
 | LUKS E2E test (local QEMU, libvirt, CI-equivalent) + installed-disk boot | [`docs/luks-testing.md`](luks-testing.md) |
 | **R2 / Release** | |
 | Promoting ISOs to production, rclone, named releases | [`docs/r2-promotion.md`](r2-promotion.md) |

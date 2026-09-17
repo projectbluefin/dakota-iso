@@ -47,7 +47,7 @@ jobs:
           tool: just
 
       - name: Install test dependencies
-        run: pip install pytest
+        run: pip install pytest PyYAML jsonschema
 
       - name: Run unit tests
         run: just test
@@ -107,17 +107,17 @@ jobs:
         run: bash .github/scripts/configure_podman_storage.sh
 
       - name: Set up Go
-        uses: actions/setup-go@f111f37a573bc6312437e3d1d36d22ef1492b453 # v5.3.0
+        uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
           go-version: '1.23'
 
-      # Track fisherman's active line.  This used to pin the June branch
-      # projectbluefin/fisherman@fix/overlay-driver-for-ostree-bootc-install,
-      # which froze the gate on a fork that is now archived: every fisherman fix
-      # merged since was invisible to E2E.  tuna-os/fisherman has no main/prod
-      # split — `dev` is its default and active line, and it is what
-      # tuna-os/bootc-installer pins as its submodule.
-      - name: Clone fisherman (tuna-os/fisherman dev — the active line)
+      # Track fisherman's active line. This used to pin the June branch
+      # fix/overlay-driver-for-ostree-bootc-install, which froze the gate on a
+      # six-week-old installer: every fisherman fix merged since — including the
+      # ENOSPC scratch-cache fix that this gate should have caught — was invisible
+      # to E2E. projectbluefin/fisherman is retired; tuna-os/fisherman has no
+      # `main`/`prod` split, `dev` is its default and active line.
+      - name: Clone fisherman (dev — tuna-os/fisherman's active line)
         run: |
           git clone https://github.com/tuna-os/fisherman.git \
             --branch dev \

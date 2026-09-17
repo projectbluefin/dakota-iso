@@ -297,9 +297,12 @@ dev target:
 boot-iso-serial target:
     #!/usr/bin/bash
     set -euo pipefail
-    QEMU=$(command -v /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
-               /usr/bin/qemu-system-x86_64 \
-               /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64 2>/dev/null | head -1)
+    QEMU=""
+    for candidate in /usr/libexec/qemu-kvm /usr/bin/qemu-kvm \
+                     /usr/bin/qemu-system-x86_64 \
+                     /home/linuxbrew/.linuxbrew/bin/qemu-system-x86_64; do
+        if [[ -x "$candidate" ]]; then QEMU="$candidate"; break; fi
+    done
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
     ISO=$(ls \
         {{output_dir}}/{{target}}-live.iso \
@@ -647,7 +650,15 @@ luks-boot target:
 # reliably triggers ENOSPC if fisherman writes scratch to /var/tmp instead
 # of the target disk.  Override with qemu-mem=8192 for interactive debugging.
 qemu-mem := "8192"
-qemu-smp := "8"
+# 4, not 8: GitHub-hosted runners provide 4 vCPUs, and KVM itself warns
+# "Number of SMP cpus requested (8) exceeds the recommended cpus supported
+# by KVM (4)" on every boot. The resulting 2x oversubscription measurably
+# slows guest boot under CI load — the `stable` (full GNOME desktop) variant
+# was observed printing its DAKOTA_LIVE_READY marker only right at a 25-minute
+# wait ceiling, while lighter variants (dakota, lts) stayed comfortably under
+# 10 minutes on the same oversubscribed CPU. Matching vCPU count to the host
+# removes the scheduling contention rather than just waiting it out.
+qemu-smp := "4"
 
 # QEMU install disk path (override with: just luks-qemu-disk=/path/to/disk.qcow2 ...)
 # Default includes the target variant so parallel CI jobs don't contend.
@@ -702,6 +713,17 @@ luks-test-qemu target installer_channel="dev":
     set -euo pipefail
     DISK="/var/tmp/dakota-luks-install-{{target}}-{{installer_channel}}.qcow2"
     SCRATCH="/var/tmp/dakota-luks-scratch-{{target}}-{{installer_channel}}.img"
+    SOCAT_PREFIX=""
+    for monitor in "{{luks-qemu-monitor-live}}" "{{luks-qemu-monitor-installed}}"; do
+        if [[ -S "$monitor" ]]; then
+            [[ -w "$monitor" ]] || SOCAT_PREFIX="sudo"
+            printf 'quit\n' | $SOCAT_PREFIX socat - "UNIX-CONNECT:$monitor" 2>/dev/null || true
+        fi
+    done
+    sleep 2
+    rm -f "$DISK" "$SCRATCH" "{{luks-qemu-monitor-live}}" \
+          "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-live}}" \
+          "{{luks-qemu-serial-installed}}"
     just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-live {{target}}
     just luks-qemu-ssh-port={{luks-qemu-ssh-port}} luks-install-qemu {{target}}
     just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-installed {{target}}
@@ -839,6 +861,19 @@ plain-enospc-gate target:
 plain-test-qemu target:
     #!/usr/bin/bash
     set -euo pipefail
+    # Each matrix variant gets a fresh disk; stale partitions can remain busy
+    # when a prior variant was interrupted before its live VM shut down.
+    SOCAT_PREFIX=""
+    for monitor in "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}"; do
+        if [[ -S "$monitor" ]]; then
+            [[ -w "$monitor" ]] || SOCAT_PREFIX="sudo"
+            printf 'quit\n' | $SOCAT_PREFIX socat - "UNIX-CONNECT:$monitor" 2>/dev/null || true
+        fi
+    done
+    sleep 2
+    rm -f "{{plain-qemu-disk}}" "{{plain-scratch-disk}}" \
+           "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
+           "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-live={{plain-qemu-monitor-live}} \
          plain-qemu-serial-live={{plain-qemu-serial-live}} \

@@ -228,6 +228,17 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
             "the natively-built initramfs.",
         )
 
+    def test_native_stage_includes_live_filesystems(self):
+        """Native dracut must include filesystems needed to mount the ISO."""
+        native = self.content.split("AS initramfs-native", 1)[1].split(
+            "FROM debian:", 1
+        )[0]
+        self.assertIn(
+            '--filesystems "iso9660 squashfs"',
+            native,
+            "Native dracut must include iso9660 or live boot cannot mount the ISO.",
+        )
+
     def test_debian_stage_reads_dracut_status(self):
         """Debian stage must check dracut-status to decide whether to cross-build."""
         self.assertIn(
@@ -270,6 +281,32 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
                 )
                 if line.strip().endswith(";") or line.strip() == "fi;":
                     break
+
+    def test_initramfs_includes_iso9660_filesystem_driver(self):
+        """Both initramfs paths must include Linux's isofs module."""
+        driver_lines = [
+            line for line in self.content.splitlines() if "--add-drivers" in line
+        ]
+        self.assertGreaterEqual(
+            len(driver_lines),
+            2,
+            "Native and Debian initramfs builds must declare filesystem drivers.",
+        )
+        for line in driver_lines:
+            self.assertIn(
+                "isofs",
+                line,
+                "ISO9660 support requires Linux's isofs kernel module.",
+            )
+
+    def test_initramfs_forces_iso9660_driver_early(self):
+        """Live boot must load isofs before mounting the ISO."""
+        force_lines = [
+            line for line in self.content.splitlines() if "--force-drivers" in line
+        ]
+        self.assertGreaterEqual(len(force_lines), 2)
+        for line in force_lines:
+            self.assertIn("isofs", line)
 
 
 class TestConfigureLiveSyntax(unittest.TestCase):
@@ -507,28 +544,68 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             "Dakota boot verification must run before the publish step.",
         )
 
-    def test_dakota_publish_does_not_mutate_repository(self):
-        """Dakota publishing must not update README or push to protected main."""
+    def test_dakota_readme_refresh_is_advisory_after_r2_upload(self):
+        """README branch protection must not turn a published ISO run red."""
         content = BUILD_ISO_WORKFLOW.read_text()
+        upload_pos = content.index("- name: Upload ISO to Cloudflare R2")
+        refresh_pos = content.index("- name: Refresh README dakota table")
+        refresh_block = content[refresh_pos:].split("\n      - name:", 1)[0]
+
+        self.assertLess(
+            upload_pos,
+            refresh_pos,
+            "README refresh must run only after the R2 upload step.",
+        )
         self.assertIn(
-            "contents: read",
-            content,
-            "Dakota publishing only needs read access to repository contents.",
+            "continue-on-error: true",
+            refresh_block,
+            "README refresh must not fail an otherwise successful R2 publish.",
         )
-        self.assertNotIn(
-            "contents: write",
-            content,
-            "Dakota publishing must not request repository write access.",
+        self.assertIn(
+            "R2 publication already completed",
+            refresh_block,
+            "README push rejection must explain that the ISO was already published.",
         )
-        self.assertNotIn(
-            "README",
-            content,
-            "Dakota publishing must not mutate the repository README.",
+
+    def test_dakota_publish_uses_fresh_stable_payload_and_live_build(self):
+        """The publish workflow must not reuse stale Dakota images or build layers."""
+        content = BUILD_ISO_WORKFLOW.read_text()
+        pull_block = content.split("- name: Pull offline payload images", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        build_block = content.split("- name: Build live container — dakota-nvidia", 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+
+        self.assertIn(
+            'IMAGE=ghcr.io/projectbluefin/dakota-nvidia:stable',
+            pull_block,
+            "Dakota publish must identify the current stable NVIDIA payload.",
         )
-        self.assertNotIn(
-            "git push",
-            content,
-            "Dakota publishing must not push directly to protected main.",
+        self.assertIn(
+            'podman image exists "$IMAGE"',
+            pull_block,
+            "Dakota publish must detect a stale local payload tag before pulling.",
+        )
+        self.assertIn(
+            'podman rmi "$IMAGE"',
+            pull_block,
+            "Dakota publish must remove a stale local payload tag before pulling.",
+        )
+        self.assertIn(
+            'podman pull "$IMAGE"',
+            pull_block,
+            "Dakota publish must pull the current stable NVIDIA payload.",
+        )
+        self.assertIn(
+            "--pull=always",
+            build_block,
+            "Dakota live-container builds must refresh their base image.",
+        )
+        self.assertIn(
+            "--no-cache",
+            build_block,
+            "Dakota live-container builds must not reuse stale build layers.",
         )
 
     def test_build_iso_bluefin_upload_waits_for_boot_verification(self):
@@ -1067,3 +1144,209 @@ class TestSkillCatalogUpToDate(unittest.TestCase):
             f"Skill catalog check failed:\n{res.stderr}\n"
             "Run `python3 scripts/generate_skill_index.py --write` to update.",
         )
+
+
+class TestActionPinsResolve(unittest.TestCase):
+    """Every SHA-pinned GitHub Action must point at a commit that exists.
+
+    Regression guard for the pin that killed both E2E gates: both install
+    workflows referenced ``actions/setup-go@f111f37a573bc6312437e3d1d36d22ef1492b453``,
+    which is not a real commit (the true v5.3.0 SHA is
+    ``f111f3307d8850f501ac008e886eec1fd1932a34`` — same ``f111f3`` prefix, then
+    divergent). Such a pin is well-formed, so shape checks and actionlint pass;
+    the job instead dies in *Set up job* with "unable to find version", producing
+    a red check with no build log that is easy to dismiss as a flake.
+    """
+
+    PIN_RE = re.compile(
+        r"^\s*(?:-\s*)?uses:\s*['\"]?"
+        r"(?P<repo>[\w.-]+/[\w.-]+)(?P<path>(?:/[\w.-]+)*)"
+        r"@(?P<sha>[0-9a-f]{40})",
+        re.MULTILINE,
+    )
+
+    @staticmethod
+    def _collect_pins():
+        """Return {(owner/repo, sha): sorted list of workflow file names}."""
+        pins = {}
+        workflow_dir = REPO / ".github" / "workflows"
+        for path in sorted(workflow_dir.glob("*.y*ml")):
+            text = path.read_text(encoding="utf-8")
+            for match in TestActionPinsResolve.PIN_RE.finditer(text):
+                key = (match.group("repo"), match.group("sha"))
+                pins.setdefault(key, set()).add(path.name)
+        return {key: sorted(names) for key, names in pins.items()}
+
+    @staticmethod
+    def _resolve(repo, sha):
+        """Resolve a commit via the GitHub API.
+
+        Returns ``(True, None)`` when the commit exists, ``(False, reason)`` when
+        the API says it does not, and ``(None, reason)`` when the check could not
+        be performed (offline, unauthenticated, rate limited) so the caller can
+        skip rather than fail.
+        """
+        import json
+        import os
+        import urllib.error
+        import urllib.request
+
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/commits/{sha}",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "dakota-iso-tests",
+            },
+        )
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
+
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.load(response).get("sha") is not None, None
+        except urllib.error.HTTPError as exc:
+            if exc.code in (404, 422):
+                return False, f"HTTP {exc.code} — no such commit"
+            # 401/403 are auth or rate-limit problems, not a bad pin.
+            return None, f"HTTP {exc.code} — cannot verify"
+        except Exception as exc:  # offline, DNS failure, timeout
+            return None, f"{type(exc).__name__}: {exc}"
+
+    def test_pins_are_found(self):
+        """The collector must actually find pins, or the check is vacuous."""
+        pins = self._collect_pins()
+        self.assertGreater(
+            len(pins), 0,
+            "No SHA-pinned actions found in .github/workflows — the pin regex is "
+            "probably stale, which would make the resolution test pass vacuously.",
+        )
+
+    def test_every_pinned_action_sha_exists(self):
+        pins = self._collect_pins()
+        self.assertGreater(len(pins), 0, "no SHA-pinned actions found")
+
+        bad = []
+        unverified = []
+        for (repo, sha), files in sorted(pins.items()):
+            ok, reason = self._resolve(repo, sha)
+            if ok is None:
+                unverified.append(f"{repo}@{sha} ({reason})")
+            elif not ok:
+                bad.append(f"{repo}@{sha} in {', '.join(files)} — {reason}")
+
+        if bad:
+            self.fail(
+                "Unresolvable action pin(s) — these jobs will die in 'Set up job' "
+                "with no build log:\n  " + "\n  ".join(bad)
+                + "\n\nResolve the intended tag instead of hand-writing a SHA:\n"
+                "  gh api repos/<owner>/<repo>/git/ref/tags/<tag> -q .object.sha"
+            )
+        if unverified and len(unverified) == len(pins):
+            self.skipTest(
+                "GitHub API unreachable or unauthenticated; could not verify "
+                f"{len(unverified)} action pin(s). Set GITHUB_TOKEN to enable."
+            )
+class TestE2EFishermanRef(unittest.TestCase):
+    """The E2E gates must build fisherman from a long-lived branch.
+
+    Both install workflows once cloned ``fix/overlay-driver-for-ostree-bootc-install``,
+    whose last commit was 2026-06-17. The gate therefore built and tested a
+    six-week-old installer: every fisherman fix merged after that date was
+    invisible to E2E, including the scratch-cache ENOSPC fix that this gate is
+    supposed to catch. A feature branch is a fossil the moment it stops moving,
+    and nothing in CI notices.
+    """
+
+    E2E_WORKFLOWS = ("test-plain-install.yml", "test-luks-install.yml")
+    # tuna-os/fisherman (the sole upstream after projectbluefin/fisherman was
+    # retired) has no main/prod split — dev is both its default and active line.
+    LONG_LIVED = {"main", "dev"}
+
+    CLONE_RE = re.compile(
+        r"git clone\s+\S*github\.com/tuna-os/fisherman\.git\s*\\?\s*\n"
+        r"\s*--branch\s+(?P<branch>\S+)",
+    )
+
+    def test_e2e_workflows_clone_a_long_lived_fisherman_branch(self):
+        checked = 0
+        for name in self.E2E_WORKFLOWS:
+            path = REPO / ".github" / "workflows" / name
+            self.assertTrue(path.exists(), f"Missing {path}")
+            text = path.read_text(encoding="utf-8")
+            match = self.CLONE_RE.search(text)
+            self.assertIsNotNone(
+                match,
+                f"{name}: could not find the fisherman clone step — if the clone "
+                "moved, update this guard rather than deleting it.",
+            )
+            branch = match.group("branch")
+            self.assertIn(
+                branch,
+                self.LONG_LIVED,
+                f"{name} clones fisherman branch {branch!r}. E2E must track a "
+                f"long-lived branch ({', '.join(sorted(self.LONG_LIVED))}); a feature "
+                "branch freezes the gate on whatever the installer looked like when "
+                "that branch stopped moving.",
+            )
+            checked += 1
+        self.assertEqual(
+            checked, len(self.E2E_WORKFLOWS),
+            "not every E2E workflow was checked",
+        )
+
+
+class TestInstallerChannelURLs(unittest.TestCase):
+    """The dev channel must not point at the dead `latest-dev` release tag.
+
+    bootc-installer's publishing workflow used to delete the `latest-dev` release
+    and re-create it on every dev push. Under the immutable-release ruleset that
+    is a one-way door: a tag that has carried a release can never be created
+    again, so on 2026-08-01 the delete succeeded, the re-create failed, and the
+    tag became permanently unusable.
+
+    The failure mode is silent and dangerous — `install-flatpaks.sh` falls back
+    to the upstream `tuna-os` bundle on a 404, so the live ISO ships a different
+    project's installer instead of failing the build.
+    """
+
+    INSTALL_FLATPAKS = REPO / "live" / "src" / "install-flatpaks.sh"
+    INSTALLER_REPO_PATH = "${INSTALLER_REPO}"
+    DEAD_TAGS = ("latest-dev", "latest-stable", "dev-rolling")
+
+    def test_installer_urls_avoid_dead_release_tags(self):
+        text = self.INSTALL_FLATPAKS.read_text(encoding="utf-8")
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped.startswith(("PRIMARY_URL=", "FALLBACK_URL=")):
+                continue
+            for dead in self.DEAD_TAGS:
+                self.assertNotIn(
+                    f"/download/{dead}/",
+                    stripped,
+                    f"{self.INSTALL_FLATPAKS.name}:{line_no} points at the dead "
+                    f"release tag {dead!r}. That tag can never be re-created, so the "
+                    "download 404s and the script silently falls back to the upstream "
+                    "tuna-os bundle.",
+                )
+
+    def test_both_channels_use_the_versioned_release_redirect(self):
+        """Only a release created together with its assets survives immutability.
+
+        A published release accepts no new assets, and deleting one to start
+        over permanently burns the tag name, so no rolling tag can be kept
+        current. Versioned releases carry both bundles and are created with
+        them, so both channels take the /releases/latest/ redirect and differ
+        only in filename.
+        """
+        text = self.INSTALL_FLATPAKS.read_text(encoding="utf-8")
+        primary = [
+            ln.strip() for ln in text.splitlines() if ln.strip().startswith("PRIMARY_URL=")
+        ]
+        self.assertTrue(primary, "no PRIMARY_URL assignments found")
+        for line in primary:
+            self.assertIn(
+                f"/{self.INSTALLER_REPO_PATH}/releases/latest/download/",
+                line,
+                f"{line} must use the versioned-release redirect",
+            )

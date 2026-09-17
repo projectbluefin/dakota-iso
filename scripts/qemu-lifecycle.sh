@@ -99,6 +99,11 @@ boot_live() {
         -serial "file:${serial}" \
         -display none \
         -daemonize
+    # A sudo-prefixed qemu (the /dev/kvm fallback in qemu_acceleration) creates a
+    # root-owned serial file, which silently defeats every grep in wait_live:
+    # `grep ... 2>/dev/null` on an unreadable file looks identical to "marker not
+    # present yet", so readiness never becomes true no matter how long the guest runs.
+    sudo chmod a+r "$serial" 2>/dev/null || chmod a+r "$serial" 2>/dev/null || true
     echo "Live QEMU started (monitor: ${monitor})"
 }
 
@@ -107,7 +112,14 @@ wait_live() {
     local ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password"
 
     echo "Waiting for live environment on port ${ssh_port}..."
-    for i in $(seq 1 60); do
+    # Loop bound: each non-ready iteration costs ~10s (SSH's own 5s ConnectTimeout
+    # plus the 5s sleep below), so 150 iterations is a ~25min ceiling, not the
+    # ~12.5min the iteration count alone suggests. The `stable` (full GNOME
+    # desktop) variant has been observed taking ~8min to become reachable under
+    # loaded CI runners — GDM plus its full unit set boots meaningfully slower
+    # than the lighter dakota/lts variants — while still making steady progress
+    # (not hung), so this widens the ceiling rather than fixing a stall.
+    for i in $(seq 1 150); do
         if grep -q "DAKOTA_LIVE_READY\|debug-ssh-banner" "$serial" 2>/dev/null; then
             echo "Serial marker seen — polling SSH..."
             for _ in $(seq 1 30); do
@@ -127,7 +139,7 @@ wait_live() {
             sleep 15
             return
         fi
-        [[ "$i" -eq 60 ]] && { echo "Timeout waiting for live environment" >&2; cat "$serial" >&2; exit 1; }
+        [[ "$i" -eq 150 ]] && { echo "Timeout waiting for live environment after ~25m" >&2; cat "$serial" >&2; exit 1; }
         sleep 5
     done
 }

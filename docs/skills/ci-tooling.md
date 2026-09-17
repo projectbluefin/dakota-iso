@@ -10,8 +10,8 @@ tags:
   - github-actions
   - r2
 description: Workflow definitions, runner environment, caching, and release automation for dakota-iso.
-version: "1.0"
-last_updated: "2026-07-30"
+version: "1.4"
+last_updated: "2026-08-01"
 metadata:
   type: reference
 ---
@@ -74,10 +74,17 @@ Slots beyond 3 are pruned by the `Delete backup slots beyond 3` step.
 
 ### Keep publish workflows release-only
 
-Publish jobs must build, verify, and upload release artifacts without mutating
-the repository. Documentation changes belong in reviewed commits; a post-publish
-commit or push can be rejected by branch protection after the artifact has
-already shipped, incorrectly marking the release job as failed.
+`build-iso.yml` includes a "Refresh README dakota table" step that rewrites the
+`| \`dakota\` |` row with current ISO size, publish date, and CI run link. It then
+git-commits and pushes to `main`. This step requires `contents: write` permission on the job.
+
+**Branch Protection Note (July 2026):** The README refresh is advisory because
+`main` may reject direct pushes from the workflow with `protected branch hook declined`.
+The step emits a warning and remains non-blocking, so **the ISO stays successfully
+built, tested, and published to R2**. A repository admin can manually update the
+row in `README.md` when needed.
+
+Bluefin variants do not auto-refresh the README — update their rows manually after a build.
 
 ### AHCI vs SCSI CD for smoke boot (bluefin CI)
 
@@ -120,3 +127,161 @@ Before submitting CI workflow changes:
 - [ ] AHCI (`ich9-ahci`) used for smoke boot in bluefin CI (not SCSI)
 - [ ] Tests pass: `python -m pytest tests/test_live_build_invariants.py -q`
 - [ ] `rclone lsf R2:testing --files-only | sort` shows only `*-latest.iso`, `*-backup-{1,2,3}.iso`, and named alphas
+
+---
+
+## A wrong action SHA silently kills both E2E gates (2026-08-01)
+
+`test-plain-install.yml` and `test-luks-install.yml` both pinned
+
+```yaml
+uses: actions/setup-go@f111f37a573bc6312437e3d1d36d22ef1492b453 # v5.3.0
+```
+
+That SHA does not exist. The real `actions/setup-go` v5.3.0 commit is
+`f111f3307d8850f501ac008e886eec1fd1932a34` — same `f111f3` prefix, then divergent.
+It is exactly the shape of a fabricated or mis-copied pin, and the trailing
+`# v5.3.0` comment made it look reviewed.
+
+**Why it is dangerous:** the job dies in *Set up job* with
+
+```
+##[error]Unable to resolve action `actions/setup-go@f111f37…`, unable to find version
+```
+
+Nothing in the workflow ever runs, so there is no install log, no QEMU output, and no
+hint that a gate was skipped. The PR simply shows a red E2E check that looks like a
+flake. Both mandatory functional gates in this repo were dead this way, which is how
+an ENOSPC install regression reached a user's machine
+([`install-failures.md`](install-failures.md) Failure 5).
+
+**Rule:** a red check whose failure is in *Set up job* is never a flake and never a
+product bug — it is a broken workflow definition. Read the first error before
+re-running.
+
+**Sweep for bad pins** (all 8 pins in this repo resolve as of 2026-08-01):
+
+```bash
+grep -rhoP 'uses:\s*\K[\w.-]+/[\w.-]+(?:/[\w.-]+)*@[0-9a-f]{40}' .github/workflows/ | sort -u |
+while read -r pin; do
+  repo="${pin%@*}"; sha="${pin#*@}"
+  gh api "repos/$(echo "$repo" | cut -d/ -f1,2)/commits/$sha" -q .sha >/dev/null 2>&1 ||
+    echo "UNRESOLVABLE: $pin"
+done
+```
+
+Resolve the intended tag before pinning — never hand-write a SHA:
+
+```bash
+gh api repos/actions/setup-go/git/ref/tags/v5.3.0 -q .object.sha
+```
+
+**Automated since 2026-08-01:** `TestActionPinsResolve` in
+`tests/test_live_build_invariants.py` runs that sweep on every PR — it resolves each
+pinned SHA against the GitHub API, fails with the offending file name when one does
+not exist, and skips cleanly when offline or unauthenticated. `test.yml` passes
+`GITHUB_TOKEN` to pytest; without it the shared runner IP is rate limited and the
+check would silently skip.
+## The E2E gates were testing a six-week-old installer (2026-08-01)
+
+`test-plain-install.yml` and `test-luks-install.yml` build the fisherman binary they
+test with from a clone made in the *Clone patched fisherman* step. That step pinned
+
+```yaml
+git clone https://github.com/projectbluefin/fisherman.git \
+  --branch fix/overlay-driver-for-ostree-bootc-install \
+  --depth 1 /tmp/fisherman
+```
+
+whose last commit was **2026-06-17**. A feature branch is a fossil the moment it stops
+moving, and nothing in CI notices — the gate stays green-looking while it validates an
+installer nobody ships. Every fisherman fix merged after mid-June was invisible to E2E,
+including the scratch-cache ENOSPC fix the gate should have caught
+([`install-failures.md`](install-failures.md) Failure 5).
+
+**Fixed:** both workflows clone a long-lived branch and log the resolved commit, so the
+job output records exactly which installer was tested.
+
+**Guarded:** `TestE2EFishermanRef` in `tests/test_live_build_invariants.py` fails the
+build if either workflow clones anything other than a long-lived branch (`main`/`dev`).
+
+**Branch note (2026-09):** `projectbluefin/fisherman` is retired; both workflows now
+clone `tuna-os/fisherman`, the sole upstream. Unlike the old fork, it has no
+`main`/`prod` split — `dev` is both its default and active line, so that's what the
+clone step targets.
+
+---
+
+## Rolling installer release tags are impossible now (2026-08-01)
+
+`live/src/install-flatpaks.sh` fetches the installer Flatpak from a
+`tuna-os/bootc-installer` **release asset**, not from a branch. Both channels
+use the same versioned-release redirect and differ only in filename:
+
+| channel | URL |
+|---|---|
+| stable | `releases/latest/download/org.bootcinstaller.Installer.flatpak` |
+| dev | `releases/latest/download/org.bootcinstaller.Installer.Devel.flatpak` |
+
+The dev channel used to track a rolling tag (`latest-dev`). That model is dead under
+GitHub's immutable-release ruleset, which enforces two things at once:
+
+- a published release accepts no new or changed assets —
+  `HTTP 422: Cannot upload assets to an immutable release`
+- deleting a release to start over **permanently burns the tag name** —
+  `HTTP 422: Cannot create ref due to creations being restricted`
+
+So a tag can never be kept current, and the delete-then-recreate workaround is a
+one-way door. `latest-dev` was destroyed this way, and its replacement `dev-rolling`
+was then created empty and immediately became unwritable. Both are gone for good.
+The only pattern immutability permits is **create a new release together with its
+assets**, which is exactly what versioned `v*` releases do — and every one of them
+carries both bundles.
+
+**Why this needs a test:** the failure is silent. `install-flatpaks.sh` falls back to
+the upstream `tuna-os` bundle on a 404, so a broken channel does not fail the ISO
+build — it ships *a different project's installer*. `TestInstallerChannelURLs` fails
+the build if either URL names a known-dead tag, and requires both channels to use the
+versioned-release redirect.
+
+**Cutting a release:** push a `v*` tag; the Flatpak workflow builds both bundles and
+creates the release with them attached. Do not pre-create the release — an empty
+published release is immutable and can never receive its assets. Note that a version
+number whose release was once deleted is banned forever: `v3.0.15` could not be
+created, so the ENOSPC fix shipped as `v3.0.16`.
+
+---
+
+## The README download table cannot self-refresh (2026-08-01)
+
+`build-iso.yml`'s *Refresh README dakota table* step ends with
+
+```bash
+if ! git push origin HEAD:main; then
+  echo "::warning::README refresh could not push to protected main; R2 publication already completed."
+fi
+```
+
+`main` is protected, so that push always fails:
+
+```
+remote: error: GH006: Protected branch update failed for refs/heads/main.
+```
+
+The step still reports **success**, so nothing draws attention to it. The row had been
+frozen on the 2026-07-01 build while the ISO behind the link kept changing — meaning
+the README advertised a **checksum that does not match the file it links to**. Anyone
+verifying their download against the README would conclude the ISO was corrupt.
+
+**Until the step can open a PR instead of pushing, the README row is stale by default.**
+Treat `https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM` as the only
+authoritative checksum, and refresh the row by hand after a publish:
+
+```bash
+curl -sL https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM
+curl -sIL https://projectbluefin.dev/dakota-live-latest.iso | grep -i content-length
+```
+
+Note the same protected-branch rule is why every PR needs `gh pr merge --admin`: the
+required contexts `LUKS E2E (dev)` / `LUKS E2E (stable)` no longer match any job name
+since the E2E matrix gained a variant dimension, so they never report.
