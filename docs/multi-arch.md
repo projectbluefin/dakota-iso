@@ -19,6 +19,14 @@ hardware. Implements issue #36 (closed).
   passes `--arch`.
 - The former aarch64 source, [tuna-os/dakota-x13s](https://github.com/tuna-os/dakota-x13s)
   (Lenovo ThinkPad X13s / Qualcomm SC8280XP), is **archived** — last push 2026-04-19.
+- `live/Containerfile` **cannot** produce an aarch64 live environment: the final stage
+  hardcodes Debian x86_64 library paths (`COPY --from=initramfs-builder
+  /usr/lib/x86_64-linux-gnu/libinih.so.1 …`, lines 135-139) and no stage carries a
+  `--platform`. Every workflow job is `ubuntu-24.04`/`ubuntu-latest` — no aarch64 lane.
+
+Tracked as [#200](https://github.com/projectbluefin/dakota-iso/issues/200). Treat the
+`--arch` mode and this document as a design record, not a shipped capability, until a
+producer exists.
 
 ## Why a single-arch ISO is the correct default
 
