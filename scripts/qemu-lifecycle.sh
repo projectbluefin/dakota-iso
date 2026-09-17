@@ -146,20 +146,45 @@ wait_live() {
 }
 
 wait_for_live_qemu_exit() {
-    local disk="$1" live_monitor="$2" disk_pattern
+    local disk="$1" live_monitor="$2" disk_pattern pids
 
     disk_pattern=$(printf '%s' "$disk" | sed 's/[][\\.^$*+?(){}|]/\\&/g')
-    for attempt in $(seq 1 15); do
+
+    # A live GNOME session can take well over 30s to finish an ACPI powerdown,
+    # and `shutdown` only gets one `quit` in before the monitor socket goes away.
+    # Erroring out here used to abort the whole E2E run *after* a successful
+    # install — the disk was fine, the previous VM just had not reaped yet.
+    # Wait generously, then escalate, and only fail if the disk is still pinned.
+    for attempt in $(seq 1 60); do
         if ! sudo pgrep -f "qemu.*${disk_pattern}" >/dev/null 2>&1; then
             rm -f "$live_monitor" 2>/dev/null || sudo rm -f "$live_monitor"
             return
         fi
-        echo "Waiting for live QEMU to release ${disk} (attempt ${attempt}/15)..."
+        [[ $((attempt % 5)) -eq 0 ]] && \
+            echo "Waiting for live QEMU to release ${disk} (attempt ${attempt}/60)..."
         sleep 2
     done
 
-    echo "ERROR: live QEMU still holds ${disk} after 30 seconds" >&2
-    exit 1
+    echo "Live QEMU still holds ${disk} after 120s — escalating to SIGTERM" >&2
+    pids=$(sudo pgrep -f "qemu.*${disk_pattern}" || true)
+    [[ -n "$pids" ]] && sudo kill $pids 2>/dev/null
+    for _ in $(seq 1 10); do
+        sudo pgrep -f "qemu.*${disk_pattern}" >/dev/null 2>&1 || break
+        sleep 1
+    done
+
+    if sudo pgrep -f "qemu.*${disk_pattern}" >/dev/null 2>&1; then
+        echo "Live QEMU ignored SIGTERM — escalating to SIGKILL" >&2
+        pids=$(sudo pgrep -f "qemu.*${disk_pattern}" || true)
+        [[ -n "$pids" ]] && sudo kill -9 $pids 2>/dev/null
+        sleep 2
+    fi
+
+    if sudo pgrep -f "qemu.*${disk_pattern}" >/dev/null 2>&1; then
+        echo "ERROR: live QEMU still holds ${disk} after SIGKILL" >&2
+        exit 1
+    fi
+    rm -f "$live_monitor" 2>/dev/null || sudo rm -f "$live_monitor"
 }
 
 boot_installed() {
@@ -307,7 +332,14 @@ shutdown() {
     local socat_prefix=""
     test -w "$monitor" 2>/dev/null || socat_prefix="sudo"
     echo "system_powerdown" | $socat_prefix socat - "UNIX-CONNECT:${monitor}" 2>/dev/null || true
-    sleep 5
+    # Give the guest a real chance to power down on its own: the monitor socket
+    # disappearing is qemu exiting. Only force `quit` if it is still there — a
+    # 5s fixed sleep used to fire mid-ACPI-shutdown, when the socket was already
+    # gone, so the `quit` went nowhere and qemu kept running for another minute.
+    for _ in $(seq 1 30); do
+        [[ -S "$monitor" ]] || return
+        sleep 2
+    done
     echo "quit" | $socat_prefix socat - "UNIX-CONNECT:${monitor}" 2>/dev/null || true
 }
 
