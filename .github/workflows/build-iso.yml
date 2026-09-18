@@ -21,7 +21,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
-      contents: read
+      # write: the "Refresh README dakota table" step commits and pushes
+      # README.md to main after a successful publish.
+      contents: write
       packages: read
 
     steps:
