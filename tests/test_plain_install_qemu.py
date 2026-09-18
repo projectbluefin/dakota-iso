@@ -173,6 +173,20 @@ class PlainInstallHarness(unittest.TestCase):
         self.assertTrue(path.exists(), f"no recipe uploaded; stub log:\n{self.stub_log()}")
         return json.loads(path.read_text())
 
+    def assert_recipe_contract(self, recipe):
+        """Constants fisherman must receive on BOTH recipe templates.
+
+        plain-install-qemu.sh emits two separate printf templates — composefs
+        (line 56) and bootcDirect (line 68). Asserting these only on one left
+        the other free to drift; a bootcDirect recipe asking for LUKS passed
+        the whole suite, in a lane whose entire identity is "no encryption".
+        """
+        self.assertEqual(recipe["disk"], "/dev/vda")
+        self.assertEqual(recipe["filesystem"], "btrfs")
+        self.assertEqual(recipe["hostname"], "dakota-plain-test")
+        self.assertEqual(recipe["encryption"], {"type": "none"})
+        self.assertEqual(recipe["flatpaks"], [])
+
 
 class TestArgumentValidation(PlainInstallHarness):
     def test_too_few_arguments_exits_1_with_usage(self):
@@ -212,11 +226,7 @@ class TestComposefsRecipe(PlainInstallHarness):
         self.run_script(self.target, image_exists=True)
         recipe = self.recipe()
         self.assertTrue(recipe["composeFsBackend"])
-        self.assertEqual(recipe["disk"], "/dev/vda")
-        self.assertEqual(recipe["filesystem"], "btrfs")
-        self.assertEqual(recipe["hostname"], "dakota-plain-test")
-        self.assertEqual(recipe["encryption"], {"type": "none"})
-        self.assertEqual(recipe["flatpaks"], [])
+        self.assert_recipe_contract(recipe)
         self.assertNotIn("targetImgref", recipe)
 
     def test_composefs_path_does_not_build_fisherman(self):
@@ -300,6 +310,13 @@ class TestBootcDirectRecipe(PlainInstallHarness):
         self.assertEqual(recipe["image"], "")
         self.assertEqual(recipe["targetImgref"], "ghcr.io/example/lts:latest")
         self.assertFalse(recipe["composeFsBackend"])
+
+    def test_recipe_contract_fields(self):
+        """Same installer contract as the composefs recipe — separate template."""
+        self.run_script(self.target, image_exists=True)
+        recipe = self.recipe()
+        self.assertFalse(recipe["composeFsBackend"])
+        self.assert_recipe_contract(recipe)
 
     def test_target_imgref_is_the_bare_ref_not_a_transport_url(self):
         """targetImgref is a day-2 rebase ref: no containers-storage:/docker:// prefix."""
