@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y podman buildah skopeo \
+          sudo apt-get install -y podman skopeo \
             mtools xorriso squashfs-tools dosfstools isomd5sum
 
       - name: Log in to GHCR

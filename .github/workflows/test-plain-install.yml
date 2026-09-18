@@ -123,7 +123,7 @@ jobs:
         run: |
           START=$SECONDS
           sudo apt-get install -y --no-install-recommends \
-            podman skopeo squashfs-tools xorriso dosfstools mtools buildah
+            podman skopeo squashfs-tools xorriso dosfstools mtools
           sudo mkdir -p /var/iso-build
           mkdir -p output
           # Pull the payload image so fisherman uses local containers-storage

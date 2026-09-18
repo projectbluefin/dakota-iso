@@ -1047,15 +1047,45 @@ class TestBuildLiveSquashfs(unittest.TestCase):
             "under live/src/ are included in fresh ISO test artifacts.",
         )
 
-    def test_payload_file_injection_uses_networkless_buildah_runs(self):
-        """Offline payload edits must not require netavark or network setup."""
+    def test_payload_file_injection_is_networkless(self):
+        """Offline payload edits must not require netavark or network setup.
+
+        The live-container build legitimately needs the network (it downloads
+        Flatpaks). The payload builds do not, and must never acquire that
+        dependency: they run in constrained environments where bringing up a
+        network stack is exactly what fails.
+        """
         content = BUILD_LIVE_SQUASHFS.read_text()
-        self.assertEqual(
-            content.count("buildah run --network=none"),
-            2,
-            "Both payload file-injection commands must disable networking so "
-            "the minimal FSDK Buildah image does not need netavark.",
+        payload_containerfiles = (
+            "Containerfile.squash",
+            "Containerfile.annot",
+            "Containerfile.inject",
         )
+
+        # Split on `podman build` and keep each invocation's flag block, which
+        # ends at the first line that is not a backslash continuation.
+        invocations = []
+        for chunk in content.split("podman build")[1:]:
+            flags = []
+            for line in chunk.splitlines():
+                flags.append(line)
+                if not line.rstrip().endswith("\\"):
+                    break
+            invocations.append("\n".join(flags))
+
+        for containerfile in payload_containerfiles:
+            matching = [i for i in invocations if containerfile in i]
+            self.assertEqual(
+                len(matching),
+                1,
+                f"expected exactly one podman build using {containerfile}",
+            )
+            self.assertIn(
+                "--network=none",
+                matching[0],
+                f"the payload build using {containerfile} must disable "
+                "networking — payload edits are offline operations.",
+            )
 
 
 class TestPayloadPristine(unittest.TestCase):
