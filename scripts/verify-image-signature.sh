@@ -4,7 +4,7 @@
 # callers pull exactly what was verified (no tag-vs-verify TOCTOU window).
 #
 # The images we package into the ISO (live base image, offline payload) are
-# built by projectbluefin/ublue-os GitHub Actions and signed keylessly.
+# built by projectbluefin GitHub Actions and signed keylessly.
 # TLS proves transport integrity only — it does not prove the image under a
 # mutable tag (e.g. :stable) was produced by this project's CI.
 #
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 OIDC_ISSUER="https://token.actions.githubusercontent.com"
-IDENTITY_REGEXP='^https://github\.com/(projectbluefin|ublue-os)/'
+IDENTITY_REGEXP='^https://github\.com/projectbluefin/'
 
 if [[ $# -ne 1 ]]; then
     echo "usage: $0 <image-ref>" >&2
@@ -27,10 +27,10 @@ fi
 
 ref="$1"
 
-# Only projectbluefin/ublue-os GHCR images are signed by our CI.
+# Only projectbluefin GHCR images are signed by our CI.
 # Anything else (localhost refs, other registries) is out of scope here.
 case "$ref" in
-    ghcr.io/projectbluefin/*|ghcr.io/ublue-os/*) ;;
+    ghcr.io/projectbluefin/*) ;;
     *)
         echo "ERROR: refusing to verify non-project image '${ref}' — no trusted signer identity" >&2
         exit 1
