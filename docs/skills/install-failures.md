@@ -201,10 +201,10 @@ Fixing fisherman is not shipping it. The chain has three hops, and each one can 
 stale independently:
 
 ```
-projectbluefin/fisherman  main
-        │  git submodule  (bootc-installer/fisherman, tracks branch `dev`)
+tuna-os/fisherman  dev
+        │  git submodule  (bootc-installer/fisherman, pinned SHA)
         ▼
-projectbluefin/bootc-installer  →  org.bootcinstaller.Installer flatpak
+tuna-os/bootc-installer  →  org.bootcinstaller.Installer flatpak
         │  configure-live.sh installs the flatpak into the live squashfs
         ▼
 dakota-iso  →  dakota-live-latest.iso
@@ -214,10 +214,10 @@ Check where a given fix actually is before telling anyone it is fixed:
 
 ```bash
 # What fisherman commit does the shipped installer build from?
-gh api repos/projectbluefin/bootc-installer/contents/fisherman -q .sha
+gh api repos/tuna-os/bootc-installer/contents/fisherman -q .sha
 
-# How far behind fisherman main is that pin?
-gh api repos/projectbluefin/fisherman/compare/<pin>...main -q '{ahead:.ahead_by,behind:.behind_by}'
+# How far behind fisherman dev is that pin?
+gh api repos/tuna-os/fisherman/compare/<pin>...dev -q '{ahead:.ahead_by,behind:.behind_by}'
 ```
 
 As of 2026-08-01 that pin was a 2026-06-23 commit — 27 behind `main`, and diverged.
