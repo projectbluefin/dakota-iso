@@ -132,7 +132,8 @@ Requirements:
 ## Installer: tuna-installer / bootc-installer
 
 - **Flatpak:** `org.bootcinstaller.Installer` (stable) / `org.bootcinstaller.Installer.Devel` (dev)
-- **Source:** `projectbluefin/bootc-installer` (primary), `tuna-os/tuna-installer` (fallback)
+- **Source:** `tuna-os/bootc-installer` (sole upstream; `projectbluefin/bootc-installer` and
+  `projectbluefin/fisherman` are retired — no fallback repo)
 - **Backend binary:** `fisherman` → symlinked to `/usr/local/bin/fisherman` by `configure-live.sh`
 - **Config:** `/etc/bootc-installer/images.json` (catalog) + `recipe.json` (branding)
 - **Flatpak sandbox:** Inside the Flatpak, `/etc` is reserved. Host `/etc` is at `/run/host/etc`.
@@ -294,5 +295,7 @@ sudo just debug=1 installer_channel=${{ matrix.installer_channel }} \
   output_dir=/var/iso-build iso-sd-boot dakota
 ```
 
-**Dev channel fallback tag:** `tuna-os/tuna-installer` uses tag `continuous-dev` for
-dev rolling releases, NOT `latest-dev`. `projectbluefin/bootc-installer` uses `latest-dev`.
+**Dev channel:** no rolling tag, no fallback repo. Both channels take
+`tuna-os/bootc-installer`'s `/releases/latest/download/` redirect and differ only in
+filename (`org.bootcinstaller.Installer.flatpak` vs `...Installer.Devel.flatpak`) — see
+`TestInstallerChannelURLs` in `tests/test_live_build_invariants.py`.
