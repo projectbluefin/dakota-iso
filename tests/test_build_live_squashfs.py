@@ -167,14 +167,6 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
         return [line for line in text.split("\n") if line]
 
 
-class TestBuildLiveSquashfsSyntax(unittest.TestCase):
-    """Syntax check for scripts/build-live-squashfs.sh."""
-
-    def test_syntax_is_valid_bash(self):
-        proc = subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True, text=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-
-
 class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
     """Execution tests verifying composefs --squash behavior and argument handling."""
 

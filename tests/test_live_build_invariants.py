@@ -956,63 +956,6 @@ class TestBuildLiveSquashfs(unittest.TestCase):
             "breaks the -c argument. Use grep or pipe to python instead.",
         )
 
-    def test_composefs_payload_commit_squash(self):
-        """scripts/build-live-squashfs.sh composefs path must squash payload layers.
-
-        Chunkified images have ~120 layers. Dropping --squash from buildah commit
-        in the composefs embedding path explodes the VFS store inside the
-        squashfs root, inflating ISO sizes from ~5 GB to ~12 GB.
-        """
-        content = BUILD_LIVE_SQUASHFS.read_text()
-        # Extract the composefs block
-        self.assertIn('if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then', content)
-        composefs_block = content.split('if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then', 1)[1].split(
-            'else', 1
-        )[0]
-        # Every buildah commit in this branch must include --squash
-        commit_lines = [
-            line.strip()
-            for line in composefs_block.splitlines()
-            if "buildah commit" in line and not line.strip().startswith("#")
-        ]
-        self.assertTrue(len(commit_lines) >= 1, "No buildah commit found in composefs block")
-        for line in commit_lines:
-            self.assertIn(
-                "--squash",
-                line,
-                f"buildah commit in scripts/build-live-squashfs.sh composefs path "
-                f"is missing --squash: {line!r}. Dropping --squash causes VFS layer "
-                "explosion and balloons ISO size to ~12 GB.",
-            )
-
-    def test_build_live_squashfs_rejects_missing_positional_args(self):
-        """scripts/build-live-squashfs.sh must fail when required positional args are missing."""
-        content = BUILD_LIVE_SQUASHFS.read_text()
-        self.assertIn(
-            'IMAGE="${1:?Usage: build-live-squashfs.sh [--oci-image <ref>] <image> <output-squashfs> <output-boot-tar>}"',
-            content,
-            "scripts/build-live-squashfs.sh must enforce positional image argument",
-        )
-        self.assertIn(
-            'OUTPUT_SFS="${2:?}"',
-            content,
-            "scripts/build-live-squashfs.sh must enforce positional output squashfs argument",
-        )
-        self.assertIn(
-            'OUTPUT_BOOT_TAR="${3:?}"',
-            content,
-            "scripts/build-live-squashfs.sh must enforce positional output boot tar argument",
-        )
-
-    def test_build_live_squashfs_target_mode_enforces_output_dir(self):
-        """Target mode (--target) must enforce --output-dir."""
-        content = BUILD_LIVE_SQUASHFS.read_text()
-        self.assertIn(
-            '[[ -z "${OUTPUT_DIR}" ]] && { echo "ERROR: --target requires --output-dir" >&2; exit 1; }',
-            content,
-            "scripts/build-live-squashfs.sh must validate --output-dir when --target is used",
-        )
-
     def test_lts_images_json_defaults_to_btrfs(self):
         """live/src/bluefin-lts-hwe/images.json must default to btrfs.
 
