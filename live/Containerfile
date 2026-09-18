@@ -102,7 +102,7 @@ RUN set -ex; \
 ARG TARGET=dakota-nvidia
 ARG TAG=stable
 ARG REGISTRY=projectbluefin
-FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG}
+FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG}${BASE_DIGEST}
 
 ARG TARGET=dakota-nvidia
 ARG TAG=stable

@@ -96,14 +96,21 @@ build-bg target:
 # Helper: returns "--bootc-installer-payload-ref <ref>" (digest-pinned after
 # cosign verification) or "" if no payload_ref file.  image-builder network-
 # pulls this ref at ISO build time, so pin exactly what was verified.
+# Exits non-zero if verification fails — never emit the flag without a value,
+# or word splitting in the caller makes the next argument the flag's value.
 _payload_ref_flag target:
     #!/usr/bin/bash
+    set -euo pipefail
     if [ -f "{{target}}/payload_ref" ]; then
         REF=$(cat '{{target}}/payload_ref' | tr -d '[:space:]')
         case "$REF" in
             ghcr.io/projectbluefin/*|ghcr.io/ublue-os/*)
                 REF=$(scripts/verify-image-signature.sh "$REF") ;;
         esac
+        if [ -z "$REF" ]; then
+            echo "ERROR: {{target}}/payload_ref is empty — expected an image reference" >&2
+            exit 1
+        fi
         echo "--bootc-installer-payload-ref $REF"
     fi
 
@@ -149,7 +156,10 @@ iso-sd-boot target:
     COMPRESSION={{compression}} \
     bash scripts/iso-sd-boot.sh
 iso target:
-    {{image-builder}} build --bootc-ref localhost/{{target}}-installer --bootc-default-fs ext4 `just _payload_ref_flag {{target}}` bootc-generic-iso
+    #!/usr/bin/bash
+    set -euo pipefail
+    PAYLOAD_FLAG="$(just _payload_ref_flag {{target}})"
+    {{image-builder}} build --bootc-ref localhost/{{target}}-installer --bootc-default-fs ext4 $PAYLOAD_FLAG bootc-generic-iso
 
 # Run chunkah content-based layer splitting against a source image and push to a destination.
 #
