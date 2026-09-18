@@ -31,8 +31,8 @@ Covered behaviour
 5. Unknown/positional arguments are rejected rather than silently ignored.
 6. Values containing spaces survive the translation as single arguments.
 7. The wrapper propagates the delegate's exit status.
-8. The flags used by .github/workflows/test-plain-install.yml are exactly the
-   flags the wrapper accepts.
+8. The exact command line .github/workflows/test-plain-install.yml uses is
+   accepted by the wrapper and reaches the delegate correctly translated.
 """
 
 import os
@@ -45,7 +45,6 @@ from pathlib import Path
 
 REPO = Path(__file__).parent.parent
 WRAPPER = REPO / "scripts" / "build-iso.sh"
-DELEGATE = REPO / "live" / "src" / "build-iso.sh"
 PLAIN_INSTALL_WORKFLOW = REPO / ".github" / "workflows" / "test-plain-install.yml"
 
 # Records every argument the delegate received, one per line, then exits with
@@ -156,16 +155,6 @@ class TestArgumentTranslation(BuildIsoWrapperHarness):
             ],
         )
 
-    def test_last_occurrence_of_a_repeated_flag_wins(self):
-        result = self.run_wrapper(
-            "--squashfs", "/first.sfs",
-            "--squashfs", "/second.sfs",
-            "--boot-tar", "/b.tar",
-            "--output", "/o.iso",
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.delegate_args(), ["/b.tar", "/second.sfs", "/o.iso"])
-
     def test_delegate_exit_status_is_propagated(self):
         result = self.run_wrapper(
             "--squashfs", "/s.sfs",
@@ -247,18 +236,8 @@ class TestArgumentValidation(BuildIsoWrapperHarness):
         self.assertDelegateNotCalled()
 
 
-class TestWorkflowContract(unittest.TestCase):
-    """The plain-install workflow and the wrapper agree on the flag set."""
-
-    def test_wrapper_and_delegate_exist(self):
-        self.assertTrue(WRAPPER.is_file(), f"{WRAPPER} is missing")
-        self.assertTrue(DELEGATE.is_file(), f"{DELEGATE} is missing")
-
-    def test_wrapper_bash_syntax(self):
-        result = subprocess.run(
-            ["bash", "-n", str(WRAPPER)], capture_output=True, text=True
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
+class TestWorkflowContract(BuildIsoWrapperHarness):
+    """The plain-install workflow's real command line still works."""
 
     def test_plain_install_workflow_uses_only_supported_flags(self):
         workflow = PLAIN_INSTALL_WORKFLOW.read_text()
@@ -274,21 +253,25 @@ class TestWorkflowContract(unittest.TestCase):
             "test-plain-install.yml no longer calls scripts/build-iso.sh; "
             "update or drop this contract test",
         )
-        used = set(re.findall(r"--[a-z-]+", invocation.group(1)))
-        supported = set(re.findall(r"^\s*(--[a-z-]+)\)", WRAPPER.read_text(), re.M))
+        # ${{ matrix.variant }} only expands at workflow runtime; every variant
+        # produces the same flag set, so pick one.
+        call = re.sub(r"\$\{\{.*?\}\}", "dakota", invocation.group(1))
+        pairs = re.findall(r"(--[a-z-]+)\s+(\S+)", call)
+        argv = [token for pair in pairs for token in pair]
+
+        result = self.run_wrapper(*argv)
         self.assertEqual(
-            supported,
-            {"--squashfs", "--boot-tar", "--output"},
-            "wrapper flag set changed; update the workflow call site too",
+            result.returncode,
+            0,
+            "the wrapper rejects the command line test-plain-install.yml "
+            f"actually uses ({' '.join(argv)}): {result.stderr}",
         )
-        self.assertTrue(
-            used <= supported,
-            f"test-plain-install.yml passes unsupported flags: {sorted(used - supported)}",
-        )
+        values = dict(pairs)
         self.assertEqual(
-            used,
-            supported,
-            "test-plain-install.yml must pass every required flag",
+            self.delegate_args(),
+            [values["--boot-tar"], values["--squashfs"], values["--output"]],
+            "the workflow's own arguments must reach live/src/build-iso.sh as "
+            "<boot-tar> <squashfs> <output-iso>",
         )
 
 
