@@ -88,10 +88,11 @@ def build_catalog() -> dict:
     skills = [build_skill_entry(p) for p in find_skill_files()]
     skills.sort(key=lambda s: s["id"])
     return {
-        "generated_at": datetime.now(timezone.utc).date().isoformat(),
+        "generated_at": date.today().isoformat(),
         "schema_version": SCHEMA_VERSION,
         "skills": skills,
     }
+
 
 def validate_catalog(catalog: dict) -> None:
     schema = json.loads(SCHEMA_PATH.read_text())

@@ -84,13 +84,12 @@ if [[ "${DEBUG:-0}" == "1" ]]; then
     echo "liveuser:live" | chpasswd
     # livesys-scripts (shipped in Bluefin bases, absent in GNOME OS) runs
     # `passwd -d liveuser`/`passwd -d root` at every boot, wiping the debug
-    # passwords set here at build time. Re-assert them at boot, ordered
-    # after livesys and before sshd, so ssh stays reachable on those variants.
+    # passwords set here at build time. Re-assert them at boot, after livesys
+    # has run, so the debug logins work on those variants.
     cat > /usr/lib/systemd/system/live-debug-passwords.service << 'PWUNIT'
 [Unit]
 Description=Re-assert live debug passwords (livesys wipes them at boot)
 After=livesys.service livesys-late.service
-Before=sshd.service ssh.service
 
 [Service]
 Type=oneshot
