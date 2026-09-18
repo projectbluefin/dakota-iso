@@ -49,6 +49,9 @@ Changes to these require maintainer review:
 just check   # run before every commit (agentic-model hard rule)
 ```
 
+`check` runs the pytest suite plus the pre-commit hooks (yaml/json validation,
+actionlint, action-pin policy) — the same two gates CI enforces.
+
 ## Human gates
 
 Stop and ask a human at:

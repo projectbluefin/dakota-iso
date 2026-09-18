@@ -2,13 +2,37 @@
 
 How the Dakota ISO build target works.
 
+## Scope: dakota only
+
+This repo ships the Dakota ISO. As of 2026-09-18 the `stable` and `lts` legs no
+longer run: they are off every PR check and every schedule. Nothing was deleted —
+the build targets, scripts and variant config are all intact.
+
+The bluefin ISO build stays runnable by hand via `workflow_dispatch`. The E2E legs
+do not: reviving those means uncommenting the matrix entry first.
+
+| Surface | State |
+|---|---|
+| `test-luks-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` commented out |
+| `test-plain-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` commented out |
+| `build-iso-bluefin.yml` | `schedule` trigger commented out; runnable only via manual `workflow_dispatch` |
+| Required checks on `main` | `LUKS E2E dakota (dev)`, `LUKS E2E dakota (stable)`, `ShellCheck` |
+
+Nothing was deleted. To revive a variant: uncomment the matrix entry (and the
+`schedule` trigger for the bluefin ISO build), then add the corresponding
+`LUKS E2E <variant> (<channel>)` contexts to the `main — review policy` ruleset.
+
+The `stable` and `lts` legs were red at the time of the change — `sshpass` got
+`Permission denied, please try again.` against the live VM (issues #155, #161,
+#163). Reviving them means fixing that first.
+
 ## Current build
 
-| Variant | Live env image | Payload (offline store) | Bootloader | Composefs | Filesystem |
-|---|---|---|---|---|---|
-| `dakota` | `projectbluefin/dakota-nvidia:stable` | same | systemd-boot | yes | btrfs |
-| `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs |
-| `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs |
+| Variant | Live env image | Payload (offline store) | Bootloader | Composefs | Filesystem | State |
+|---|---|---|---|---|---|---|
+| `dakota` | `projectbluefin/dakota-nvidia:stable` | same | systemd-boot | yes | btrfs | active |
+| `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs | dormant |
+| `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs | dormant |
 
 **All variants default to btrfs. XFS is available as a user-selectable option in the installer UI only.**
 
