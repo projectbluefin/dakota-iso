@@ -1015,6 +1015,94 @@ class TestBuildLiveSquashfs(unittest.TestCase):
             "justfile chunkify must not unconditionally disable TLS verification on push",
         )
 
+    # Destination refs that must / must not get --tls-verify=false from
+    # `just chunkify`. A plaintext push is only safe to a genuinely local
+    # or RFC1918 registry; anything a resolver could point elsewhere —
+    # including a dotted suffix on a local name and an out-of-range octet
+    # that is therefore a DNS name, not an address — must keep TLS on.
+    CHUNKIFY_TLS_ALLOW = (
+        "localhost/dakota:chunked",
+        "localhost:5000/dakota:chunked",
+        "127.0.0.1/x:y",
+        "[::1]:5000/dakota:chunked",
+        "192.168.122.1:5000/dakota:chunked",
+        "10.255.255.254/x:y",
+        "172.31.255.255:5000/x:y",
+        "192.168.0.1/x:y",
+    )
+    CHUNKIFY_TLS_DENY = (
+        "10.999.999.999/x:y",
+        "192.168.999.1:5000/x:y",
+        "172.16.300.1/x:y",
+        "256.1.1.1/x:y",
+        "localhost.evil.com/x:y",
+        "192.168.evil.com/x:y",
+        "10.0.0.5.evil.com:5000/x:y",
+        "192.168.1.1.evil.com/x:y",
+        "172.32.0.1/x:y",
+        "172.15.0.1/x:y",
+        "ghcr.io/projectbluefin/dakota:chunked",
+        "myhost/localhost:tag",
+        "host.local/x:y",
+    )
+
+    def _chunkify_tls_decisions(self, destinations):
+        """Run the justfile's own push-TLS `case` block against each ref.
+
+        The block is lifted verbatim out of the recipe so this test cannot
+        drift from what `just chunkify` actually executes. It runs one ref
+        per shell: `shopt -s extglob` only affects patterns parsed after
+        it, so the block must stay at the top level of the script.
+        """
+        content = (REPO / "justfile").read_text()
+        match = re.search(
+            r"^    PUSH_TLS_ARGS=\(\)\n(?:.*\n)*?^    esac$",
+            content,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(
+            match, "chunkify push-TLS case block not found in justfile"
+        )
+        block = re.sub(r"^    ", "", match.group(0), flags=re.MULTILINE)
+        script = (
+            'dst="$1"\n'
+            + block.replace("{{dst}}", "${dst}")
+            + '\nprintf "%s\\n" "${PUSH_TLS_ARGS[*]}"\n'
+        )
+        decisions = {}
+        for dst in destinations:
+            res = subprocess.run(
+                ["bash", "-c", script, "bash", dst],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                res.returncode, 0, f"case block failed for {dst}:\n{res.stderr}"
+            )
+            decisions[dst] = res.stdout.strip()
+        return decisions
+
+    def test_justfile_chunkify_disables_tls_only_for_local_registries(self):
+        """Only local/RFC1918 push targets may skip TLS verification."""
+        destinations = self.CHUNKIFY_TLS_ALLOW + self.CHUNKIFY_TLS_DENY
+        decisions = self._chunkify_tls_decisions(destinations)
+        for dst in self.CHUNKIFY_TLS_ALLOW:
+            with self.subTest(dst=dst, expected="--tls-verify=false"):
+                self.assertEqual(
+                    decisions[dst],
+                    "--tls-verify=false",
+                    f"{dst} is a local registry; chunkify must push it with "
+                    "--tls-verify=false",
+                )
+        for dst in self.CHUNKIFY_TLS_DENY:
+            with self.subTest(dst=dst, expected=""):
+                self.assertEqual(
+                    decisions[dst],
+                    "",
+                    f"{dst} is not a local registry; chunkify must keep TLS "
+                    "verification enabled when pushing to it",
+                )
+
 
 class TestPayloadPristine(unittest.TestCase):
     """The embedded payload image must ship the same content the registry serves.
