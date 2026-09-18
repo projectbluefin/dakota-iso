@@ -116,6 +116,7 @@ _payload_ref_flag target:
 
 container target:
     #!/usr/bin/bash
+    set -euo pipefail
     test -f "{{target}}/payload_ref" || { echo "ERROR: {{target}}/payload_ref not found — create it with the base image reference, e.g.: echo 'ghcr.io/projectbluefin/dakota:latest' > {{target}}/payload_ref"; exit 1; }
     # live_target overrides the Containerfile TARGET build-arg when the live
     # environment image differs from the variant directory name.
