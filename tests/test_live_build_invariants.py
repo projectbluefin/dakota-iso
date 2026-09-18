@@ -26,10 +26,14 @@ Covered invariants
 """
 
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+import yaml
 
 REPO = Path(__file__).parent.parent
 LIVE_BUILD_ISO = REPO / "live" / "src" / "build-iso.sh"
@@ -764,16 +768,123 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             TEST_LUKS_WORKFLOW.read_text(),
             "test-luks-install.yml must gate luks-e2e on unit-tests.",
         )
-    def test_e2e_workflows_support_4gb_ram_simulation(self):
-        """E2E workflows must support simulating 4GB of RAM for min system requirements."""
-        plain_wf = TEST_PLAIN_WORKFLOW.read_text()
-        luks_wf = TEST_LUKS_WORKFLOW.read_text()
-        self.assertIn("qemu_mem:", plain_wf)
-        self.assertIn("default: '4096'", plain_wf)
-        self.assertIn("qemu_mem:", luks_wf)
-        self.assertIn("default: '4096'", luks_wf)
-        self.assertIn("qemu-mem=", plain_wf)
-        self.assertIn("qemu-mem=", luks_wf)
+
+    @staticmethod
+    def _justfile_qemu_mem_default():
+        """The qemu-mem `just` falls back to when no override is passed."""
+        match = re.search(
+            r'^qemu-mem\s*:=\s*"(\d+)"', (REPO / "justfile").read_text(), re.M
+        )
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _expand_gha(text, dispatch_inputs):
+        """Expand ${{ … }} the way GitHub would for one event.
+
+        Only what these workflows use is modelled: `github.event.inputs.<name>`
+        lookups and `||` fallbacks.  Any other context reference collapses to
+        its own name, which is inert as a recipe argument.
+        """
+
+        def resolve(match):
+            for term in (t.strip() for t in match.group(1).split("||")):
+                if term.startswith("github.event.inputs."):
+                    value = dispatch_inputs.get(term.rsplit(".", 1)[1], "")
+                else:
+                    value = term.strip("'\"")
+                if value:
+                    return value
+            return ""
+
+        return re.sub(r"\$\{\{(.*?)\}\}", resolve, text)
+
+    def _e2e_qemu_mem(self, workflow, recipe, dispatch_inputs):
+        """The qemu-mem an E2E lane really boots with for a given event.
+
+        Runs the workflow step's own shell — `just` stubbed out and PATH
+        emptied so nothing else can execute — and reads back the override it
+        produced, falling back to the justfile default when it produces none,
+        exactly as `just` itself would.
+        """
+        spec = yaml.safe_load(workflow.read_text())
+        steps = [
+            step
+            for job in spec["jobs"].values()
+            for step in job["steps"]
+            if recipe in (step.get("run") or "")
+        ]
+        self.assertEqual(
+            len(steps), 1, f"{workflow.name} must invoke `just {recipe}` in one step."
+        )
+
+        env = {
+            key: self._expand_gha(str(value), dispatch_inputs)
+            for key, value in (steps[0].get("env") or {}).items()
+        }
+        with tempfile.NamedTemporaryFile("w+") as calls:
+            env.update(PATH="", GITHUB_OUTPUT="/dev/null", JUST_CALLS=calls.name)
+            subprocess.run(
+                [
+                    shutil.which("bash"),
+                    "-c",
+                    'just() { printf "%s\\n" "$*" >> "$JUST_CALLS"; }\n'
+                    + self._expand_gha(steps[0]["run"], dispatch_inputs),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            invoked = [
+                line
+                for line in Path(calls.name).read_text().splitlines()
+                if recipe in line
+            ]
+
+        self.assertEqual(
+            len(invoked), 1, f"`just {recipe}` was not invoked exactly once: {invoked}"
+        )
+        override = re.search(r"\bqemu-mem=(\S+)", invoked[0])
+        return override.group(1) if override else self._justfile_qemu_mem_default()
+
+    def test_e2e_qemu_mem_override_is_dispatch_only(self):
+        """Automatic E2E runs must keep the RAM each lane is gated on.
+
+        `github.event.inputs.*` is empty on pull_request, push and schedule, so
+        a lane passing `qemu-mem=${{ github.event.inputs.qemu_mem || '4096' }}`
+        silently re-gates every automatic run instead of only honouring an
+        explicit workflow_dispatch value.
+        """
+        default_mem = self._justfile_qemu_mem_default()
+        self.assertIsNotNone(default_mem, "justfile must define a qemu-mem default.")
+
+        self.assertEqual(
+            self._e2e_qemu_mem(TEST_LUKS_WORKFLOW, "luks-test-qemu", {}),
+            default_mem,
+            "test-luks-install.yml must leave qemu-mem at the justfile default "
+            f"({default_mem} MiB) on pull_request/push/schedule, and may only "
+            "override it when a workflow_dispatch input supplies a value.",
+        )
+        self.assertEqual(
+            self._e2e_qemu_mem(
+                TEST_LUKS_WORKFLOW, "luks-test-qemu", {"qemu_mem": "4096"}
+            ),
+            "4096",
+            "A workflow_dispatch qemu_mem input must reach `just luks-test-qemu`.",
+        )
+        self.assertEqual(
+            self._e2e_qemu_mem(TEST_PLAIN_WORKFLOW, "plain-test-qemu", {}),
+            "4096",
+            "test-plain-install.yml deliberately gates the plain lane on a tight "
+            "4096 MiB to expose ENOSPC-class bugs; automatic runs must keep it.",
+        )
+        self.assertEqual(
+            self._e2e_qemu_mem(
+                TEST_PLAIN_WORKFLOW, "plain-test-qemu", {"qemu_mem": "8192"}
+            ),
+            "8192",
+            "A workflow_dispatch qemu_mem input must reach `just plain-test-qemu`.",
+        )
 
     def test_luks_unlock_copies_are_identical(self):
         """live/ and dakota/ luks-unlock helpers must stay byte-for-byte aligned."""

@@ -158,6 +158,10 @@ jobs:
         id: luks_test
         env:
           FISHER_REPO: /tmp/fisherman/fisherman
+          # Empty on pull_request/schedule: github.event.inputs.* only carries a
+          # value on workflow_dispatch.  Passing it unconditionally would
+          # override the justfile's qemu-mem default on every automatic run.
+          QEMU_MEM: ${{ github.event.inputs.qemu_mem }}
         run: |
           START=$(date +%s)
           # Run as the unprivileged runner user (not sudo): the bootcDirect path
@@ -165,8 +169,12 @@ jobs:
           # and runs VCS stamping against the user-owned /tmp/fisherman clone — both
           # break under sudo. QEMU/KVM access uses an internal sudo fallback in the
           # recipe, and all guest-side install steps run via ssh with guest sudo.
-          QEMU_MEM="${{ github.event.inputs.qemu_mem || '4096' }}"
-          just qemu-mem="$QEMU_MEM" luks-test-qemu ${{ matrix.variant }} ${{ matrix.installer_channel }}
+          # Record the memory this lane actually runs with, so the PR comment and
+          # job summary below cannot drift from the justfile default.
+          echo "qemu_mem=${QEMU_MEM:-$(just --evaluate qemu-mem)}" >> "$GITHUB_OUTPUT"
+          # Override qemu-mem only for an explicit dispatch input; otherwise the
+          # justfile default stands.
+          just ${QEMU_MEM:+qemu-mem="$QEMU_MEM"} luks-test-qemu ${{ matrix.variant }} ${{ matrix.installer_channel }}
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
@@ -234,7 +242,7 @@ jobs:
           ISO_BYTES:         ${{ steps.build.outputs.iso_size }}
           TEST_RESULT:       ${{ steps.luks_test.outcome }}
           INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
-          QEMU_MEM:          ${{ github.event.inputs.qemu_mem || '4096' }}
+          QEMU_MEM:          ${{ steps.luks_test.outputs.qemu_mem }}
         with:
           script: |
             const variant = process.env.VARIANT || 'dakota';
@@ -256,7 +264,7 @@ jobs:
               '|------|---------|',
               `| ISO build | ${fmtMiB(process.env.ISO_BYTES)} · ${fmtDur(process.env.BUILD_S)} |`,
               `| LUKS E2E  | ${fmtDur(process.env.LUKS_S)} |`,
-              `| QEMU RAM  | ${process.env.QEMU_MEM || '4096'} MiB (simulated 4GB RAM) |`,
+              `| QEMU RAM  | ${process.env.QEMU_MEM || 'N/A'} MiB |`,
               `| Result    | ${icon} ${result} |`,
               '',
               img(process.env.LIVE_URL,     'Live boot'),
@@ -287,7 +295,7 @@ jobs:
             echo "| ISO size | $(numfmt --to=iec ${{ steps.build.outputs.iso_size }} 2>/dev/null || echo N/A) |"
             echo "| Build time | ${{ steps.build.outputs.duration }}s |"
             echo "| LUKS test time | ${{ steps.luks_test.outputs.duration }}s |"
-            echo "| QEMU RAM   | ${{ github.event.inputs.qemu_mem || '4096' }} MiB |"
+            echo "| QEMU RAM   | ${{ steps.luks_test.outputs.qemu_mem }} MiB |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload serial logs
