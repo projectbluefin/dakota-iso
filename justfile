@@ -175,8 +175,11 @@ chunkify src dst:
     echo "==> Tagging and pushing to {{dst}}..."
     podman tag "${LOADED_ID}" "{{dst}}"
     PUSH_TLS_ARGS=()
+    shopt -s extglob
     case "{{dst}}" in
-        localhost/*|127.*|192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|*.local/*)
+        localhost|localhost:+([0-9])|localhost/*|localhost:+([0-9])/* | \
+        127.0.0.1|127.0.0.1:+([0-9])|127.0.0.1/*|127.0.0.1:+([0-9])/* | \
+        '[::1]'|'[::1]:'+([0-9])|'[::1]/'*|'[::1]:'+([0-9])/*)
             PUSH_TLS_ARGS+=(--tls-verify=false)
             ;;
     esac
