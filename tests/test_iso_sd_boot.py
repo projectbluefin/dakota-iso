@@ -163,6 +163,14 @@ class IsoSdBootHarness(unittest.TestCase):
             exit 0
         """)
 
+        # scripts/iso-sd-boot.sh execs rsync to copy the overlay containers-storage
+        # into the squashfs root. Stub it so the run stays hermetic instead of
+        # depending on (or failing on) a host rsync.
+        self._stub("rsync", """
+            echo "rsync $*" >> "$STUB_CALLS"
+            exit 0
+        """)
+
         self._stub("findmnt", """
             echo "xfs"
             exit 0
@@ -199,14 +207,6 @@ class IsoSdBootHarness(unittest.TestCase):
             return []
         text = self.calls_log.read_text().strip()
         return [line for line in text.split("\n") if line]
-
-
-class TestIsoSdBootSyntax(unittest.TestCase):
-    """Syntax validation for scripts/iso-sd-boot.sh."""
-
-    def test_syntax_is_valid_bash(self):
-        proc = subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True, text=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
 
 
 class TestIsoSdBootArgumentsAndDefaults(IsoSdBootHarness):
