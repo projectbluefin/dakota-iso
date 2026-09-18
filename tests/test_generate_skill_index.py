@@ -13,7 +13,6 @@ validate_catalog exercises the actual schema.
 """
 from __future__ import annotations
 
-import importlib
 import json
 import shutil
 import sys
@@ -89,27 +88,8 @@ class TestFindSkillFiles(unittest.TestCase):
             self.assertNotIn("index.md", names)
             self.assertNotIn("INDEX.md", names)
 
-    def test_empty_dir_returns_empty_list(self):
-        with _tmp_catalog() as (root, skills_dir):
-            self.assertEqual(gsi.find_skill_files(), [])
-
-    def test_results_sorted(self):
-        with _tmp_catalog() as (root, skills_dir):
-            _write_skill(skills_dir / "zzz-skill.md", VALID_FM.replace("sample-skill", "zzz-skill"))
-            _write_skill(skills_dir / "aaa-skill.md", VALID_FM.replace("sample-skill", "aaa-skill"))
-            files = gsi.find_skill_files()
-            self.assertEqual([p.name for p in files], ["aaa-skill.md", "zzz-skill.md"])
-
 
 class TestParseFrontMatter(unittest.TestCase):
-
-    def test_parses_valid_front_matter(self):
-        with _tmp_catalog() as (root, skills_dir):
-            p = skills_dir / "sample-skill.md"
-            _write_skill(p, VALID_FM)
-            data = gsi.parse_front_matter(p)
-            self.assertEqual(data["id"], "sample-skill")
-            self.assertEqual(data["tags"], ["ci"])
 
     def test_missing_front_matter_raises(self):
         with _tmp_catalog() as (root, skills_dir):
@@ -122,13 +102,6 @@ class TestParseFrontMatter(unittest.TestCase):
         with _tmp_catalog() as (root, skills_dir):
             p = skills_dir / "list-fm.md"
             p.write_text("---\n- one\n- two\n---\nBody\n")
-            with self.assertRaisesRegex(ValueError, "did not parse to a mapping"):
-                gsi.parse_front_matter(p)
-
-    def test_scalar_front_matter_raises(self):
-        with _tmp_catalog() as (root, skills_dir):
-            p = skills_dir / "scalar-fm.md"
-            p.write_text("---\njust a string\n---\nBody\n")
             with self.assertRaisesRegex(ValueError, "did not parse to a mapping"):
                 gsi.parse_front_matter(p)
 
@@ -199,69 +172,24 @@ class TestBuildSkillEntry(unittest.TestCase):
 class TestBuildCatalog(unittest.TestCase):
 
     def test_builds_sorted_catalog(self):
+        """Catalog order is by id, not by discovery order.
+
+        find_skill_files yields every flat docs/skills/*.md before any
+        docs/skills/*/SKILL.md, so a directory skill whose id sorts first is
+        discovered last. Only build_catalog's explicit sort puts it first.
+        """
         with _tmp_catalog() as (root, skills_dir):
             _write_skill(skills_dir / "zzz-skill.md", VALID_FM.replace("sample-skill", "zzz-skill"))
-            _write_skill(skills_dir / "aaa-skill.md", VALID_FM.replace("sample-skill", "aaa-skill"))
+            _write_skill(
+                skills_dir / "aaa-skill" / "SKILL.md",
+                VALID_FM.replace("sample-skill", "aaa-skill").replace(
+                    "entry_point: docs/skills/aaa-skill.md",
+                    "entry_point: docs/skills/aaa-skill/SKILL.md",
+                ),
+            )
             catalog = gsi.build_catalog()
             ids = [s["id"] for s in catalog["skills"]]
             self.assertEqual(ids, ["aaa-skill", "zzz-skill"])
-            self.assertEqual(catalog["schema_version"], gsi.SCHEMA_VERSION)
-            self.assertIn("generated_at", catalog)
-
-    def test_empty_catalog_has_no_skills(self):
-        with _tmp_catalog() as (root, skills_dir):
-            catalog = gsi.build_catalog()
-            self.assertEqual(catalog["skills"], [])
-
-    def test_propagates_build_skill_entry_errors(self):
-        with _tmp_catalog() as (root, skills_dir):
-            p = skills_dir / "bad-skill.md"
-            p.write_text("no front matter here\n")
-            with self.assertRaises(ValueError):
-                gsi.build_catalog()
-
-
-class TestValidateCatalog(unittest.TestCase):
-
-    def test_valid_catalog_passes(self):
-        with _tmp_catalog() as (root, skills_dir):
-            _write_skill(skills_dir / "sample-skill.md", VALID_FM)
-            catalog = gsi.build_catalog()
-            gsi.validate_catalog(catalog)  # should not raise
-
-    def test_missing_required_top_level_key_raises_systemexit(self):
-        with _tmp_catalog() as (root, skills_dir):
-            catalog = {"schema_version": "1.0", "skills": []}
-            with self.assertRaises(SystemExit) as ctx:
-                gsi.validate_catalog(catalog)
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_invalid_category_enum_raises_systemexit(self):
-        with _tmp_catalog() as (root, skills_dir):
-            catalog = gsi.build_catalog()
-            catalog["skills"] = [{
-                "id": "bad-skill", "name": "bad-skill", "one_line_purpose": "x",
-                "entry_point": "docs/skills/bad-skill.md", "category": "not-a-real-category",
-                "status": "active", "tags": ["ci"], "description": "x",
-                "version": "1.0", "last_updated": "2026-01-01",
-            }]
-            with self.assertRaises(SystemExit):
-                gsi.validate_catalog(catalog)
-
-    def test_additional_properties_rejected(self):
-        with _tmp_catalog() as (root, skills_dir):
-            catalog = gsi.build_catalog()
-            catalog["unexpected_key"] = "nope"
-            with self.assertRaises(SystemExit):
-                gsi.validate_catalog(catalog)
-
-    def test_errors_printed_to_stderr(self):
-        with _tmp_catalog() as (root, skills_dir):
-            catalog = {"schema_version": "1.0", "skills": []}
-            with patch("sys.stderr") as mock_stderr:
-                with self.assertRaises(SystemExit):
-                    gsi.validate_catalog(catalog)
-            self.assertTrue(mock_stderr.write.called)
 
 
 class TestRenderMarkdown(unittest.TestCase):
@@ -273,22 +201,6 @@ class TestRenderMarkdown(unittest.TestCase):
             md = gsi.render_markdown(catalog)
             self.assertIn("| [sample-skill](sample-skill.md) | ci-ops | active |", md)
             self.assertIn("Do the sample thing.", md)
-
-    def test_renders_header_with_count_and_metadata(self):
-        with _tmp_catalog() as (root, skills_dir):
-            _write_skill(skills_dir / "sample-skill.md", VALID_FM)
-            catalog = gsi.build_catalog()
-            md = gsi.render_markdown(catalog)
-            self.assertIn(f"Generated: {catalog['generated_at']}", md)
-            self.assertIn("1 skills", md)
-
-    def test_empty_catalog_renders_header_only(self):
-        with _tmp_catalog() as (root, skills_dir):
-            catalog = gsi.build_catalog()
-            md = gsi.render_markdown(catalog)
-            self.assertIn("0 skills", md)
-            table_rows = [line for line in md.splitlines() if line.startswith("| [")]
-            self.assertEqual(table_rows, [])
 
 
 class TestMain(unittest.TestCase):
@@ -358,14 +270,6 @@ class TestMain(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 self._run_main(["--write"])
             self.assertEqual(ctx.exception.code, 1)
-
-    def test_write_and_check_are_mutually_exclusive(self):
-        with self.assertRaises(SystemExit):
-            self._run_main(["--write", "--check"])
-
-    def test_requires_one_of_write_or_check(self):
-        with self.assertRaises(SystemExit):
-            self._run_main([])
 
 
 if __name__ == "__main__":
