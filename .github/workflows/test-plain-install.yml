@@ -101,6 +101,7 @@ jobs:
         with:
           go-version: '1.23'
           cache: false
+
       # Track fisherman's active line. This used to pin the June branch
       # fix/overlay-driver-for-ostree-bootc-install, which froze the gate on a
       # six-week-old installer: every fisherman fix merged since — including the
