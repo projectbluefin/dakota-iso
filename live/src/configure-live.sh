@@ -101,6 +101,14 @@ PWUNIT
     mkdir -p /etc/systemd/system/multi-user.target.wants
     ln -sf /usr/lib/systemd/system/live-debug-passwords.service \
         /etc/systemd/system/multi-user.target.wants/live-debug-passwords.service
+    # The preset policy on these bases disables units it does not list, and
+    # `systemctl preset-all` at first boot would drop the wants symlink above.
+    # A preset file in /etc/systemd/system-preset/ takes priority over
+    # /usr/lib and forces the unit on. The sshd block below appends to this
+    # same file, so create it here and append there.
+    mkdir -p /etc/systemd/system-preset
+    echo "enable live-debug-passwords.service" \
+        > /etc/systemd/system-preset/90-live-debug.preset
 
     # Enable root login with a known password so hotfixes can be applied
     # directly via `ssh root@<ip>` or `su -` without going through sudo.
@@ -118,7 +126,7 @@ PWUNIT
     SSH_UNIT="sshd.service"
     [[ ! -f /usr/lib/systemd/system/sshd.service && -f /usr/lib/systemd/system/ssh.service ]] && SSH_UNIT="ssh.service"
     mkdir -p /etc/systemd/system-preset
-    echo "enable ${SSH_UNIT}" > /etc/systemd/system-preset/90-live-debug.preset
+    echo "enable ${SSH_UNIT}" >> /etc/systemd/system-preset/90-live-debug.preset
     mkdir -p /etc/systemd/system/multi-user.target.wants
     ln -sf "/usr/lib/systemd/system/${SSH_UNIT}" \
         "/etc/systemd/system/multi-user.target.wants/${SSH_UNIT}"
