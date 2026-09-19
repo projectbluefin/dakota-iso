@@ -37,41 +37,33 @@ flatpak remote-add --system --if-not-exists flathub \
 # bootc-installer bundle
 # INSTALLER_CHANNEL controls which release to pull from:
 #   stable (default) → GitHub "latest" release (non-pre-release)
-#   dev              → Devel-branded bundle from the latest versioned release
-# Primary source: projectbluefin/bootc-installer (Project Bluefin's fork).
-# Fallback: tuna-os/tuna-installer (upstream) if projectbluefin assets are unavailable.
-# v2.6.1 adds nvidia_imgref GPU auto-detection support.
-INSTALLER_REPO="projectbluefin/bootc-installer"
-FALLBACK_REPO="tuna-os/tuna-installer"
+#   dev              → Devel-branded bundle from the same latest versioned release
+# Source: tuna-os/bootc-installer — the sole upstream for bootc-installer and
+# its fisherman backend. projectbluefin/bootc-installer and
+# projectbluefin/fisherman are retired; there is no fallback repo (the old
+# fallback, tuna-os/tuna-installer, is itself archived and redirects here).
+#
+# Neither channel uses a rolling tag: a published release accepts no new
+# assets under GitHub's immutable-release ruleset, and deleting one to start
+# over permanently bans the tag name from ever being re-created.
+# projectbluefin lost "latest-stable" and then "latest-dev" this way on
+# 2026-08-01 (see TestInstallerChannelURLs in
+# tests/test_live_build_invariants.py, which enforces this repo-wide).
+# tuna-os/bootc-installer's auto-release job cuts a fresh date+sha tag on
+# every push to `dev` and attaches both the stable and Devel bundles to it,
+# so /releases/latest/download/ always resolves to a release that carries
+# both — no rolling tag needed for either channel.
+INSTALLER_REPO="tuna-os/bootc-installer"
 FLATPAK_FILENAME="org.bootcinstaller.Installer.flatpak"
 if [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]]; then
     FLATPAK_FILENAME="org.bootcinstaller.Installer.Devel.flatpak"
-    # Rolling dev tags are not viable under GitHub's immutable-release ruleset:
-    # a published release accepts no new assets ("Cannot upload assets to an
-    # immutable release"), and deleting it to start over permanently burns the
-    # tag name ("Cannot create ref due to creations being restricted"). Both
-    # "latest-dev" and "dev-rolling" were lost that way on 2026-08-01.
-    #
-    # Every versioned release carries BOTH bundles, so take the Devel one from
-    # the same /releases/latest/ redirect the stable channel uses. It is created
-    # together with its assets, which is the only pattern immutability allows.
-    # tuna-os/tuna-installer uses tag "continuous-dev" — different naming convention.
-    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
-    FALLBACK_URL="https://github.com/${FALLBACK_REPO}/releases/download/continuous-dev/${FLATPAK_FILENAME}"
-else
-    # Use GitHub's /releases/latest/download/ redirect — always resolves to the
-    # current latest stable release without needing to know the version tag.
-    PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
-    FALLBACK_URL="https://github.com/${FALLBACK_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
 fi
-if ! curl --retry 3 --fail --location \
+# Use GitHub's /releases/latest/download/ redirect — always resolves to the
+# current latest stable release without needing to know the version tag.
+PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
+curl --retry 3 --fail --location \
     "${PRIMARY_URL}" \
-    -o /tmp/tuna-installer.flatpak 2>/dev/null; then
-    echo "Primary source unavailable, falling back to ${FALLBACK_REPO}..."
-    curl --retry 3 --fail --location \
-        "${FALLBACK_URL}" \
-        -o /tmp/tuna-installer.flatpak
-fi
+    -o /tmp/tuna-installer.flatpak
 INSTALLER_APP_ID="org.bootcinstaller.Installer"
 [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
 

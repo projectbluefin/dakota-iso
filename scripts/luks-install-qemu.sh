@@ -46,7 +46,7 @@ if [[ "${BOOTLOADER}" == "grub" ]]; then BOOTLOADER="grub2"; fi
 FILESYSTEM="btrfs"
 
 echo "Mounting scratch disk (/dev/vdb) over /var/tmp..."
-$SSH 'sudo bash -c "
+printf 'live\n' | $SSH 'sudo -S -p "" bash -c "
     mkfs.ext4 -F /dev/vdb >/dev/null
     umount /var/tmp 2>/dev/null || true
     mount /dev/vdb /var/tmp
@@ -91,7 +91,7 @@ else
 fi
 
 echo "Patching BLS entries to enable dual serial+VT console and LUKS unlock..."
-$SSH 'sudo bash -c "
+printf 'live\n' | $SSH 'sudo -S -p "" bash -c "
     set -euo pipefail
     BOOT_PART=\"/dev/vda1\"
     LUKS_PART=\"/dev/vda2\"
@@ -124,5 +124,8 @@ echo "Install complete. Shutting down live QEMU..."
 SOCAT_PREFIX=""
 if ! test -w "${MONITOR_LIVE}" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
 echo "system_powerdown" | $SOCAT_PREFIX socat - "UNIX-CONNECT:${MONITOR_LIVE}" 2>/dev/null || true
-sleep 5
+for _ in {1..30}; do
+    [[ ! -S "${MONITOR_LIVE}" ]] && exit 0
+    sleep 2
+done
 echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:${MONITOR_LIVE}" 2>/dev/null || true

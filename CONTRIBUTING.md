@@ -50,7 +50,7 @@ Full ISO builds and LUKS E2E tests run on push to `main` and weekly. See [`docs/
 
 - [`projectbluefin/dakota`](https://github.com/projectbluefin/dakota) — source images this repo packages into ISOs
 - [`projectbluefin/common`](https://github.com/projectbluefin/common) — shared OCI layer, org-level factory docs
-- [`projectbluefin/bootc-installer`](https://github.com/projectbluefin/bootc-installer) — the Flatpak installer bundled in the live ISO
+- [`tuna-os/bootc-installer`](https://github.com/tuna-os/bootc-installer) — the Flatpak installer bundled in the live ISO
 
 Useful validation steps:
 ```bash
