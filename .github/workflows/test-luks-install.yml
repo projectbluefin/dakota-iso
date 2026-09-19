@@ -13,7 +13,7 @@ name: LUKS Install End-to-End Test
 # Reproduces: projectbluefin/dakota#270
 
 on:
-  pull_request:
+  push:
     branches:
       - main
   workflow_dispatch:

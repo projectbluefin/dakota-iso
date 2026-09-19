@@ -17,7 +17,7 @@
 name: Plain Install E2E
 
 on:
-  pull_request:
+  push:
     branches:
       - main
   workflow_dispatch:
