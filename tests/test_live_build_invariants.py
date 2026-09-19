@@ -848,6 +848,71 @@ class TestVariantConfig(unittest.TestCase):
                     f"live/src/{variant}/composefs must be 'false'. "
                     "Fedora Silverblue uses ostree, not composefs-native.",
                 )
+    def test_composefs_resolution_consistency_across_resolvers(self):
+        """Host reader (variant-config.sh) and in-container configure-live.sh must agree.
+
+        For every known variant, the composefs boolean returned by variant-config.sh
+        must match the composeFsBackend boolean produced by configure-live.sh's
+        recipe patching logic.
+        """
+        for variant in KNOWN_VARIANTS:
+            # 1. Resolve via host reader variant-config.sh
+            cmd = (
+                f'source "{REPO}/scripts/variant-config.sh" && '
+                f'variant_composefs "{variant}"'
+            )
+            proc = subprocess.run(
+                ["bash", "-c", cmd],
+                capture_output=True,
+                text=True,
+                cwd=REPO,
+                check=True,
+            )
+            host_cfs = proc.stdout.strip()
+            self.assertIn(host_cfs, ["true", "false"])
+            host_bool = (host_cfs == "true")
+
+            # 2. Emulate configure-live.sh resolution logic for TARGET=variant
+            # TARGET -> VARIANT derivation
+            live_target_cmd = (
+                f'source "{REPO}/scripts/variant-config.sh" && '
+                f'variant_live_target "{variant}"'
+            )
+            live_target = subprocess.run(
+                ["bash", "-c", live_target_cmd],
+                capture_output=True,
+                text=True,
+                cwd=REPO,
+                check=True,
+            ).stdout.strip()
+
+            # configure-live.sh: VARIANT=$(echo "$TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
+            c_variant = re.sub(r"-nvidia(-open)?$", "", live_target)
+            variant_dir = REPO / "live" / "src" / c_variant
+            cfs_file = variant_dir / "composefs"
+            if cfs_file.exists():
+                cfs_val = subprocess.run(
+                    ["bash", "-c", f"tr -d '[:space:]' < '{cfs_file}'"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout
+                container_cfs = cfs_val if cfs_val else "true"
+            else:
+                container_cfs = "true"
+
+            container_bool = (container_cfs == "true")
+
+            # configure-live.sh recipe["composeFsBackend"]:
+            # $([ "$COMPOSEFS" = "true" ] && echo "True" || echo "False")
+            self.assertEqual(
+                host_bool,
+                container_bool,
+                f"Composefs resolution mismatch for variant {variant}: "
+                f"host reader resolved {host_bool} ({host_cfs}), "
+                f"configure-live logic resolved {container_bool} ({container_cfs}).",
+            )
+
 
     def test_variant_tags_are_valid(self):
         """All variant tag files must contain a valid tag string."""
@@ -955,6 +1020,24 @@ class TestBuildLiveSquashfs(unittest.TestCase):
             "composeFsBackend detection: open() path inside sh -c single-quotes "
             "breaks the -c argument. Use grep or pipe to python instead.",
         )
+    def test_build_live_squashfs_uses_variant_composefs_in_target_mode(self):
+        """In --target mode, build-live-squashfs.sh must resolve via variant_composefs."""
+        content = BUILD_LIVE_SQUASHFS.read_text()
+        self.assertIn(
+            'COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")',
+            content,
+            "build-live-squashfs.sh must use variant_composefs when TARGET is set.",
+        )
+
+    def test_build_live_squashfs_fails_closed_in_positional_mode(self):
+        """In positional mode, introspection failure must not default to false silently."""
+        content = BUILD_LIVE_SQUASHFS.read_text()
+        self.assertIn(
+            'ERROR: [live-squashfs] failed to determine composeFsBackend',
+            content,
+            "build-live-squashfs.sh must fail closed if recipe.json introspection fails.",
+        )
+
 
     def test_lts_images_json_defaults_to_btrfs(self):
         """live/src/bluefin-lts-hwe/images.json must default to btrfs.
