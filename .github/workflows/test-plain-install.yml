@@ -7,9 +7,10 @@
 # reliably reproduces ENOSPC-class bugs (e.g. containers/storage writing blobs
 # to /var/tmp instead of the disk-backed scratch dir).
 #
-# Runs two parallel legs:
-#   dev    — continuous-dev Flatpak (catches regressions before stable)
-#   stable — continuous Flatpak    (verifies what users actually download)
+# Runs two parallel legs, both fetched from the same tuna-os/bootc-installer
+# release via /releases/latest/download/:
+#   dev    — org.bootcinstaller.Installer.Devel.flatpak
+#   stable — org.bootcinstaller.Installer.flatpak (what users actually download)
 #
 # Reported crash this test guards against:
 #   https://github.com/ublue-os/bluefin/discussions/4754
@@ -59,7 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [dakota, stable, lts]
+        variant: [dakota, bluefin, bluefin-lts-hwe]
         installer_channel: [dev, stable]
 
     steps:
@@ -122,7 +123,7 @@ jobs:
         run: |
           START=$SECONDS
           sudo apt-get install -y --no-install-recommends \
-            podman skopeo squashfs-tools xorriso dosfstools mtools buildah
+            podman skopeo squashfs-tools xorriso dosfstools mtools
           sudo mkdir -p /var/iso-build
           mkdir -p output
           # Pull the payload image so fisherman uses local containers-storage
@@ -157,8 +158,8 @@ jobs:
           START=$SECONDS
           # 4096 MiB: tight overlay tmpfs to expose ENOSPC-class bugs
           # Run as the unprivileged runner user (not sudo): the bootcDirect path
-          # builds the patched fisherman with `go build`, which needs Go on PATH
-          # and runs VCS stamping against the user-owned /tmp/fisherman clone — both
+          # builds fisherman with `go build`, which needs Go on PATH and runs VCS
+          # stamping against the user-owned /tmp/fisherman clone — both
           # break under sudo. QEMU/KVM access uses an internal sudo fallback in the
           # recipe, and all guest-side install steps run via ssh with guest sudo.
           just qemu-mem=4096 installer_channel="$INSTALLER_CHANNEL" plain-test-qemu ${{ matrix.variant }}

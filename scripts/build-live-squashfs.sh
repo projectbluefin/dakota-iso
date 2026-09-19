@@ -35,10 +35,21 @@
 
 set -euo pipefail
 
+if [[ $(id -u) -ne 0 ]]; then
+    if command -v podman >/dev/null 2>&1; then
+        echo ">>> [live-squashfs] Non-root user detected: re-executing inside user namespace via podman unshare ..."
+        exec podman unshare bash "$0" "$@"
+    else
+        echo "ERROR: must run as root (use sudo) or have podman available for unshare" >&2
+        exit 1
+    fi
+fi
+
 OCI_IMAGE=""
 TARGET=""
 OUTPUT_DIR=""
 DEBUG_ARG="0"
+COMPRESSION="${SUPERISO_COMPRESSION:-fast}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -47,6 +58,7 @@ while [[ $# -gt 0 ]]; do
         --installer-channel) INSTALLER_CHANNEL="${2:?--installer-channel requires a value}"; export INSTALLER_CHANNEL; shift 2 ;;
         --output-dir)        OUTPUT_DIR="${2:?--output-dir requires a path}"; shift 2 ;;
         --debug)             DEBUG_ARG="${2:?--debug requires 0 or 1}"; shift 2 ;;
+        --compression)       COMPRESSION="${2:?--compression requires fast or release}"; shift 2 ;;
         *) break ;;
     esac
 done
@@ -65,6 +77,7 @@ if [[ -n "${TARGET}" ]]; then
         --build-arg INSTALLER_CHANNEL="${INSTALLER_CHANNEL:-stable}" \
         --build-arg TARGET="${LIVE_TARGET}" \
         --build-arg DEBUG="${DEBUG_ARG}" \
+        --build-arg CACHE_BUST="$(date +%Y%m%d%H%M%S)" \
         -t "${TARGET}-installer" \
         -f ./live/Containerfile ./live
 
@@ -76,11 +89,6 @@ else
     IMAGE="${1:?Usage: build-live-squashfs.sh [--oci-image <ref>] <image> <output-squashfs> <output-boot-tar>}"
     OUTPUT_SFS="${2:?}"
     OUTPUT_BOOT_TAR="${3:?}"
-fi
-
-if [[ $(id -u) -ne 0 ]]; then
-    echo "ERROR: must run as root (use sudo)" >&2
-    exit 1
 fi
 
 # SUPERISO_TMPDIR lets CI redirect scratch space to a large disk-backed path
@@ -123,7 +131,7 @@ fi
 #     Fisherman exports VFS → OCI at install time and passes
 #     --source-imgref oci:... --composefs-backend to bootc.
 #
-#   standard-ostree / non-composefs (e.g. stable, lts):
+#   standard-ostree / non-composefs (e.g. bluefin, bluefin-lts-hwe):
 #     Embed into VFS containers-storage at /usr/lib/containers/storage
 #     (additionalimagestore).  VFS driver is required — the live ISO rootfs
 #     is an overlayfs and el10 (LTS) lacks native overlay-on-overlay; an
@@ -154,28 +162,91 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         mkdir -p "${CS_STAGING}"
 
         # Chunkified images have many layers; squash to 1 to keep VFS store compact.
+        #
+        # podman build, not buildah: buildah is unavailable on bootc image-mode
+        # hosts (no rpm-ostree, no Homebrew formula), and podman is already a hard
+        # dependency of this script.  The docs/build.md warning about Entrypoint
+        # corruption applies to `podman create && podman commit`, NOT to
+        # `podman build` — a FROM-only Containerfile inherits image config instead
+        # of rewriting it.  The verification below enforces that.
+        SQUASH_TAG="localhost/live-squash-$$:latest"
+        ANNOT_TAG="localhost/live-annot-$$:latest"
+        cleanup_squash_tags() {
+            podman rmi -f "${SQUASH_TAG}" "${ANNOT_TAG}" >/dev/null 2>&1 || true
+        }
+        trap cleanup_squash_tags EXIT
+
         echo ">>> [live-squashfs] squashing ${OCI_IMAGE} to single layer ..."
-        SQUASH_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
         printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
-        buildah copy "${SQUASH_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
-        buildah run  "${SQUASH_CTR}" -- sh -c 'cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
+        # COPY writes straight to the destination — no RUN, so no shell in the
+        # payload and nothing left behind in /tmp to clean up.
         # The payload ships verbatim to installed systems — never bake a
         # storage.conf into it (installed podman would inherit VFS storage).
         # VFS config for reading the embedded store lives in the live env
         # (configure-live.sh) and the import step below (CONTAINERS_STORAGE_CONF).
-        buildah commit --squash "${SQUASH_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
-        buildah rm "${SQUASH_CTR}"
+        cat > "${WORK}/Containerfile.squash" <<SQUASHEOF
+FROM ${OCI_IMAGE}
+COPY bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml
+SQUASHEOF
+        podman build \
+            --pull=never \
+            --squash-all \
+            --network=none \
+            -f "${WORK}/Containerfile.squash" \
+            -t "${SQUASH_TAG}" \
+            "${WORK}"
 
-        SQUASHED_DIFFID="$(skopeo inspect --config "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}" 2>/dev/null | \
-            python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)"
-        if [[ -n "${SQUASHED_DIFFID}" ]]; then
-            echo ">>> [live-squashfs] updating ostree.final-diffid to ${SQUASHED_DIFFID}"
-            ANNOT_CTR="$(buildah from --pull-never "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}")"
-            buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-            buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-            buildah commit --squash "${ANNOT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
-            buildah rm "${ANNOT_CTR}"
+        # podman, not skopeo: this script re-execs inside `podman unshare`, and
+        # `skopeo inspect containers-storage:<ref>` cannot resolve the rootless
+        # store from in there. It fails, and because the old call swallowed
+        # errors the diff_id silently came back empty — which would have shipped
+        # a payload with no ostree.final-diffid at all.
+        SOURCE_ENTRYPOINT="$(podman image inspect --format '{{json .Config.Entrypoint}}' "${OCI_IMAGE}")"
+        SQUASHED_DIFFID="$(podman image inspect --format '{{index .RootFS.Layers 0}}' "${SQUASH_TAG}")"
+        SQUASH_LAYERS="$(podman image inspect --format '{{len .RootFS.Layers}}' "${SQUASH_TAG}")"
+
+        if [[ "${SQUASH_LAYERS}" != "1" ]]; then
+            echo "ERROR: squash produced ${SQUASH_LAYERS} layers, expected 1" >&2
+            exit 1
         fi
+        if [[ -z "${SQUASHED_DIFFID}" ]]; then
+            echo "ERROR: could not read squashed diff_id — ostree.final-diffid would be wrong" >&2
+            exit 1
+        fi
+
+        echo ">>> [live-squashfs] updating ostree.final-diffid to ${SQUASHED_DIFFID}"
+        # Metadata only: no filesystem instruction, so the squashed layer
+        # content — and therefore its diff_id — is unchanged by this pass.
+        printf 'FROM %s\n' "${SQUASH_TAG}" > "${WORK}/Containerfile.annot"
+        podman build \
+            --pull=never \
+            --squash-all \
+            --network=none \
+            --label "ostree.final-diffid=${SQUASHED_DIFFID}" \
+            --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" \
+            -f "${WORK}/Containerfile.annot" \
+            -t "${ANNOT_TAG}" \
+            "${WORK}"
+
+        # Guard the three things podman build could plausibly get wrong versus
+        # buildah commit --squash: extra layers, a rewritten Entrypoint, or a
+        # diff_id that drifted when the metadata pass re-flattened the image.
+        ANNOT_DIFFID="$(podman image inspect --format '{{index .RootFS.Layers 0}}' "${ANNOT_TAG}")"
+        ANNOT_ENTRYPOINT="$(podman image inspect --format '{{json .Config.Entrypoint}}' "${ANNOT_TAG}")"
+        if [[ "${ANNOT_DIFFID}" != "${SQUASHED_DIFFID}" ]]; then
+            echo "ERROR: metadata pass changed diff_id ${SQUASHED_DIFFID} -> ${ANNOT_DIFFID}" >&2
+            exit 1
+        fi
+        if [[ "${ANNOT_ENTRYPOINT}" != "${SOURCE_ENTRYPOINT}" ]]; then
+            echo "ERROR: Entrypoint changed by squash: ${SOURCE_ENTRYPOINT} -> ${ANNOT_ENTRYPOINT}" >&2
+            exit 1
+        fi
+        echo ">>> [live-squashfs] squash verified: 1 layer, diff_id stable, Entrypoint preserved (${ANNOT_ENTRYPOINT})"
+
+        podman push "${ANNOT_TAG}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
+
+        cleanup_squash_tags
+        trap - EXIT
 
         printf '[storage]\ndriver = "vfs"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
             > "${STORAGE_CONF}"
@@ -206,18 +277,32 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         echo ">>> [live-squashfs] non-composefs (bootcDirect) — embedding OCI image ${OCI_IMAGE} into overlay store ..."
 
         printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
-        INJECT_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
-        buildah copy "${INJECT_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
-        buildah run  "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
 
         OCI_ARCHIVE="${WORK}/payload.oci.tar"
         CS_STAGING="${WORK}/overlay-storage"
         STORAGE_CONF="${WORK}/st.conf"
         mkdir -p "${CS_STAGING}"
 
-        echo ">>> [live-squashfs] committing payload without squash to preserve ostree commits ..."
-        buildah commit "${INJECT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
-        buildah rm "${INJECT_CTR}"
+        # No --squash-all here: the ostree commits in the original layers must
+        # survive, so this adds one layer on top instead of flattening.
+        # COPY creates /usr/lib/bootc/install itself, so no RUN is needed.
+        echo ">>> [live-squashfs] injecting root-mount-spec without squash to preserve ostree commits ..."
+        INJECT_TAG="localhost/live-inject-$$:latest"
+        cleanup_inject_tag() { podman rmi -f "${INJECT_TAG}" >/dev/null 2>&1 || true; }
+        trap cleanup_inject_tag EXIT
+        cat > "${WORK}/Containerfile.inject" <<INJECTEOF
+FROM ${OCI_IMAGE}
+COPY bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml
+INJECTEOF
+        podman build \
+            --pull=never \
+            --network=none \
+            -f "${WORK}/Containerfile.inject" \
+            -t "${INJECT_TAG}" \
+            "${WORK}"
+        podman push "${INJECT_TAG}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
+        cleanup_inject_tag
+        trap - EXIT
 
         printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
             > "${STORAGE_CONF}"
@@ -249,7 +334,7 @@ if [[ -n "${OCI_IMAGE}" ]]; then
 fi
 
 SFS_LEVEL=3; SFS_BLOCK=131072
-[[ "${SUPERISO_COMPRESSION:-}" == "release" ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
+[[ "${COMPRESSION}" == "release" || "${SUPERISO_COMPRESSION:-}" == "release" ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
 
 echo ">>> [live-squashfs] mksquashfs -> ${OUTPUT_SFS} (zstd-${SFS_LEVEL}) ..."
 mkdir -p "$(dirname "${OUTPUT_SFS}")"

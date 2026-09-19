@@ -3,13 +3,13 @@
 Managing Dakota ISOs in Cloudflare R2: promoting builds, creating named releases,
 and maintaining the `latest` pointers.
 
-## ⛔ Critical rule: never manually overwrite `latest`
+## ⛔ Critical rule: mandatory CI E2E gate & never manually overwrite `latest`
 
-**`dakota-live-latest.iso` is the production artifact users download. Only CI
-may write to it — after the E2E gate passes.**
+**1. Mandatory CI E2E Gate:**
+The CI E2E test gate (`plain-e2e` / `test-plain-install.yml`) is strictly **mandatory** before any R2 upload or promotion (whether `latest` or named release). Uploading, promoting, or publishing an ISO without a green CI E2E run is strictly forbidden.
 
-Manual `rclone copyto` to the `latest` pointer is prohibited. It bypasses
-the CI E2E test gate (`plain-e2e`) and ships untested ISOs to users.
+**2. Never manually overwrite `latest`:**
+`dakota-live-latest.iso` is the production artifact users download. Only CI may write to it — after the E2E gate passes. Manual `rclone copyto` to the `latest` pointer is prohibited. It bypasses the CI E2E test gate and ships untested ISOs to users.
 This caused a production outage in June 2026 (broken XFS install, issue [#85](https://github.com/projectbluefin/dakota-iso/issues/85)).
 
 ✅ Allowed: `rclone copyto` from current latest objects to create/update **named releases** (`alpha3`) after CI E2E passed

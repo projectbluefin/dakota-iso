@@ -26,6 +26,10 @@ if $SSH "sudo podman image exists '${PAYLOAD_IMAGE}' 2>/dev/null"; then
     INSTALL_IMAGE="containers-storage:${PAYLOAD_IMAGE}"
     echo "Image found in local containers-storage — using offline install."
 else
+    if [[ "${OFFLINE_REQUIRED:-0}" == "1" ]]; then
+        echo "❌ ERROR: OFFLINE_REQUIRED=1 but image '${PAYLOAD_IMAGE}' was NOT found in local containers-storage!" >&2
+        exit 1
+    fi
     INSTALL_IMAGE="docker://${PAYLOAD_IMAGE}"
     echo "Image not in local store — fisherman will pull from network."
 fi
@@ -60,7 +64,7 @@ if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
     $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
     $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/plain-recipe.json'
 else
-    # Ostree path (stable, lts): bootcDirect — fisherman runs bootc natively.
+    # Ostree path (bluefin, bluefin-lts-hwe): bootcDirect — fisherman runs bootc natively.
     # Empty image triggers bootcDirect; targetImgref sets the day-2 rebase ref.
     # Fisherman emits --source-imgref containers-storage:<targetImgref> when
     # targetImgref is present and image is empty, resolving the payload from
@@ -87,37 +91,10 @@ else
 fi
 
 echo "Patching BLS entries to add serial console..."
-$SSH "sudo bash -c \"
-    set -euo pipefail
-    BOOT_PART=\\\"/dev/vda1\\\"
-    if ls /dev/vda3 >/dev/null 2>&1; then
-        echo \\\"Detected 3 partitions layout (separate boot partition for GRUB)\\\"
-        BOOT_PART=\\\"/dev/vda2\\\"
-    fi
-    TMP=\\\$(mktemp -d)
-    trap \\\"umount \\\$TMP 2>/dev/null || true; rmdir \\\$TMP\\\" EXIT
-    mount \\\"\\\$BOOT_PART\\\" \\\$TMP
-    COUNT=0
-    for entry in \\\$TMP/loader/entries/*.conf \\\$TMP/EFI/loader/entries/*.conf; do
-        [[  -f \\\"\\\$entry\\\" ]] || continue
-        echo \\\"=== BLS entry before patch: \\\$(basename \\\$entry) ===\\\"
-        cat \\\"\\\$entry\\\"
-        if grep -q \\\"^options \\\" \\\"\\\$entry\\\" && ! grep -q \\\"console=tty0\\\" \\\"\\\$entry\\\"; then
-            sed -i \\\"s|^options .*|& console=tty0 console=ttyS0 rd.info systemd.journald.forward_to_console=yes|\\\" \\\"\\\$entry\\\"
-            COUNT=\\\$((COUNT+1))
-        fi
-        echo \\\"=== BLS entry after patch ===\\\"
-        cat \\\"\\\$entry\\\"
-    done
-    echo \\\"BLS patch: \\\$COUNT entries updated\\\"
-\""
+scripts/qemu-lifecycle.sh patch-bls-console "${SSH_PORT}" plain
+
+echo "Verifying UEFI boot entry and EFI partition files..."
+scripts/qemu-lifecycle.sh verify-efi "${SSH_PORT}"
 
 echo "Install complete. Shutting down live QEMU..."
-SOCAT_PREFIX=""
-if ! test -w "${MONITOR_LIVE}" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
-echo "system_powerdown" | $SOCAT_PREFIX socat - "UNIX-CONNECT:${MONITOR_LIVE}" 2>/dev/null || true
-for _ in {1..30}; do
-    [[ ! -S "${MONITOR_LIVE}" ]] && exit 0
-    sleep 2
-done
-echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:${MONITOR_LIVE}" 2>/dev/null || true
+scripts/qemu-lifecycle.sh shutdown "${MONITOR_LIVE}"

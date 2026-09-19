@@ -56,18 +56,19 @@ Whenever you need to make a technical decision — choosing a GitHub Action, pic
 
 ## Find something to work on
 
-| Time available | Link |
-|---|---|
-| All sizes | [Everything agent-ready](https://github.com/projectbluefin/dakota-iso/issues?q=is%3Aopen+label%3Aqueue%2Fagent-ready+no%3Aassignee+sort%3Acreated-asc) |
+Use the shared [label workflow](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md).
+It is the canonical lifecycle and label taxonomy for factory repositories.
 
 ```bash
-# P0 blockers — start here every session
-gh search issues --label "hive/p0" --owner projectbluefin --state open \
-  --json number,title,repository
+# Confirm the shared labels have been synchronized before using them.
+gh label list --repo projectbluefin/dakota-iso --limit 200 --json name
 
-# Agent-ready issues in this repo
-gh issue list --repo projectbluefin/dakota-iso --label "queue/agent-ready" --assignee ""
+# After synchronization, find work approved by a human.
+gh search issues --label "status/queued" --owner projectbluefin --state open
 ```
+
+Do not substitute legacy label names for unavailable shared labels, and never
+self-apply queue, priority, or claim labels.
 
 ---
 
@@ -99,12 +100,14 @@ that cannot find the embedded VFS store.  The real functional gates are:
 |---|---|---|
 | Fast unit tests | `test.yml` — runs on every PR | Source-file invariants and Python logic. Necessary but not sufficient. |
 | LUKS install E2E | `test-luks-install.yml` | Encrypted install completes and installed system boots. |
-| Plain install E2E | `test-plain-install.yml` | Unencrypted XFS composefs install completes and installed system boots. |
+| Plain install E2E | `test-plain-install.yml` | Unencrypted btrfs composefs install completes and installed system boots. |
 
 Never say "tests pass" to mean "the application works". Say "unit tests pass" and specify
 which E2E gate (if any) covers the change.
 
-**The E2E must test the same code path users hit.** If the interactive installer defaults to XFS, the E2E must use XFS. A test that passes on btrfs while users install on XFS is not a test — it is a false signal.
+**The E2E must test the same code path users hit.** The interactive installer
+defaults to btrfs, so the E2E must use btrfs. A test that passes on another
+filesystem does not validate the default install path.
 
 **Never claim a fix is verified by CI if you have not confirmed what the CI test actually exercises.** Check the recipe, the flags, the filesystem — not just the green checkmark.
 
@@ -175,7 +178,6 @@ for this repo. When you fix a bug or discover a pattern, add a lesson here.
 | **Label workflow** | [`docs/skills/label-workflow.md`](docs/skills/label-workflow.md) | Issue lifecycle, labels, PR queue |
 | **Human gates** | [`docs/skills/human-gates.md`](docs/skills/human-gates.md) | When to stop and ask a human |
 | **Skill improvement** | [`docs/skills/skill-improvement.md`](docs/skills/skill-improvement.md) | Writing skill updates in the same PR |
-| **Skill drift CI** | [`docs/skills/skill-drift.md`](docs/skills/skill-drift.md) | Skill-drift check failing on a PR |
 
 ---
 
@@ -209,7 +211,9 @@ just --list                    # verify justfile is parseable
 pre-commit run --all-files     # lint, yaml/json hygiene, no floating action tags
 ```
 
-The `skill-drift.yml` CI check warns when a PR changes implementation files without updating a matching skill doc. Treat warnings as hard requirements.
+Documentation updates are a developer-time responsibility: record durable
+learnings in the relevant skill and run the repository's pre-commit checks.
+The legacy `skill-drift.yml` workflow is advisory feedback, not a release gate.
 
 ### Agent environment constraints
 
@@ -250,7 +254,7 @@ The `skill-drift.yml` CI check warns when a PR changes implementation files with
 
 - `.github/workflows/` — CI pipeline changes
 - `justfile` — canonical build interface
-- `live/src/build-iso.sh` — ISO assembly logic (canonical; `dakota/src/build-iso.sh` is the local-only copy)
+- `live/src/build-iso.sh` — ISO assembly logic
 - `live/src/configure-live.sh` — live environment setup
 - `live/src/install-flatpaks.sh` — Flatpak baking into squashfs
 

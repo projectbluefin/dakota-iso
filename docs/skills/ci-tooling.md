@@ -72,7 +72,7 @@ Slots beyond 3 are pruned by the `Delete backup slots beyond 3` step.
 4. Commit variant files and matrix update in the same PR
 5. Build with `just debug=1 iso-sd-boot <variant>` locally before CI
 
-### README auto-refresh (dakota only)
+### Keep publish workflows release-only
 
 `build-iso.yml` includes a "Refresh README dakota table" step that rewrites the
 `| \`dakota\` |` row with current ISO size, publish date, and CI run link. It then
@@ -115,7 +115,6 @@ slow and the VM falls through to PXE. Always use AHCI for CI smoke boots:
 - `stable-live-*` or `lts-live-*` objects appear in the R2 bucket → old workflow was re-triggered; delete them
 - `backup-4.iso` or higher appears → prune step is missing or broken
 - Dated `YYYYMMDD-SHA` objects appear → an old workflow branch was re-run; delete them
-- README dakota row has `—` for size/date after a build → README refresh step failed; check `contents: write` permission
 - `build-iso-bluefin.yml` matrix lists a variant with no `<variant>/` directory → stale matrix entry
 
 ## Verification
@@ -126,7 +125,6 @@ Before submitting CI workflow changes:
 - [ ] `Delete backup slots beyond 3` step present for the affected workflow
 - [ ] No `stable` or `lts` entries in `build-iso-bluefin.yml` matrix
 - [ ] AHCI (`ich9-ahci`) used for smoke boot in bluefin CI (not SCSI)
-- [ ] `contents: write` permission present in `build-iso.yml` job (required for README push)
 - [ ] Tests pass: `python -m pytest tests/test_live_build_invariants.py -q`
 - [ ] `rclone lsf R2:testing --files-only | sort` shows only `*-latest.iso`, `*-backup-{1,2,3}.iso`, and named alphas
 

@@ -76,5 +76,5 @@ gh pr create --repo projectbluefin/dakota-iso --base main
 |---|---|
 | [`projectbluefin/dakota`](https://github.com/projectbluefin/dakota) | Source images |
 | [`projectbluefin/common`](https://github.com/projectbluefin/common) | Shared OCI layer + org factory docs |
-| [`tuna-os/bootc-installer`](https://github.com/tuna-os/bootc-installer) | Flatpak installer bundled in the ISO |
-| [`tuna-os/fisherman`](https://github.com/tuna-os/fisherman) | Backend install binary |
+| [`tuna-os/bootc-installer`](https://github.com/tuna-os/bootc-installer) | Flatpak installer bundled in the ISO (sole upstream; the projectbluefin fork is archived) |
+| [`tuna-os/fisherman`](https://github.com/tuna-os/fisherman) | Backend install binary; default branch `dev` |

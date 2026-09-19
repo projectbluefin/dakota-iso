@@ -28,6 +28,7 @@ gh workflow run build-iso-bluefin.yml --ref main
 | Bluefin Build & Publish | `build-iso-bluefin.yml` | 1st of month 05:00 UTC, `workflow_dispatch` |
 | LUKS E2E Test | `test-luks-install.yml` | PRs to main, weekly Mon 04:00 UTC, `workflow_dispatch` |
 | Plain Install E2E | `test-plain-install.yml` | PRs to main, weekly Tue 04:00 UTC, `workflow_dispatch` |
+| GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
 | ShellCheck Lint | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
 
@@ -58,18 +59,21 @@ gh workflow run build-iso-bluefin.yml --ref main
 > Building a separate `store.squashfs.img` doubles the OCI payload, producing an ~8 GB
 > ISO instead of ~5.3 GB. See lessons below.
 
-### ⚠️ installer_channel is locked to `stable` in CI
+### installer_channel in CI
 
-Do NOT change `installer_channel` to `dev` in the live container build. There is an active
-regression in the dev channel (`tuna-os/fisherman#38`) where the overlay storage
-code path fails with:
-```
-open /var/tmp/oci-cache/index.json: no such file or directory
-```
-Production CI must stay on `installer_channel=stable` until the regression is fixed.
+Production CI (`build-iso.yml`) builds with `installer_channel=stable`. The E2E gates
+run the `[dev, stable]` matrix.
 
-The stable channel resolves to `releases/latest/download` (the most recent non-prerelease tag).
-As of 2026-06-14 this is **v2.7.4**.
+The old lock on `stable` existed because of an overlay-storage regression in the dev
+channel (`open /var/tmp/oci-cache/index.json: no such file or directory`). That was
+`tuna-os/fisherman#38`, closed as completed on 2026-08-08 — it is no longer a reason
+to avoid `dev`.
+
+Both channels resolve through `https://github.com/tuna-os/bootc-installer/releases/latest/download/`:
+`org.bootcinstaller.Installer.flatpak` for stable, `org.bootcinstaller.Installer.Devel.flatpak`
+for dev. Upstream attaches both bundles to the same non-prerelease `v<date>-<sha>` release,
+so neither channel needs — or may use — a rolling tag. As of 2026-09-17 the latest release
+is **v2026.09.14-9a9a913**.
 
 ### Disk layout in CI
 
@@ -104,12 +108,6 @@ Objects published per build:
 
 All are updated only after ENOSPC gate, full install, installed-boot verification,
 and production ISO smoke boot all pass.
-
-### README table auto-refresh
-
-After a successful Dakota upload, `build-iso.yml` auto-commits a README update:
-the `| \`dakota\` |` row is rewritten with the current ISO size, publish date, and a
-link to the CI run. This requires `contents: write` permission on the job.
 
 ⚠️ Direct uploads from the local host hang (routing issue). Always use R2→R2
 server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
@@ -200,6 +198,19 @@ This workflow builds a debug Dakota ISO and runs the full plain-install QEMU pat
 (`just ... plain-test-qemu dakota`) to catch unencrypted installer regressions,
 including the tight-memory ENOSPC class.
 
+## scheduled-gui-installer.yml
+
+**Matrix:** `dakota × installer_channel: [dev, stable]` (fail-fast: false)
+**Timeout:** 120 minutes
+**Triggers:** weekly Wednesday 04:00 UTC, `workflow_dispatch` only (never PRs)
+
+This acceptance workflow builds a debug ISO for each installer channel, then runs
+`just gui-e2e dakota`. It drives the desktop's auto-launched installer through
+AT-SPI and verifies the installed system boots. It always uploads serial logs,
+screenshots, AT-SPI driver output (including failure diagnostics), and installer
+logs as run artifacts. It has only `contents: read` and `packages: read`
+permissions, which permit checkout and the GHCR pull without repository writes.
+
 ## Adding a new workflow
 
 All workflow files go in `.github/workflows/`. Before adding:
@@ -226,8 +237,8 @@ Runs `pytest tests/ -v` against Python 3.11.
 
 | File | Tests | What it checks |
 |---|---|---|
-| `tests/test_live_build_invariants.py` | 32 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, publish workflows, E2E workflow wiring, and variant config files. Also pins the DEBUG-only SSH guard, publish gating/concurrency, and `live/src` vs `dakota/src` `luks-unlock.py` sync. |
-| `tests/test_luks_unlock.py` | 52 | `dakota/src/luks-unlock.py` routing, passphrase injection key sequences, and screenshot parsing. `tests/test_live_build_invariants.py` separately asserts the `live/src` helper stays byte-for-byte identical so local helpers and CI exercise the same logic. |
+| `tests/test_live_build_invariants.py` | 32 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, publish workflows, E2E workflow wiring, and variant config files. Also pins the DEBUG-only SSH guard and publish gating/concurrency. |
+| `tests/test_luks_unlock.py` | 52 | `live/src/luks-unlock.py` routing, passphrase injection key sequences, and screenshot parsing. |
 | `tests/test_multi_arch_iso.py` | 2 | `live/src/build-iso.sh --arch` flag: single-arch backwards compat and two-arch assembly. **Skipped when `xorriso`/`mtools` are absent.** CI installs these tools so the tests run; they are skipped only in local environments lacking them — and the skip message names the exact apt packages to install. |
 
 Run locally with:
@@ -279,8 +290,8 @@ with `open /var/tmp/oci-cache/index.json: no such file or directory` when compos
 is the backend. Root cause: fisherman exports the OCI to scratch but bootc inside the
 container cannot see it via the bind mount.
 
-Fix: use `installer_channel=stable`. Keep `build-iso.yml` on stable until
-`tuna-os/fisherman#38` is resolved.
+Fixed upstream: `tuna-os/fisherman#38` was closed as completed on 2026-08-08. The
+`installer_channel=stable` workaround is no longer required for this failure mode.
 
 ### DAKOTA_LIVE_READY not seen when live-ready.service uses journal+console (2026-05)
 
@@ -581,7 +592,7 @@ fully installed.
 after BIOS handoff with no display output.
 
 **Root cause:** `nvidia-drm.modeset=1` was never set in any of the four boot entry
-locations in `live/src/build-iso.sh` and `dakota/src/build-iso.sh`. Without KMS
+locations in `live/src/build-iso.sh`. Without KMS
 enabled, the NVIDIA proprietary driver cannot take over the framebuffer from the
 BIOS, leaving the screen dark even though the system is running fine.
 

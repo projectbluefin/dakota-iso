@@ -22,7 +22,7 @@ Covered invariants
 5. Variant config files are complete and consistent for known variants.
 6. Release builds keep debug-only SSH/password config inside the DEBUG guard.
 7. build-iso.yml uploads to R2 only after the full install + verify gates pass.
-8. live/src/luks-unlock.py stays in sync with dakota/src/luks-unlock.py.
+8. live/src/luks-unlock.py handles automated passphrase injection.
 """
 
 import re
@@ -33,7 +33,6 @@ from pathlib import Path
 
 REPO = Path(__file__).parent.parent
 LIVE_BUILD_ISO = REPO / "live" / "src" / "build-iso.sh"
-DAKOTA_BUILD_ISO = REPO / "dakota" / "src" / "build-iso.sh"
 CONTAINERFILE = REPO / "live" / "Containerfile"
 CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
 BUILD_ISO_WORKFLOW = REPO / ".github" / "workflows" / "build-iso.yml"
@@ -41,7 +40,6 @@ BUILD_ISO_BLUEFIN_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-bluefin
 TEST_LUKS_WORKFLOW = REPO / ".github" / "workflows" / "test-luks-install.yml"
 TEST_PLAIN_WORKFLOW = REPO / ".github" / "workflows" / "test-plain-install.yml"
 LIVE_LUKS_UNLOCK = REPO / "live" / "src" / "luks-unlock.py"
-DAKOTA_LUKS_UNLOCK = REPO / "dakota" / "src" / "luks-unlock.py"
 BUILD_LIVE_SQUASHFS = REPO / "scripts" / "build-live-squashfs.sh"
 ISO_SD_BOOT = REPO / "scripts" / "iso-sd-boot.sh"
 README = REPO / "README.md"
@@ -105,10 +103,6 @@ class TestBootCmdline(unittest.TestCase):
         """live/src/build-iso.sh must use LABEL=, not CDLABEL= or /dev/sr0."""
         self._check_boot_root(LIVE_BUILD_ISO)
 
-    def test_dakota_build_iso_uses_label_not_cdlabel_or_sr0(self):
-        """dakota/src/build-iso.sh must use LABEL=, not CDLABEL= or /dev/sr0."""
-        self._check_boot_root(DAKOTA_BUILD_ISO)
-
     def test_live_build_iso_contains_label_root(self):
         """live/src/build-iso.sh boot entries must use root=live:LABEL=DAKOTA_LIVE."""
         self._check_has_label(LIVE_BUILD_ISO)
@@ -133,10 +127,6 @@ class TestBootCmdline(unittest.TestCase):
     def test_live_build_iso_has_nvidia_drm_modeset(self):
         """All live/src/build-iso.sh boot entries must include nvidia-drm.modeset=1."""
         self._check_nvidia_modeset(LIVE_BUILD_ISO)
-
-    def test_dakota_build_iso_has_nvidia_drm_modeset(self):
-        """All dakota/src/build-iso.sh boot entries must include nvidia-drm.modeset=1."""
-        self._check_nvidia_modeset(DAKOTA_BUILD_ISO)
 
 
 class TestXfsprogs(unittest.TestCase):
@@ -765,16 +755,6 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             "test-luks-install.yml must gate luks-e2e on unit-tests.",
         )
 
-    def test_luks_unlock_copies_are_identical(self):
-        """live/ and dakota/ luks-unlock helpers must stay byte-for-byte aligned."""
-        self.assertEqual(
-            LIVE_LUKS_UNLOCK.read_text(),
-            DAKOTA_LUKS_UNLOCK.read_text(),
-            "live/src/luks-unlock.py and dakota/src/luks-unlock.py diverged. "
-            "Keep them identical so CI/build logic and local helpers exercise "
-            "the same unlock behavior.",
-        )
-
 
 class TestVariantConfig(unittest.TestCase):
     """Variant directories must be complete and consistent."""
@@ -890,41 +870,6 @@ class TestBuildIsoScript(unittest.TestCase):
         self.assertEqual(result.returncode, 0,
                          f"live/src/build-iso.sh syntax error:\n{result.stderr}")
 
-    def test_dakota_build_iso_bash_syntax(self):
-        result = subprocess.run(
-            ["bash", "-n", str(DAKOTA_BUILD_ISO)],
-            capture_output=True, text=True,
-        )
-        self.assertEqual(result.returncode, 0,
-                         f"dakota/src/build-iso.sh syntax error:\n{result.stderr}")
-
-    def test_build_iso_scripts_are_in_sync(self):
-        """live/ and dakota/ build-iso.sh must have identical boot cmdlines.
-
-        These two scripts serve different entry points (CI vs local justfile)
-        but must stay in sync on the boot cmdline to prevent split-brain bugs
-        where CI builds boot with different options than local test builds.
-        """
-        live_content = LIVE_BUILD_ISO.read_text()
-        dakota_content = DAKOTA_BUILD_ISO.read_text()
-
-        def extract_boot_lines(content):
-            return [
-                ln.strip() for ln in content.splitlines()
-                if ("root=live:" in ln or "rd.live." in ln)
-                and not ln.strip().startswith("#")
-            ]
-
-        live_boot = extract_boot_lines(live_content)
-        dakota_boot = extract_boot_lines(dakota_content)
-
-        self.assertEqual(
-            live_boot, dakota_boot,
-            "live/src/build-iso.sh and dakota/src/build-iso.sh have different "
-            "boot cmdline options. These files must be kept in sync.\n"
-            f"live:   {live_boot}\ndakota: {dakota_boot}",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
@@ -1005,6 +950,143 @@ class TestBuildLiveSquashfs(unittest.TestCase):
                     "when QEMU runs with sudo."
                 )
 
+    def test_qemu_lifecycle_is_shared_by_plain_and_luks_tests(self):
+        """Both install paths must reuse every QEMU lifecycle phase."""
+        lifecycle = REPO / "scripts" / "qemu-lifecycle.sh"
+        self.assertTrue(lifecycle.exists(), "shared QEMU lifecycle helper is missing")
+        content = lifecycle.read_text()
+        for command in (
+            "boot-live",
+            "wait-live",
+            "boot-installed",
+            "patch-bls-console",
+            "verify-installed",
+            "shutdown",
+        ):
+            self.assertIn(
+                f"    {command})",
+                content,
+                f"qemu-lifecycle.sh must provide the {command} lifecycle command",
+            )
+
+        justfile = (REPO / "justfile").read_text()
+        for recipe in ("luks-boot-qemu-live", "luks-boot-qemu-installed",
+                       "plain-boot-qemu-live", "plain-boot-qemu-installed",
+                       "plain-verify-qemu"):
+            start = justfile.index(f"{recipe} target:")
+            recipe_body = justfile[start:justfile.find("\n\n", start)]
+            self.assertIn(
+                "scripts/qemu-lifecycle.sh",
+                recipe_body,
+                f"{recipe} must use the shared QEMU lifecycle helper",
+            )
+
+        for installer in ("plain-install-qemu.sh", "luks-install-qemu.sh"):
+            installer_content = (REPO / "scripts" / installer).read_text()
+            self.assertIn("qemu-lifecycle.sh patch-bls-console", installer_content)
+            self.assertIn("qemu-lifecycle.sh shutdown", installer_content)
+
+    def test_installed_qemu_waits_for_live_process_disk_release(self):
+        """boot-installed must not race a live QEMU process holding the disk."""
+        lifecycle = (REPO / "scripts" / "qemu-lifecycle.sh").read_text()
+        wait_for_live_qemu_exit = lifecycle.split(
+            "wait_for_live_qemu_exit() {", 1
+        )[1].split("\nboot_installed()", 1)[0]
+        boot_installed = lifecycle.split("boot_installed() {", 1)[1].split(
+            "\npatch_bls_console()", 1
+        )[0]
+        self.assertIn(
+            "pgrep -f",
+            wait_for_live_qemu_exit,
+            "The shared lifecycle must poll for the live QEMU process using the "
+            "install disk, not merely test whether its monitor socket exists.",
+        )
+        self.assertIn(
+            'wait_for_live_qemu_exit "$disk" "$live_monitor"',
+            boot_installed,
+            "boot-installed must wait for the live QEMU process before reuse.",
+        )
+        self.assertIn(
+            "live QEMU to release",
+            wait_for_live_qemu_exit,
+            "boot-installed must report that it is waiting for the live QEMU "
+            "process to release the install disk.",
+        )
+
+    def test_auto_launched_installer_enables_atspi_accessibility(self):
+        """The GUI acceptance path needs AT-SPI exposed in the live session."""
+        content = CONFIGURE_LIVE.read_text()
+        self.assertIn(
+            "[org/gnome/desktop/interface]",
+            content,
+            "configure-live.sh must configure GNOME toolkit accessibility for "
+            "the guest-resident AT-SPI installer driver.",
+        )
+        self.assertIn(
+            "toolkit-accessibility=true",
+            content,
+            "configure-live.sh must enable GNOME toolkit accessibility.",
+        )
+        self.assertIn(
+            "--env=GTK_MODULES=atk-bridge",
+            content,
+            "The installer Flatpak launch command must load the ATK bridge so "
+            "its accessibility tree is exported to the live user's AT-SPI bus.",
+        )
+
+    def test_target_build_invalidates_live_configuration_cache(self):
+        """A target build must not reuse an outdated configure-live layer."""
+        content = BUILD_LIVE_SQUASHFS.read_text()
+        target_build = content.split("podman build", 1)[1].split(
+            '-t "${TARGET}-installer"', 1
+        )[0]
+        self.assertIn(
+            '--build-arg CACHE_BUST="$(date +%Y%m%d%H%M%S)"',
+            target_build,
+            "Target-mode live builds must pass a unique CACHE_BUST so changes "
+            "under live/src/ are included in fresh ISO test artifacts.",
+        )
+
+    def test_payload_file_injection_is_networkless(self):
+        """Offline payload edits must not require netavark or network setup.
+
+        The live-container build legitimately needs the network (it downloads
+        Flatpaks). The payload builds do not, and must never acquire that
+        dependency: they run in constrained environments where bringing up a
+        network stack is exactly what fails.
+        """
+        content = BUILD_LIVE_SQUASHFS.read_text()
+        payload_containerfiles = (
+            "Containerfile.squash",
+            "Containerfile.annot",
+            "Containerfile.inject",
+        )
+
+        # Split on `podman build` and keep each invocation's flag block, which
+        # ends at the first line that is not a backslash continuation.
+        invocations = []
+        for chunk in content.split("podman build")[1:]:
+            flags = []
+            for line in chunk.splitlines():
+                flags.append(line)
+                if not line.rstrip().endswith("\\"):
+                    break
+            invocations.append("\n".join(flags))
+
+        for containerfile in payload_containerfiles:
+            matching = [i for i in invocations if containerfile in i]
+            self.assertEqual(
+                len(matching),
+                1,
+                f"expected exactly one podman build using {containerfile}",
+            )
+            self.assertIn(
+                "--network=none",
+                matching[0],
+                f"the payload build using {containerfile} must disable "
+                "networking — payload edits are offline operations.",
+            )
+
 
 class TestPayloadPristine(unittest.TestCase):
     """The embedded payload image must ship the same content the registry serves.
@@ -1044,6 +1126,35 @@ class TestPayloadPristine(unittest.TestCase):
                     "the embed step (CONTAINERS_STORAGE_CONF), or the install "
                     "container (fisherman bind-mount) instead.",
                 )
+
+
+class TestBuildScriptArgumentValidation(unittest.TestCase):
+    """Test parameter validation and execution invariants for build-iso.sh and configure-live.sh."""
+
+    def test_build_iso_missing_arguments_fails_gracefully(self):
+        """build-iso.sh without required positional args must exit non-zero with usage message."""
+        res = subprocess.run(
+            ["bash", str(LIVE_BUILD_ISO)],
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(res.returncode, 0, "build-iso.sh with no args should fail")
+        self.assertIn("Usage:", res.stderr)
+
+    def test_build_iso_store_flag_requires_path(self):
+        """build-iso.sh --store without path must fail."""
+        res = subprocess.run(
+            ["bash", str(LIVE_BUILD_ISO), "--store"],
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(res.returncode, 0, "build-iso.sh --store without path should fail")
+
+    def test_build_live_squashfs_missing_arguments_fails(self):
+        """build-live-squashfs.sh with missing required flags/args must fail."""
+        res = subprocess.run(
+            ["bash", str(BUILD_LIVE_SQUASHFS), "--target"],
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(res.returncode, 0, "build-live-squashfs.sh --target without value should fail")
 
 
 class TestSkillCatalogUpToDate(unittest.TestCase):

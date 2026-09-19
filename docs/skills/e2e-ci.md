@@ -13,7 +13,7 @@ tags:
   - testing
 description: Architecture, QEMU disk configuration, ENOSPC prevention, and live/installed boot verification for dakota-iso.
 version: "1.0"
-last_updated: "2026-07-30"
+last_updated: "2026-09-17"
 metadata:
   type: reference
 ---
@@ -74,6 +74,24 @@ build-iso.sh → output/dakota-debug-live.iso
 present, so CI uses the debug ISO and R2 gets the production ISO.
 
 **Never enable sshd in the production squashfs.** The debug ISO is test-only.
+
+## Shared QEMU lifecycle
+
+`scripts/qemu-lifecycle.sh` owns the reusable live-install QEMU lifecycle:
+
+1. `boot-live` prefers `<target>-debug-live.iso`, attaches the target and
+   scratch disks, and starts the UEFI VM.
+2. `wait-live` requires a serial readiness marker or stable debug SSH.
+3. After an installer driver finishes, `patch-bls-console` adds serial console
+   arguments (and LUKS unlock arguments when requested), then `shutdown`
+   powers down and quits the live VM.
+4. `boot-installed` starts a fresh UEFI VM from only the installed disk and
+   `verify-installed` waits for the graphical target.
+
+Both plain and LUKS recipes call this helper. The scheduled GUI installer
+acceptance workflow reuses these commands through `just gui-e2e dakota`, which
+supplies only the AT-SPI interaction between `wait-live` and
+`patch-bls-console`; it must not duplicate QEMU, OVMF, disk, or monitor setup.
 
 ---
 
@@ -220,8 +238,10 @@ in step 7 of the fisherman pipeline, crashing every real install.
 now falls back to `filepath.Glob(sysroot/ostree/deploy/*/deploy/*)` when
 `--print-current-dir` fails. Three regression tests lock this down.
 
-**If you see this error on v2.7.4+:** It is a different failure — investigate
-whether the target disk structure is correct after `bootc install to-filesystem`.
+**If you see this error today:** it is a different failure — investigate whether the
+target disk structure is correct after `bootc install to-filesystem`. The `v2.7.x`
+numbering above is historical: `tuna-os/bootc-installer` now ships date-tagged
+releases (`v<date>-<sha>`), so there is no semver to compare against.
 
 **`scripts/fisherman-install.sh` status:** Still present as a safety net but
 no longer load-bearing. Do not add new workaround logic to it — fix the root
@@ -327,6 +347,100 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 - Declaring an install verified without booting the installed disk
 - Using `installer_channel=dev` in CI or production builds (active fisherman regression)
 - SSH connecting to a production ISO that has sshd disabled (build with `debug=1` for testing)
+
+### Drive the auto-launched installer through AT-SPI (2026-08-01)
+
+`scripts/atspi-installer-driver.py` is a guest-resident driver for the real
+auto-launched `org.bootcinstaller.Installer` Flatpak. Copy it into a fresh
+**debug** ISO guest and run it as `liveuser` against that user's existing
+session bus; for example:
+
+```bash
+XDG_RUNTIME_DIR=/run/user/1000 \
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \
+python3 atspi-installer-driver.py --disk /dev/vda
+```
+
+The live dconf policy must set
+`org.gnome.desktop.interface toolkit-accessibility=true`, and the installer
+desktop entry must invoke Flatpak with `--env=GTK_MODULES=atk-bridge`. Together
+these export the auto-launched Flatpak's accessibility tree on the live user's
+AT-SPI bus. The static invariant test guards both settings; without them the
+driver times out before it can discover the installer.
+
+The acceptance wrapper **must never launch the Flatpak** (`flatpak run`,
+`gtk-launch`, or an equivalent is a test failure). It copies and runs only the
+driver as `liveuser`; the driver must first discover the existing application
+on that user's AT-SPI session bus. This proves the desktop's normal
+auto-launch path exercised the Flatpak, rather than an E2E-only launch path.
+
+The driver selects the requested whole-disk UI row only through a checkable
+descendant of that row—never a nearby/sibling control—and verifies that the
+final destructive confirmation names the same disk. It accepts both erase
+confirmations, advances only visible pages, and treats the Flatpak's visible
+`Installation failed` page as a hard failure. Success requires the visible
+`<image> is installed` / restart page, followed by the existing fresh-QEMU
+installed-system boot verification. Do not set `BOOTC_TEST`, invoke
+fisherman, replace the recipe, or add test-only IPC: each bypasses the
+live-ISO user path.
+
+On a startup/install timeout or installer-reported failure, preserve the
+driver's stderr beside the serial logs and screenshot. It includes a complete
+accessible tree plus the last 200 lines from the first available installer or
+fisherman log. A GUI acceptance result is valid only when its log includes,
+in order:
+
+1. `detected auto-launched bootc-installer`
+2. `selected target disk /dev/vda`
+3. both destructive-confirmation actions
+4. `installer reported successful completion`
+
+The driver unit tests lock down whole-device matching (not `/dev/vda1`),
+row-contained selector choice, confirmation/success/failure recognition,
+auto-launch waiting, and timeout diagnostics. Update those tests whenever the
+Flatpak changes user-visible accessibility labels.
+
+`scheduled-gui-installer.yml` is deliberately schedule/manual-only and runs
+exactly the `dakota × {dev, stable}` matrix. It uses read-only token
+permissions and always uploads serial logs, screenshots, the AT-SPI driver
+output, and guest installer logs. On a successful driver run, `gui-e2e` saves
+the guest logs to `<output_dir>/<target>-gui-installer-logs.txt` before it
+shuts down the live VM; the workflow's always-run diagnostics step collects
+them on a failed run. Do not add PR comments or repository writes to this
+diagnostic workflow.
+
+### Never pin the installer stack to a projectbluefin fork (2026-09-17)
+
+**What failed:** both E2E gates cloned
+`projectbluefin/fisherman@fix/overlay-driver-for-ostree-bootc-install` (June 2026) and
+`live/src/install-flatpaks.sh` fetched the installer bundle from
+`projectbluefin/bootc-installer` with a `tuna-os/tuna-installer` fallback. All three
+repos are now archived. The fork's branch sat 11 commits ahead / 35 behind its own
+`main`, so the gate tested an installer that no ISO has ever shipped.
+
+**Worse, the fallback hid it.** The dev-channel URL used tag `latest-dev`, which
+projectbluefin deleted on 2026-08-01. GitHub's immutable-release ruleset then
+permanently banned re-creating that tag, so the URL 404s forever. `curl` failed,
+the fallback branch silently installed a `tuna-os/tuna-installer` build from
+2026-05-14, and the build stayed green while shipping a four-month-old installer
+under Dakota branding.
+
+**The rule:**
+- `tuna-os/bootc-installer` and `tuna-os/fisherman` are the only live upstreams.
+- No fallback repo. `curl --fail` with no `||` branch — an HTTP error must break the build.
+- No rolling tags for either channel. Upstream attaches both
+  `org.bootcinstaller.Installer.flatpak` and `org.bootcinstaller.Installer.Devel.flatpak`
+  to every auto-cut `v<date>-<sha>` release, so `/releases/latest/download/` serves both.
+- E2E clones `tuna-os/fisherman` branch `dev` — its default and active line, and the
+  submodule `tuna-os/bootc-installer` itself pins. The clone step logs the resolved
+  commit so a failing run records exactly what it built.
+
+**How to check a pin is still alive:**
+```bash
+gh api repos/<owner>/<repo> --jq '.archived, .default_branch'
+gh release view --repo tuna-os/bootc-installer --json tagName,assets
+```
+An `archived=true` on anything in the install path is a hard stop.
 
 ## Verification
 

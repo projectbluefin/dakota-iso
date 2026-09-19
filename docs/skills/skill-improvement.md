@@ -10,9 +10,9 @@ tags:
   - documentation
   - continuous-learning
   - process
-description: The skill-improvement mandate requiring every agent session to contribute learnings back into docs.
+description: Use when a task reveals a durable lesson that should improve future agent work.
 version: "1.0"
-last_updated: "2026-07-30"
+last_updated: "2026-08-01"
 metadata:
   type: procedure
 ---
@@ -26,6 +26,17 @@ Every agent session produces two outputs:
 
 Output 1 without Output 2 leaves the factory no smarter. **The loop only compounds if agents write back.**
 
+## When to Use
+
+Use this procedure after discovering a durable workaround, convention, or
+source-backed fact. Do not use it for a task-specific note, live status, or
+backlog item.
+
+## When Not to Use
+
+Do not add a skill update solely to record a completed task, a temporary
+incident, or an unresolved backlog item.
+
 ## Contents
 - [Before You Mark Work Complete](#before-you-mark-work-complete)
 - [What Counts as a Learning Worth Writing Back](#what-counts-as-a-learning-worth-writing-back)
@@ -36,7 +47,7 @@ Output 1 without Output 2 leaves the factory no smarter. **The loop only compoun
 
 ---
 
-## Before You Mark Work Complete
+## Core Process: Before You Mark Work Complete
 
 Run this checklist before opening a PR for review or marking an issue done:
 
@@ -91,7 +102,6 @@ If all five are checked, you're done. If any are unchecked, finish them first.
 | Issue lifecycle, labels, PR policy | `docs/skills/label-workflow.md` |
 | Human gates, evidence requirements | `docs/skills/human-gates.md` |
 | Onboarding, dev environment | `docs/skills/onboarding.md` |
-| Skill-drift CI check behavior | `docs/skills/skill-drift.md` |
 | New process or procedure (no existing file) | Create `docs/skills/<area>.md` |
 
 If a pattern affects 2+ projectbluefin repos, write it locally first, then open a propagation issue in `projectbluefin/common`.
@@ -132,5 +142,23 @@ git commit -m "docs(build): add lesson on buildah squash entrypoint bug"
 
 ## See Also
 
-- [`docs/skills/skill-drift.md`](./skill-drift.md) — how the CI enforcement works (warns on PRs that change code without updating docs)
 - [Org-level skill-improvement mandate](https://github.com/projectbluefin/common/blob/main/docs/skills/skill-improvement.md) — cross-repo version of this document
+
+## Red Flags
+
+- Recording one-off task state as a timeless procedure
+- Duplicating or contradicting an existing skill instead of correcting it
+- Ending a task with a durable learning known only to the current session
+
+## Common Rationalizations
+
+| Rationalization | Reality |
+|---|---|
+| "This is too obvious to document." | A fact discovered during work may be non-obvious to the next agent. |
+| "I can add it in a follow-up." | The learning is most useful while the source and rationale are current. |
+
+## Verification
+
+- [ ] The learning is durable, source-backed, and routed to the relevant skill.
+- [ ] The update tells a fresh agent what to do, not what happened in one task.
+- [ ] The generated skill catalog is current after frontmatter changes.

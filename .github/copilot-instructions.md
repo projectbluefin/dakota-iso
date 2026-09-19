@@ -67,5 +67,7 @@ See [`docs/skills/skill-improvement.md`](../docs/skills/skill-improvement.md).
 
 Use the shared [label workflow](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md):
 humans triage and approve, agents claim `status/queued`, and Clankers only
-transports Hive assignments. Templates are synchronized from bonedigger.
+transports Hive assignments. Verify that the shared labels are present in this
+repository before attempting to use them; do not substitute legacy label names.
+Templates are synchronized from bonedigger.
 Never write to `ublue-os/*`.

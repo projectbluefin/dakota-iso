@@ -23,7 +23,6 @@ The docs are the source of truth for build quirks, disk space requirements, and 
 git clone https://github.com/projectbluefin/dakota-iso
 cd dakota-iso
 just iso-sd-boot dakota         # full ISO build
-just iso-sd-boot dakota-nvidia  # nvidia variant
 just boot-iso-serial dakota     # boot + smoke test in QEMU
 ```
 
@@ -31,7 +30,8 @@ just boot-iso-serial dakota     # boot + smoke test in QEMU
 
 All PRs target `main`. PRs require:
 - A description of what changed and why
-- Evidence that the ISO built and booted (or explicit statement it's a docs/ci-only change)
+- For installer or ISO changes, evidence that a full install completed and the
+  installed system booted (or an explicit statement that the change is docs/CI-only)
 - Both AI attribution trailers if AI-assisted (see `AGENTS.md`)
 
 ```bash
@@ -50,7 +50,7 @@ Full ISO builds and LUKS E2E tests run on push to `main` and weekly. See [`docs/
 
 - [`projectbluefin/dakota`](https://github.com/projectbluefin/dakota) — source images this repo packages into ISOs
 - [`projectbluefin/common`](https://github.com/projectbluefin/common) — shared OCI layer, org-level factory docs
-- [`tuna-os/bootc-installer`](https://github.com/tuna-os/bootc-installer) — the Flatpak installer bundled in the live ISO
+- [`tuna-os/bootc-installer`](https://github.com/tuna-os/bootc-installer) — the Flatpak installer bundled in the live ISO, plus its `fisherman` backend
 
 Useful validation steps:
 ```bash
@@ -58,9 +58,11 @@ just container dakota
 just boot-iso-serial dakota
 ```
 `just boot-iso-serial <target>` is the quickest local smoke test for a bootable ISO.
+It does not prove that an install works; use `just debug=1 plain-e2e <target>`
+for installer or ISO behavior changes.
 
 ## Repo notes
-- Key scripts: `dakota/src/build-iso.sh` and `dakota/src/configure-live.sh`
+- Key scripts: `live/src/build-iso.sh` and `live/src/configure-live.sh`
 - The `justfile` is the canonical interface for local work
 - Prefer small, surgical changes: this repo feeds the Dakota installer media
 

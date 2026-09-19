@@ -6,9 +6,10 @@ name: LUKS Install End-to-End Test
 #   just debug=1 installer_channel=dev iso-sd-boot dakota
 #   just luks-test-qemu dakota
 #
-# Runs two parallel legs:
-#   dev    — continuous-dev Flatpak (catches regressions before stable)
-#   stable — continuous Flatpak    (verifies what users actually download)
+# Runs two parallel legs, both fetched from the same tuna-os/bootc-installer
+# release via /releases/latest/download/:
+#   dev    — org.bootcinstaller.Installer.Devel.flatpak
+#   stable — org.bootcinstaller.Installer.flatpak (what users actually download)
 #
 # Reproduces: projectbluefin/dakota#270
 
@@ -59,7 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [dakota, stable, lts]
+        variant: [dakota, bluefin, bluefin-lts-hwe]
         installer_channel: [dev, stable]
 
     steps:
@@ -93,7 +94,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y \
-            just podman buildah skopeo mtools xorriso squashfs-tools \
+            just podman skopeo mtools xorriso squashfs-tools \
             qemu-system-x86 ovmf socat sshpass \
             imagemagick -qq
 
@@ -156,8 +157,8 @@ jobs:
         run: |
           START=$(date +%s)
           # Run as the unprivileged runner user (not sudo): the bootcDirect path
-          # builds the patched fisherman with `go build`, which needs Go on PATH
-          # and runs VCS stamping against the user-owned /tmp/fisherman clone — both
+          # builds fisherman with `go build`, which needs Go on PATH and runs VCS
+          # stamping against the user-owned /tmp/fisherman clone — both
           # break under sudo. QEMU/KVM access uses an internal sudo fallback in the
           # recipe, and all guest-side install steps run via ssh with guest sudo.
           just luks-test-qemu ${{ matrix.variant }} ${{ matrix.installer_channel }}

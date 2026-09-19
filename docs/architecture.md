@@ -129,11 +129,12 @@ Requirements:
 - `fisherman` scratch dir: on live ISOs `/var` is a small RAM overlay. fisherman detects
   tmpfs `/var` and uses a self-bind-mounted scratch dir on the target disk.
 
-## Installer: tuna-installer / bootc-installer
+## Installer: bootc-installer
 
 - **Flatpak:** `org.bootcinstaller.Installer` (stable) / `org.bootcinstaller.Installer.Devel` (dev)
-- **Source:** `tuna-os/bootc-installer` (sole upstream; `projectbluefin/bootc-installer` and
-  `projectbluefin/fisherman` are retired — no fallback repo)
+- **Source:** `tuna-os/bootc-installer` — sole upstream, no fallback.
+  `projectbluefin/bootc-installer`, `projectbluefin/fisherman` and `tuna-os/tuna-installer`
+  are all archived and MUST NOT be referenced by build scripts.
 - **Backend binary:** `fisherman` → symlinked to `/usr/local/bin/fisherman` by `configure-live.sh`
 - **Config:** `/etc/bootc-installer/images.json` (catalog) + `recipe.json` (branding)
 - **Flatpak sandbox:** Inside the Flatpak, `/etc` is reserved. Host `/etc` is at `/run/host/etc`.

@@ -3,13 +3,30 @@
 Design document for building a single ISO that boots on both x86_64 and aarch64
 hardware. Implements issue #36 (closed).
 
-## Current state
+## Current state (verified 2026-09-17)
+
+**No aarch64 ISO is built by this repo, in CI or locally.**
 
 - **x86_64**: production ISOs built by `build-iso.yml`, boots via OVMF/systemd-boot
-- **aarch64**: separate repo ([tuna-os/dakota-x13s](https://github.com/tuna-os/dakota-x13s)),
-  targets Lenovo ThinkPad X13s (Qualcomm SC8280XP)
-- `build-iso.sh` already detects `BOOTAA64.EFI` vs `BOOTX64.EFI` (lines 57-72)
-  and includes both serial consoles in the kernel cmdline (`ttyS0` + `ttyAMA0`)
+- **aarch64**: nothing. `justfile` and `.github/workflows/` contain zero `aarch64`
+  references, and all three `payload_ref` files resolve to `amd64/linux` single-image
+  manifests (no manifest list):
+  `dakota-nvidia:stable`, `bluefin-nvidia:stable`, `bluefin-lts-hwe-nvidia:stable`
+- `live/src/build-iso.sh` already detects `BOOTAA64.EFI` vs `BOOTX64.EFI` and includes
+  both serial consoles in the kernel cmdline (`ttyS0` + `ttyAMA0`)
+- The Phase 1 `--arch` plumbing below is **unreferenced code**: its only callers are
+  this document and `tests/test_multi_arch_iso.py`. No workflow or `just` recipe
+  passes `--arch`.
+- The former aarch64 source, [tuna-os/dakota-x13s](https://github.com/tuna-os/dakota-x13s)
+  (Lenovo ThinkPad X13s / Qualcomm SC8280XP), is **archived** — last push 2026-04-19.
+- `live/Containerfile` **cannot** produce an aarch64 live environment: the final stage
+  hardcodes Debian x86_64 library paths (`COPY --from=initramfs-builder
+  /usr/lib/x86_64-linux-gnu/libinih.so.1 …`, lines 135-139) and no stage carries a
+  `--platform`. Every workflow job is `ubuntu-24.04`/`ubuntu-latest` — no aarch64 lane.
+
+Tracked as [#200](https://github.com/projectbluefin/dakota-iso/issues/200). Treat the
+`--arch` mode and this document as a design record, not a shipped capability, until a
+producer exists.
 
 ## Why a single-arch ISO is the correct default
 
@@ -103,7 +120,7 @@ Simplest, no dracut changes, already supported upstream.
 
 ### Phase 1: `build-iso.sh` multi-arch support ✅ Complete
 
-`build-iso.sh` (both `live/src/` and `dakota/src/`) accepts multiple boot-files tars
+`live/src/build-iso.sh` accepts multiple boot-files tars
 and squashfs images via `--arch` flags:
 
 ```bash
@@ -162,9 +179,10 @@ aarch64 QEMU.
 | Blocker | Status | Notes |
 |---|---|---|
 | `rd.live.squashimg` support in dmsquash-live | ✅ Supported | Verified in dracut source |
-| `build-iso.sh` multi-arch `--arch` flag | ✅ Implemented | Phase 1 complete |
-| aarch64 Dakota images published to GHCR | ⏳ Blocked | `tuna-os/dakota-x13s` builds exist but may not be on GHCR |
+| `build-iso.sh` multi-arch `--arch` flag | ✅ Implemented | Phase 1 complete, but unreferenced — tests are its only caller |
 | Fat ESP with both EFI binaries | ✅ Ready | Standard UEFI pattern, no firmware changes needed |
+| aarch64 installer Flatpak | ✅ Available | `tuna-os/bootc-installer` ships `org.bootcinstaller.Installer-aarch64.flatpak` on every versioned release; `install-flatpaks.sh` does not select it |
+| **aarch64 payload image** | ⛔ **Hard blocker** | Every `payload_ref` is `amd64/linux`, single manifest. `tuna-os/dakota-x13s` is archived. Nothing publishes an arm64 bootc image to build from |
 | Justfile `multi-arch-iso` recipe | ⏳ Not started | Phase 2 |
 | CI aarch64 QEMU boot test | ⏳ Not started | Phase 3; TCG emulation works on ubuntu-24.04 runners |
 
