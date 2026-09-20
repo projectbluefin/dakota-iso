@@ -706,7 +706,7 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
     def test_readme_download_table_has_last_three_builds_links(self):
         """README top download table must expose latest + last 3 dakota backups."""
         content = README.read_text()
-        top_table_section = content.split("\nBuilds bootable UEFI live ISOs", 1)[0]
+        top_table_section = content.split("\n## Variants", 1)[0]
         self.assertIn(
             "| Variant | Download | Checksum | Size | Published (UTC) | Validation | Last 3 builds |",
             top_table_section,
@@ -732,7 +732,7 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
     def test_readme_bluefin_rows_link_last_three_builds(self):
         """README bluefin/bluefin-lts-hwe rows must link backup slots 1..3."""
         content = README.read_text()
-        top_table_section = content.split("\nBuilds bootable UEFI live ISOs", 1)[0]
+        top_table_section = content.split("\n## Variants", 1)[0]
 
         for prefix, iso_base in (
             ("`bluefin`", "bluefin-live"),

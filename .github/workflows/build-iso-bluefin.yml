@@ -4,9 +4,12 @@ concurrency:
   group: publish-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Dormant: this repo ships the Dakota ISO only. The bluefin and
+# bluefin-lts-hwe ISO builds are kept intact but no longer run on a schedule.
+# Revive by restoring the `schedule` trigger below.
 on:
-  schedule:
-    - cron: '0 5 * * *'   # daily, 05:00 UTC (after dakota at 03:00)
+  # schedule:
+  #   - cron: '0 5 * * *'   # daily, 05:00 UTC (after dakota at 03:00)
   workflow_dispatch:
     inputs:
       variant:

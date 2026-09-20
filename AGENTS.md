@@ -10,6 +10,12 @@ embedded OCI store lets the installer deploy to non-NVIDIA hardware without a ne
 
 Home repo: [projectbluefin/dakota-iso](https://github.com/projectbluefin/dakota-iso)
 
+**Scope: dakota only.** Since 2026-09-18 `bluefin` and `bluefin-lts-hwe` are dormant —
+removed from the PR/schedule matrices in `test-luks-install.yml` and `test-plain-install.yml`,
+and `build-iso-bluefin.yml` is disabled at the Actions level. Their code, docs and size
+invariants below are retained for revival, not for current CI. **Do not re-add those variants
+to any workflow matrix.** Revival steps: [`docs/variants.md`](docs/variants.md).
+
 ## The System You Are Part Of
 
 ```
