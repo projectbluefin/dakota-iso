@@ -2,13 +2,45 @@
 
 How the Dakota ISO build target works.
 
+## Scope: dakota only
+
+This repo ships the Dakota ISO. As of 2026-09-18 the `bluefin` and `bluefin-lts-hwe`
+variants no longer run at all. Nothing was deleted — the build targets, scripts,
+workflow files and variant config are intact.
+
+| Surface | State |
+|---|---|
+| `test-luks-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
+| `test-plain-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
+| `build-iso-bluefin.yml` | **disabled at the Actions level** (`disabled_manually`) *and* `schedule` commented out in-file |
+| `build-iso.yml` (dakota) | active |
+| Required checks on `main` | `LUKS E2E dakota (dev)`, `LUKS E2E dakota (stable)`, `ShellCheck` |
+
+The bluefin ISO build is disabled twice on purpose. The Actions-level disable stops it
+now; the commented-out `schedule` records the intent in version control, so re-enabling
+the workflow in the UI does not silently resume a nightly R2 publish.
+
+### Reviving a variant
+
+1. Uncomment the variant in the `test-luks-install.yml` / `test-plain-install.yml` matrix.
+2. For the bluefin ISO build, restore the `schedule:` block and re-enable the workflow:
+   ```bash
+   gh api -X PUT repos/projectbluefin/dakota-iso/actions/workflows/build-iso-bluefin.yml/enable
+   ```
+3. Add the corresponding `LUKS E2E <variant> (<channel>)` contexts to the
+   `main — review policy` ruleset.
+
+The `stable` and `lts` legs were red at the time of the change — `sshpass` got
+`Permission denied, please try again.` against the live VM (issues #155, #161,
+#163). Reviving them means fixing that first.
+
 ## Current build
 
-| Variant | Live env image | Payload (offline store) | Bootloader | Composefs | Filesystem |
-|---|---|---|---|---|---|
-| `dakota` | `projectbluefin/dakota-nvidia:stable` | same | systemd-boot | yes | btrfs |
-| `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs |
-| `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs |
+| Variant | Live env image | Payload (offline store) | Bootloader | Composefs | Filesystem | State |
+|---|---|---|---|---|---|---|
+| `dakota` | `projectbluefin/dakota-nvidia:stable` | same | systemd-boot | yes | btrfs | active |
+| `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs | dormant |
+| `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs | dormant |
 
 **All variants default to btrfs. XFS is available as a user-selectable option in the installer UI only.**
 
