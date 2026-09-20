@@ -6,21 +6,25 @@
 |---------|----------|----------|------|-----------------|------------|---------------|
 | `dakota` | [⬇ `dakota-live-latest.iso`](https://projectbluefin.dev/dakota-live-latest.iso) | [checksum `a163b05e…`](https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM) | 3.95 GiB | 2026-08-01 16:57 | [run #233](https://github.com/projectbluefin/dakota-iso/actions/runs/30706713158) | [b1](https://projectbluefin.dev/dakota-live-backup-1.iso) · [b2](https://projectbluefin.dev/dakota-live-backup-2.iso) · [b3](https://projectbluefin.dev/dakota-live-backup-3.iso) |
 
-Builds bootable UEFI live ISOs from [Dakota](https://github.com/projectbluefin/dakota) and [Bluefin](https://github.com/projectbluefin/bluefin) images.
+Builds the bootable UEFI live ISO from [Dakota](https://github.com/projectbluefin/dakota) images.
 
 The ISO boots the **NVIDIA** variant live and embeds the OCI image in an offline store
 inside the squashfs so the target OS can be installed on any hardware without a network pull.
 
 ## Variants
 
-| Variant | Base image | Bootloader | Composefs | Description |
-|---------|-----------|------------|-----------|-------------|
-| `dakota` | `ghcr.io/projectbluefin/dakota-nvidia:stable` | systemd-boot | yes | GNOME OS-based prototype with composefs |
-| `bluefin` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | grub2 | no | Bluefin stable release (Fedora Silverblue) |
-| `bluefin-lts-hwe` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | grub2 | no | Bluefin long-term support with HWE kernel |
+| Variant | Base image | Bootloader | Composefs | State |
+|---------|-----------|------------|-----------|-------|
+| `dakota` | `ghcr.io/projectbluefin/dakota-nvidia:stable` | systemd-boot | yes | **active** — built, tested and published |
+| `bluefin` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | grub2 | no | dormant — workflow disabled |
+| `bluefin-lts-hwe` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | grub2 | no | dormant — workflow disabled |
 
-All ISOs embed the NVIDIA variant as the offline store. Non-NVIDIA hardware auto-rebases
-on the first `bootc upgrade` after installation.
+This repo ships the Dakota ISO. Since 2026-09-18 the Bluefin and Bluefin LTS HWE
+variants are no longer built on a schedule or exercised by PR checks. Their code is
+intact — see [`docs/variants.md`](docs/variants.md) for the revival steps.
+
+All ISOs embed the NVIDIA variant as the offline store. Non-NVIDIA hardware
+auto-rebases on the first `bootc upgrade` after installation.
 
 ## How it works
 

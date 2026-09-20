@@ -13,7 +13,7 @@ name: LUKS Install End-to-End Test
 # Reproduces: projectbluefin/dakota#270
 
 on:
-  pull_request:
+  push:
     branches:
       - main
   workflow_dispatch:
@@ -59,7 +59,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [dakota, stable, lts]
+        # dakota-only: this repo ships the Dakota ISO. The `stable` and `lts`
+        # legs are dormant, not deleted — re-add them to this list to revive.
+        # variant: [dakota, stable, lts]
+        variant: [dakota]
         installer_channel: [dev, stable]
 
     steps:
