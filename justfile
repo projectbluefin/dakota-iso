@@ -956,6 +956,13 @@ luks-unlock-qemu target:
 test:
     pytest tests/ -v
 
+# Pre-commit gate. Run before every commit.
+# Wraps the two checks CI enforces: the pytest suite (test.yml) and the
+# pre-commit hooks (yaml/json validation, actionlint, action-pin policy).
+check:
+    pytest tests/ -v
+    pre-commit run --all-files
+
 # ────────────────────────────────────────────────────────────────────────────
 # Plain (unencrypted) composefs install E2E test
 # ────────────────────────────────────────────────────────────────────────────
