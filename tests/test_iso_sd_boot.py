@@ -90,9 +90,19 @@ class IsoSdBootHarness(unittest.TestCase):
                           live_target="bluefin-lts\n", live_title="Bluefin LTS Live\n",
                           composefs="false\n")
 
-        # Stub delegate live/src/build-iso.sh
+        # Stub delegate live/src/build-iso.sh.
+        # Log one argument per line (plus the argument count) instead of "$*": joining
+        # argv with spaces erases argument boundaries, so a quoting regression that
+        # splits --title "Dakota Live" into two words would be indistinguishable.
         self.delegate_script = self.sandbox / "live" / "src" / "build-iso.sh"
-        self.delegate_script.write_text("#!/usr/bin/bash\necho \"delegate-build-iso $*\" >> \"$STUB_CALLS\"\nexit 0\n")
+        self.delegate_script.write_text(
+            "#!/usr/bin/bash\n"
+            "{\n"
+            '  echo "delegate-build-iso argc=$#"\n'
+            '  for _arg in "$@"; do printf \'delegate-build-iso-arg %s\\n\' "$_arg"; done\n'
+            '} >> "$STUB_CALLS"\n'
+            "exit 0\n"
+        )
         self.delegate_script.chmod(0o755)
 
     def _rewrite_path_line(self, content, original, replacement):
@@ -231,6 +241,42 @@ class IsoSdBootHarness(unittest.TestCase):
         text = self.calls_log.read_text().strip()
         return [line for line in text.split("\n") if line]
 
+    ARG_PREFIX = "delegate-build-iso-arg "
+
+    def delegate_invocations(self):
+        """Return one argv list per recorded live/src/build-iso.sh invocation.
+
+        The stub records each argument on its own line, so argument boundaries are
+        preserved and both the ordering of the positional boot-tar/squashfs/ISO
+        operands and the quoting of --title are observable.
+        """
+        invocations = []
+        expected_counts = []
+        for line in self.recorded_calls():
+            if line.startswith("delegate-build-iso argc="):
+                invocations.append([])
+                expected_counts.append(int(line.split("=", 1)[1]))
+            elif line.startswith(self.ARG_PREFIX):
+                self.assertTrue(invocations, "delegate argument logged without an invocation header")
+                invocations[-1].append(line[len(self.ARG_PREFIX):])
+        for argv, count in zip(invocations, expected_counts):
+            self.assertEqual(
+                len(argv), count,
+                f"delegate argv {argv!r} does not match logged argument count {count}; "
+                "an argument was empty or contained a newline",
+            )
+        return invocations
+
+    def expected_delegate_argv(self, target, title, out_dir):
+        """Expected argv for the live/src/build-iso.sh delegation (see script tail)."""
+        out = Path(os.path.realpath(out_dir))
+        return [
+            "--title", title,
+            str(out / f"{target}-boot-files.tar"),
+            str(out / f"{target}-rootfs.sfs"),
+            str(out / f"{target}-live.iso"),
+        ]
+
 
 class TestIsoSdBootArgumentsAndDefaults(IsoSdBootHarness):
     """Verify argument enforcement, default values, and target validation."""
@@ -296,12 +342,15 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
         annot_configs = [c for c in buildah_calls if "config --annotation ostree.final-diffid" in c]
         self.assertTrue(len(annot_configs) >= 1, "ostree.final-diffid annotation was not set")
 
-        # Delegate build-iso called with title, boot-files tar, rootfs.sfs, output iso
-        delegate_calls = [c for c in calls if c.startswith("delegate-build-iso ")]
-        self.assertEqual(len(delegate_calls), 1)
-        expected_iso = str(out_dir / "dakota-live.iso")
-        self.assertIn("--title Dakota Live", delegate_calls[0])
-        self.assertIn(expected_iso, delegate_calls[0])
+        # Delegate build-iso receives --title as ONE argument, then the boot-files tar,
+        # the rootfs squashfs and the output ISO path, in that order. Asserting the full
+        # argv catches both a quoting regression and a BOOT_TAR/SQUASHFS positional swap.
+        invocations = self.delegate_invocations()
+        self.assertEqual(len(invocations), 1)
+        self.assertEqual(
+            invocations[0],
+            self.expected_delegate_argv("dakota", "Dakota Live", out_dir),
+        )
 
     def test_composefs_false_mode(self):
         """Non-composefs mode (lts) commits without squash to preserve ostree commits."""
@@ -321,12 +370,13 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
         plain_commits = [c for c in buildah_calls if "commit " in c and "--squash" not in c]
         self.assertTrue(len(plain_commits) >= 1, "plain buildah commit was not called")
 
-        # Delegate build-iso called with LTS title
-        delegate_calls = [c for c in calls if c.startswith("delegate-build-iso ")]
-        self.assertEqual(len(delegate_calls), 1)
-        expected_iso = str(out_dir / "lts-live.iso")
-        self.assertIn("--title Bluefin LTS Live", delegate_calls[0])
-        self.assertIn(expected_iso, delegate_calls[0])
+        # Delegate build-iso receives the LTS title plus boot tar, squashfs, ISO in order
+        invocations = self.delegate_invocations()
+        self.assertEqual(len(invocations), 1)
+        self.assertEqual(
+            invocations[0],
+            self.expected_delegate_argv("lts", "Bluefin LTS Live", out_dir),
+        )
 
     def test_compression_fast_vs_release(self):
         """COMPRESSION=fast uses level 3 and 128K block; release uses level 15 and 1M block."""
