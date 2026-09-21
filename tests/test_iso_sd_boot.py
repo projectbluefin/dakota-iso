@@ -67,11 +67,13 @@ class IsoSdBootHarness(unittest.TestCase):
         # In iso-sd-boot.sh, two lines prepend hardcoded /usr/sbin:/usr/bin to PATH,
         # which would shadow stubbed podman/buildah binaries in an unprivileged test sandbox.
         # Preserve the stub PATH in front:
-        script_content = script_content.replace(
+        script_content = self._rewrite_path_line(
+            script_content,
             "PATH=/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:$PATH",
             'PATH="${PATH}:/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin"',
         )
-        script_content = script_content.replace(
+        script_content = self._rewrite_path_line(
+            script_content,
             'PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"',
             'PATH="${PATH}:/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin"',
         )
@@ -92,6 +94,20 @@ class IsoSdBootHarness(unittest.TestCase):
         self.delegate_script = self.sandbox / "live" / "src" / "build-iso.sh"
         self.delegate_script.write_text("#!/usr/bin/bash\necho \"delegate-build-iso $*\" >> \"$STUB_CALLS\"\nexit 0\n")
         self.delegate_script.chmod(0o755)
+
+    def _rewrite_path_line(self, content, original, replacement):
+        """Replace a PATH-prepend line, failing loudly if the source line moved or changed.
+
+        Without this assertion a reworded line in scripts/iso-sd-boot.sh would silently
+        no-op the rewrite, letting the real mount/umount/mksquashfs/rsync shadow the stubs.
+        """
+        self.assertIn(
+            original,
+            content,
+            f"scripts/iso-sd-boot.sh no longer contains the expected PATH line: {original!r}. "
+            "Update this test's PATH rewrite, otherwise the stubs are shadowed by real binaries.",
+        )
+        return content.replace(original, replacement)
 
     def setup_target(self, name, payload_ref, live_target, live_title, composefs):
         target_dir = self.sandbox / name
@@ -184,10 +200,17 @@ class IsoSdBootHarness(unittest.TestCase):
             exit 0
         """)
 
+    # Variables the script reads from the environment. Cleared before every run so an
+    # ambient caller environment (e.g. DEBUG=1 INSTALLER_CHANNEL=dev) cannot leak into
+    # the script under test and change the behaviour being asserted.
+    SCRIPT_ENV_VARS = ("TARGET", "OUTPUT_DIR", "WORKDIR", "DEBUG", "INSTALLER_CHANNEL", "COMPRESSION")
+
     def run_script(self, env_vars=None):
         self._install_stubs()
 
         env = dict(os.environ)
+        for name in self.SCRIPT_ENV_VARS:
+            env.pop(name, None)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["STUB_CALLS"] = str(self.calls_log)
 
