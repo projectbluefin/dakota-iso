@@ -167,6 +167,7 @@ Unit tests live in `tests/` and run via `pytest tests/ -v` (gated on every PR by
 |---|---|---|
 | `tests/test_luks_unlock.py` | 52 | `luks-unlock.py`: virsh/QEMU screenshot, serial parsing, passphrase injection |
 | `tests/test_multi_arch_iso.py` | 4 | `build-iso.sh`: `--arch` flag arg parsing; single-arch + multi-arch ISO integration (skipped if tools absent) |
+| `tests/test_iso_sd_boot.py` | 8 | `iso-sd-boot.sh`: arg/env option plumbing into `just` container invocation, composefs true/false modes, OCI payload embed path + storage driver, compression tiers |
 
 Run locally:
 ```bash
