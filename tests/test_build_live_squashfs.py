@@ -117,6 +117,20 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
             exit 0
         """)
 
+        # rsync is used in the non-composefs path to copy the overlay store while
+        # skipping whiteout device nodes. Stub it so the suite stays hermetic on
+        # hosts without rsync installed.
+        self._stub("rsync", """
+            echo "rsync $*" >> "$STUB_CALLS"
+            src="${@: -2:1}"
+            dst="${@: -1:1}"
+            mkdir -p "$dst"
+            if [ -d "$src" ]; then
+                cp -a "$src." "$dst" 2>/dev/null || true
+            fi
+            exit 0
+        """)
+
         self._stub("findmnt", """
             echo "unknown"
             exit 0
