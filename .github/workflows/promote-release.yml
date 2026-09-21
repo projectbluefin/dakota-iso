@@ -1,0 +1,151 @@
+---
+name: Promote Named Release
+
+# Creates a named R2 release (e.g. dakota-live-alpha6.iso) by server-side copying
+# the current *-live-latest.iso objects. The `latest` pointer is only ever written
+# by the publish workflows after their E2E gates pass, so promoting from it inherits
+# that verification. See docs/r2-promotion.md.
+#
+# Server-side R2->R2 copies are used deliberately: direct uploads of multi-GB ISOs
+# from outside the R2 network hang indefinitely (docs/r2-promotion.md, 2026-05).
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: Which live ISO family to promote
+        required: true
+        type: choice
+        default: dakota
+        options:
+          - dakota
+          - bluefin
+          - bluefin-lts-hwe
+      release_name:
+        description: Named release suffix, e.g. alpha6
+        required: true
+        type: string
+      overwrite:
+        description: Allow replacing an existing named release
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: promote-release-${{ inputs.variant }}-${{ inputs.release_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.variant }} -> ${{ inputs.release_name }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate release name
+        id: names
+        env:
+          VARIANT: ${{ inputs.variant }}
+          RELEASE_NAME: ${{ inputs.release_name }}
+        run: |
+          set -euo pipefail
+
+          # Reject anything that could collide with a CI-managed pointer. The
+          # latest/backup objects are owned exclusively by the publish workflows.
+          if [[ ! "${RELEASE_NAME}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+            echo "::error::release_name must be lowercase alphanumeric with . or - separators; got '${RELEASE_NAME}'"
+            exit 1
+          fi
+          if [[ "${RELEASE_NAME}" == "latest" ]] || [[ "${RELEASE_NAME}" =~ ^backup-[0-9]+$ ]]; then
+            echo "::error::'${RELEASE_NAME}' is a CI-managed pointer and must never be written by this workflow"
+            exit 1
+          fi
+
+          {
+            echo "src=${VARIANT}-live-latest.iso"
+            echo "dst=${VARIANT}-live-${RELEASE_NAME}.iso"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Promote objects on R2
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_REGION: auto
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.RCLONE_CONFIG_R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.RCLONE_CONFIG_R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.RCLONE_CONFIG_R2_ENDPOINT }}
+          SRC: ${{ steps.names.outputs.src }}
+          DST: ${{ steps.names.outputs.dst }}
+          OVERWRITE: ${{ inputs.overwrite }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y rclone -qq
+
+          FILES="$(rclone lsf R2:testing --files-only)"
+          exists() { grep -Fxq "$1" <<<"$FILES"; }
+
+          # Both halves of the pair must be present, otherwise the named release
+          # would ship an ISO whose checksum cannot be verified.
+          for f in "${SRC}" "${SRC}-CHECKSUM"; do
+            if ! exists "${f}"; then
+              echo "::error::source object R2:testing/${f} not found"
+              exit 1
+            fi
+          done
+
+          if exists "${DST}" && [[ "${OVERWRITE}" != "true" ]]; then
+            echo "::error::R2:testing/${DST} already exists; re-run with overwrite=true to replace it"
+            exit 1
+          fi
+
+          # ISO and checksum are copied in the same step so they can never drift apart.
+          rclone copyto --log-level INFO --s3-no-check-bucket \
+            "R2:testing/${SRC}" "R2:testing/${DST}"
+          rclone copyto --log-level INFO --s3-no-check-bucket \
+            "R2:testing/${SRC}-CHECKSUM" "R2:testing/${DST}-CHECKSUM"
+
+      - name: Verify promoted pair
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_REGION: auto
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.RCLONE_CONFIG_R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.RCLONE_CONFIG_R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.RCLONE_CONFIG_R2_ENDPOINT }}
+          SRC: ${{ steps.names.outputs.src }}
+          DST: ${{ steps.names.outputs.dst }}
+        run: |
+          set -euo pipefail
+
+          SRC_SIZE="$(rclone size --json "R2:testing/${SRC}" | sed -E 's/.*"bytes":([0-9]+).*/\1/')"
+          DST_SIZE="$(rclone size --json "R2:testing/${DST}" | sed -E 's/.*"bytes":([0-9]+).*/\1/')"
+          if [[ "${SRC_SIZE}" != "${DST_SIZE}" ]]; then
+            echo "::error::size mismatch: ${SRC}=${SRC_SIZE} ${DST}=${DST_SIZE}"
+            exit 1
+          fi
+
+          # The checksum file names the object it describes; rewrite it to the
+          # promoted name so `sha256sum -c` works against the downloaded file.
+          SRC_SUM="$(rclone cat "R2:testing/${SRC}-CHECKSUM" | awk '{print $1}')"
+          DST_SUM="$(rclone cat "R2:testing/${DST}-CHECKSUM" | awk '{print $1}')"
+          if [[ "${SRC_SUM}" != "${DST_SUM}" ]]; then
+            echo "::error::checksum mismatch between ${SRC} and ${DST}"
+            exit 1
+          fi
+
+          printf '%s  %s\n' "${DST_SUM}" "${DST}" > /tmp/promoted-CHECKSUM
+          rclone copyto --log-level INFO --s3-no-check-bucket \
+            /tmp/promoted-CHECKSUM "R2:testing/${DST}-CHECKSUM"
+
+          {
+            echo "## Promoted release"
+            echo
+            echo "| Object | Value |"
+            echo "|---|---|"
+            echo "| Source | \`${SRC}\` |"
+            echo "| ISO | [${DST}](https://projectbluefin.dev/${DST}) |"
+            echo "| Checksum | [${DST}-CHECKSUM](https://projectbluefin.dev/${DST}-CHECKSUM) |"
+            echo "| SHA256 | \`${DST_SUM}\` |"
+            echo "| Size | $((DST_SIZE / 1024 / 1024 / 1024)) GiB |"
+          } >> "$GITHUB_STEP_SUMMARY"
