@@ -79,6 +79,11 @@ COPY --from=ref /usr/lib/modules /usr/lib/modules
 COPY --from=initramfs-native /tmp/dracut-status /tmp/
 COPY --from=initramfs-native /tmp/initramfs.img /tmp/native-initramfs/
 
+# "--omit shutdown" applies to every ISO, not only test builds: the dracut
+# shutdown module re-execs into the initramfs at poweroff/reboot, and on the
+# read-only live root that hangs the shutdown transaction instead of powering
+# off.  Live media never need an initramfs-based shutdown path, so omitting it
+# removes the hang without changing installed-system behaviour.
 RUN set -ex; \
     if grep -q debian /tmp/dracut-status 2>/dev/null; then \
         kernel=$(ls /usr/lib/modules | sort -V | tail -1); \

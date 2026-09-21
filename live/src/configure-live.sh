@@ -20,6 +20,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Unified storage is not supported by the read-only live image and can
 # repeatedly restart while blocking the graphical target during E2E boots.
+# This mask is unconditional because it applies to every live ISO: the unit
+# can never succeed on live media, and the mask lives only in the live root,
+# so systems installed from this ISO keep bootc-unified-storage enabled.
 mkdir -p /etc/systemd/system
 ln -sfn /dev/null /etc/systemd/system/bootc-unified-storage.service
 
@@ -291,6 +294,9 @@ fi
 # the squashed 9 GB dakota-nvidia image the uncompressed blob exceeds 8 GB, so
 # use 80% of total RAM so it scales with the machine (min system requirement
 # for the nvidia image is 16 GB, giving ~13 GB here).
+# ConditionKernelCommandLine=rd.live.image scopes the unit to live boots so an
+# 80%-of-RAM tmpfs on /var/tmp can never activate in a non-live boot of this
+# root filesystem.
 cat > /usr/lib/systemd/system/var-tmp.mount << 'UNITEOF'
 [Unit]
 Description=Large tmpfs for /var/tmp in the live environment
