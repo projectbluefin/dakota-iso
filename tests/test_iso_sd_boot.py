@@ -149,8 +149,24 @@ class IsoSdBootHarness(unittest.TestCase):
             exit 0
         """)
 
+        # `podman run ... skopeo copy` is the step that embeds the payload OCI archive
+        # into the staged containers-storage. The storage driver it uses is only
+        # observable through the storage.conf bind-mounted at /tmp/st.conf, which the
+        # script deletes right after the run — so the stub dumps that file's contents
+        # into the call log while it still exists.
         self._stub("podman", f"""
             echo "podman $*" >> "$STUB_CALLS"
+            if [ "$1" = "run" ]; then
+                for _arg in "$@"; do
+                    case "$_arg" in
+                        *:/tmp/st.conf:ro)
+                            _conf=$(echo "$_arg" | sed 's|:/tmp/st.conf:ro$||')
+                            sed 's|^|storage-conf |' "$_conf" >> "$STUB_CALLS"
+                            ;;
+                    esac
+                done
+                exit 0
+            fi
             if [ "$1" = "image" ] && [ "$2" = "mount" ]; then
                 echo "{mount_dir}"
                 exit 0
@@ -277,6 +293,18 @@ class IsoSdBootHarness(unittest.TestCase):
             str(out / f"{target}-live.iso"),
         ]
 
+    def embed_run_calls(self):
+        """Return the logged `podman run` lines that perform the OCI store embed."""
+        return [
+            c for c in self.recorded_calls()
+            if c.startswith("podman run ") and "/payload.oci.tar" in c
+        ]
+
+    def storage_conf_lines(self):
+        """Return the storage.conf contents captured from the embed `podman run`."""
+        prefix = "storage-conf "
+        return [c[len(prefix):].strip() for c in self.recorded_calls() if c.startswith(prefix)]
+
 
 class TestIsoSdBootArgumentsAndDefaults(IsoSdBootHarness):
     """Verify argument enforcement, default values, and target validation."""
@@ -377,6 +405,61 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
             invocations[0],
             self.expected_delegate_argv("lts", "Bluefin LTS Live", out_dir),
         )
+
+    def test_composefs_true_embeds_payload_into_vfs_containers_storage(self):
+        """Composefs mode embeds the payload OCI into a VFS store under var/lib."""
+        out_dir = self.sandbox / "output"
+        res = self.run_script(env_vars={
+            "TARGET": "dakota",
+            "OUTPUT_DIR": str(out_dir),
+        })
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+
+        work = Path(os.path.realpath(out_dir))
+        embeds = self.embed_run_calls()
+        self.assertEqual(len(embeds), 1, f"expected exactly one embed run, got {embeds!r}")
+        embed = embeds[0]
+
+        # The staged store must be the composefs location (var/lib), bind-mounted at
+        # the graphroot the storage.conf points at.
+        self.assertIn(f"-v {work}/dakota-cs-staging/var/lib/containers/storage:/vfs-storage", embed)
+        self.assertNotIn("/usr/lib/containers/storage:/vfs-storage", embed)
+        self.assertIn(f"-v {work}/dakota-payload.oci.tar:/payload.oci.tar:ro", embed)
+        self.assertIn("localhost/dakota-installer", embed)
+        self.assertIn(
+            "skopeo copy oci-archive:/payload.oci.tar:ghcr.io/projectbluefin/dakota:stable "
+            "containers-storage:ghcr.io/projectbluefin/dakota:stable",
+            embed,
+        )
+
+        # Driver is only visible in the storage.conf the run consumes.
+        self.assertIn('driver = "vfs"', self.storage_conf_lines())
+
+    def test_composefs_false_embeds_payload_into_overlay_containers_storage(self):
+        """Non-composefs mode embeds the payload OCI into an overlay store under usr/lib."""
+        out_dir = self.sandbox / "output"
+        res = self.run_script(env_vars={
+            "TARGET": "lts",
+            "OUTPUT_DIR": str(out_dir),
+        })
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+
+        work = Path(os.path.realpath(out_dir))
+        embeds = self.embed_run_calls()
+        self.assertEqual(len(embeds), 1, f"expected exactly one embed run, got {embeds!r}")
+        embed = embeds[0]
+
+        self.assertIn(f"-v {work}/lts-cs-staging/usr/lib/containers/storage:/vfs-storage", embed)
+        self.assertNotIn("/var/lib/containers/storage:/vfs-storage", embed)
+        self.assertIn(f"-v {work}/lts-payload.oci.tar:/payload.oci.tar:ro", embed)
+        self.assertIn("localhost/lts-installer", embed)
+        self.assertIn(
+            "skopeo copy oci-archive:/payload.oci.tar:ghcr.io/projectbluefin/bluefin-lts:stable "
+            "containers-storage:ghcr.io/projectbluefin/bluefin-lts:stable",
+            embed,
+        )
+
+        self.assertIn('driver = "overlay"', self.storage_conf_lines())
 
     def test_compression_fast_vs_release(self):
         """COMPRESSION=fast uses level 3 and 128K block; release uses level 15 and 1M block."""
