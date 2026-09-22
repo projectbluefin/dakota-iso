@@ -20,8 +20,7 @@ A multi-arch ISO doubles the size (~9 GB) because each architecture needs its ow
 | systemd-boot EFI binary | Yes | `BOOTX64.EFI` vs `BOOTAA64.EFI` are different binaries |
 | Kernel (`vmlinuz`) | Yes | Different instruction sets |
 | Initramfs (`initramfs.img`) | Yes | Contains arch-specific kernel modules |
-| squashfs rootfs | Yes | Entire userspace is arch-specific (ELF binaries, libs, modules) |
-| Offline OCI store | Yes | OCI images are single-arch |
+| squashfs rootfs | Yes | Entire userspace is arch-specific (ELF binaries, libs, modules), including the OCI store embedded in it |
 
 Only loader config, branding, and Flatpak metadata can be shared.
 
@@ -57,10 +56,14 @@ images/
       vmlinuz
       initrd.img
 LiveOS/
-  squashfs-x86_64.img        ← full rootfs (x86_64)
-  squashfs-aarch64.img        ← full rootfs (aarch64)
-  store.squashfs.img          ← offline OCI store (both arches)
+  squashfs-x86_64.img        ← full rootfs incl. embedded OCI (x86_64)
+  squashfs-aarch64.img       ← full rootfs incl. embedded OCI (aarch64)
 ```
+
+There is no `store.squashfs.img`. The offline OCI content lives inside each
+arch's squashfs as a VFS store — see [architecture.md](architecture.md) and the
+warning in [ci.md](ci.md) about re-adding a separate store squashfs, which
+double-embeds the OCI payload and produces an oversized ISO.
 
 ### BLS entries
 
@@ -172,16 +175,16 @@ aarch64 QEMU.
 
 | Component | x86_64 | aarch64 | Combined |
 |---|---|---|---|
-| squashfs rootfs | ~4.5 GB | ~4.0 GB | ~8.5 GB |
+| squashfs rootfs (incl. embedded OCI) | ~4.5 GB | ~4.0 GB | ~8.5 GB |
 | Kernel + initramfs | ~120 MB | ~100 MB | ~220 MB |
 | EFI binary | ~150 KB | ~150 KB | ~300 KB |
-| Offline store | ~4.5 GB | ~4.0 GB | ~8.5 GB |
-| **Total ISO** | ~4.6 GB | — | **~9.2 GB** |
+| **Total ISO** | ~4.6 GB | — | **~8.7 GB** |
 
-A multi-arch ISO with both offline stores would be ~17 GB — too large for USB
-sticks and downloads. Recommendation: multi-arch ISO includes only the live
-rootfs for each arch; offline store remains single-arch or is omitted from the
-multi-arch variant.
+The OCI store is not a separate line item: it ships inside each arch's squashfs,
+so it is already counted in the rootfs row. A multi-arch ISO is therefore roughly
+the sum of the two single-arch ISOs — still large for USB sticks and downloads.
+Recommendation: if the size proves prohibitive, prefer the arch-selector variant
+below over re-splitting the OCI store back out, which would double-embed it.
 
 ## Alternative: arch-selector ISO (smaller)
 

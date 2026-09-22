@@ -126,7 +126,7 @@ the image to one layer before VFS import. The squash uses `buildah from --pull-n
 
 | Path | Used by | Notes |
 |---|---|---|
-| `live/src/` | CI (`build-iso.yml`, `build-iso-bluefin.yml`), `live/Containerfile`, `scripts/*.sh`, local justfile recipes | `build-iso.sh` supports `--store` for the offline OCI store |
+| `live/src/` | CI (`build-iso.yml`), `live/Containerfile` | Canonical for CI and multi-arch builds |
 
 The live container (`live/Containerfile`) is used for **both** local and CI builds.
 `live/src/flatpaks` is the definitive list of bundled Flatpaks.
