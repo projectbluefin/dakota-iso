@@ -21,16 +21,14 @@ on:
     # Run weekly on Monday 04:00 UTC
     - cron: '0 4 * * 1'
 
-permissions:
-  issues: write
-  pull-requests: write
-  contents: write
-  actions: read
+permissions: {}
 
 jobs:
   unit-tests:
     name: Python Unit Tests
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -56,6 +54,11 @@ jobs:
     name: LUKS E2E ${{ matrix.variant }} (${{ matrix.installer_channel }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: read
     strategy:
       fail-fast: false
       matrix:

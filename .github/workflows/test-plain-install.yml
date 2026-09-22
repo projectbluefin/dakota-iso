@@ -30,16 +30,14 @@ on:
     # Run weekly on Tuesday 04:00 UTC (staggered from the LUKS test on Monday)
     - cron: '0 4 * * 2'
 
-permissions:
-  issues: write
-  pull-requests: write
-  contents: write
-  actions: read
+permissions: {}
 
 jobs:
   unit-tests:
     name: Python Unit Tests
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -56,6 +54,11 @@ jobs:
     name: Plain E2E ${{ matrix.variant }} (${{ matrix.installer_channel }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: read
     strategy:
       fail-fast: false
       matrix:
