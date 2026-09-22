@@ -100,8 +100,8 @@ done
 | `dakota-live-alpha3.iso` | `20260614-9939dd7` | First build with fixed installer (fisherman v0.2.1, bootc-installer v2.7.3) |
 | `dakota-live-alpha4.iso` | `20260618-f095551` | composefs installed-boot fix; root-mount-spec injection in build-live-squashfs.sh |
 | `dakota-live-alpha5.iso` | `20260701-7ee8e14` | New alpha5 release from the triggered build |
-| `dakota-live-alpha6.iso` | `20260921-787bf4d` | Built from upstream stable-20260921 image; promoted via promote-release workflow |
-| `dakota-live-latest.iso` | Latest CI build | Auto-updated by monthly `build-iso.yml` |
+| `dakota-live-alpha6.iso` | `20260921-787bf4d` | Planned: not yet promoted; dispatch `promote-release.yml` from `main` after this workflow merges |
+| `dakota-live-latest.iso` | Latest CI build | Auto-updated by daily `build-iso.yml` |
 
 ## Public URLs
 
@@ -264,3 +264,8 @@ Key invariants codified in the workflow:
    destination ISO name.
 3. **Source presence and size parity**: Both `.iso` and `-CHECKSUM` must exist at the source,
    and byte sizes are validated after copying to ensure no partial promotion occurs.
+4. **Publish race (known gap, not yet enforced)**: `build-iso.yml` rewrites
+   `*-live-latest.iso` daily and the ISO and checksum copies are not atomic. A publish
+   landing between them promotes a mixed pair that current verification cannot detect,
+   because it compares the two checksum files rather than hashing the promoted ISO.
+   Until that is fixed, dispatch promotions well clear of the daily build window.
