@@ -956,6 +956,71 @@ class TestBuildLiveSquashfs(unittest.TestCase):
             "breaks the -c argument. Use grep or pipe to python instead.",
         )
 
+    def test_composefs_payload_commit_squash(self):
+        """Every `buildah commit` in the composefs payload path must pass --squash.
+
+        Chunkified payload images carry ~120 layers. Committing them without
+        --squash explodes the VFS containers-storage directory embedded in the
+        squashfs, inflating ISOs from ~5 GB to ~12 GB (recurring regression
+        documented in AGENTS.md).
+        """
+        lines = BUILD_LIVE_SQUASHFS.read_text().splitlines()
+
+        start = next(
+            (i for i, l in enumerate(lines) if "embedding OCI image" in l and "composefs path" in l),
+            None,
+        )
+        self.assertIsNotNone(start, "composefs payload embedding block not found")
+        end = next(
+            (i for i, l in enumerate(lines[start:], start) if l.strip() == "else"),
+            len(lines),
+        )
+
+        commits = [l.strip() for l in lines[start:end] if re.search(r"\bbuildah commit\b", l)]
+        self.assertTrue(commits, "no `buildah commit` found in the composefs payload path")
+        for commit in commits:
+            self.assertIn(
+                "--squash",
+                commit,
+                f"`buildah commit` in the composefs payload path is missing --squash: {commit!r}. "
+                "Omitting --squash inflates ISO size from ~5 GB to ~12 GB.",
+            )
+
+    def test_build_live_squashfs_rejects_missing_positional_args(self):
+        """Positional mode must fail fast when image/output paths are absent.
+
+        The script relies on `${N:?...}` expansions so a missing <image>,
+        <output-squashfs> or <output-boot-tar> aborts with the usage message
+        instead of silently producing an empty or misplaced artifact.
+        """
+        content = BUILD_LIVE_SQUASHFS.read_text()
+        for var in ("${1:?", "${2:?", "${3:?"):
+            self.assertIn(
+                var,
+                content,
+                f"build-live-squashfs.sh must enforce positional argument via {var}...}} "
+                "so missing arguments fail with the usage message.",
+            )
+        self.assertIn(
+            "Usage: build-live-squashfs.sh",
+            content,
+            "build-live-squashfs.sh must print a usage string when positional args are missing",
+        )
+
+    def test_build_live_squashfs_target_mode_enforces_output_dir(self):
+        """Target mode (--target) must abort when --output-dir is not supplied.
+
+        Without the guard the script would default the output path and write
+        artifacts where the caller (justfile / CI) does not look for them.
+        """
+        content = BUILD_LIVE_SQUASHFS.read_text()
+        self.assertRegex(
+            content,
+            r'-z\s+"\$\{OUTPUT_DIR\}"\s*\]\]\s*&&\s*\{[^}]*--target requires --output-dir[^}]*exit 1',
+            "build-live-squashfs.sh must exit 1 with 'ERROR: --target requires --output-dir' "
+            "when --target is used without --output-dir",
+        )
+
     def test_lts_images_json_defaults_to_btrfs(self):
         """live/src/bluefin-lts-hwe/images.json must default to btrfs.
 
