@@ -16,10 +16,17 @@
 
 name: Plain Install E2E
 
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
     inputs:
       installer_channel:
@@ -29,7 +36,6 @@ on:
   schedule:
     # Run weekly on Tuesday 04:00 UTC (staggered from the LUKS test on Monday)
     - cron: '0 4 * * 2'
-
 permissions: {}
 
 jobs:
