@@ -247,3 +247,20 @@ the ISO and checksum in the same session so they stay paired.
 rclone copyto -v R2:testing/dakota-live-latest.iso R2:testing/dakota-live-alpha2.iso
 rclone copyto -v R2:testing/dakota-live-latest.iso-CHECKSUM R2:testing/dakota-live-alpha2.iso-CHECKSUM
 ```
+
+### GitHub-native named release promotion via promote-release.yml (2026-09-21)
+
+Named releases historically required a manual `rclone copyto` command run by an
+operator with local R2 credentials. `.github/workflows/promote-release.yml` codifies
+this as a GitHub Actions workflow using repository R2 secrets.
+
+Key invariants codified in the workflow:
+1. **Workflow dispatch restriction**: GitHub only allows `workflow_dispatch` on the
+   default branch (`main`). The workflow file must be merged to `main` before it can
+   be dispatched.
+2. **Checksum rewrite**: A blind `copyto` of the checksum leaves `dakota-live-latest.iso`
+   inside the checksum payload, causing `sha256sum -c` to fail against the promoted filename.
+   The promote workflow reads the source checksum and writes a new file formatted with the
+   destination ISO name.
+3. **Source presence and size parity**: Both `.iso` and `-CHECKSUM` must exist at the source,
+   and byte sizes are validated after copying to ensure no partial promotion occurs.

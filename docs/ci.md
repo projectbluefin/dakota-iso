@@ -43,7 +43,7 @@ gh workflow run build-iso.yml --ref main
 
 ## build-iso.yml
 
-**Triggers:** Daily 03:00 UTC, `workflow_dispatch`
+**Triggers:** Daily 03:00 UTC (`0 3 * * *`), `workflow_dispatch`
 **Job:** `build-and-publish` (single job, no matrix)
 **Runner:** `ubuntu-24.04`
 **Runs as:** root via `sudo`
