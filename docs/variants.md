@@ -2,17 +2,16 @@
 
 How the Dakota ISO build target works.
 
-## Scope: dakota only
+## Scope: dakota and utah
 
-This repo ships the Dakota ISO. As of 2026-09-18 the `bluefin` and `bluefin-lts-hwe`
-variants no longer run at all. Nothing was deleted — the build targets, scripts,
+This repo ships the Dakota and Utah ISOs. As of 2026-09-18 the `bluefin` and `bluefin-lts-hwe`
+variants no longer run on schedule. Nothing was deleted — the build targets, scripts,
 workflow files and variant config are intact.
-
 | Surface | State |
 |---|---|
 | `test-luks-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
 | `test-plain-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
-| `build-iso-bluefin.yml` | **disabled at the Actions level** (`disabled_manually`) *and* `schedule` commented out in-file |
+| `build-iso-bluefin.yml` | **enabled** for `workflow_dispatch` of `utah`; `bluefin` and `bluefin-lts-hwe` dormant with schedules commented out |
 | `build-iso.yml` (dakota) | active |
 | Required checks on `main` | `LUKS E2E dakota (dev)`, `LUKS E2E dakota (stable)`, `ShellCheck` |
 

@@ -4,12 +4,12 @@ How the GitHub Actions workflows build, test, and publish Dakota ISOs.
 
 ## ISOs produced
 
-One NVIDIA-unified ISO is built and published to R2 on a schedule:
+One NVIDIA-unified ISO is built and published to R2 on a schedule, and Utah is published via dispatch:
 
-| ISO | Workflow | R2 latest name | Image embedded |
-|---|---|---|---|
-| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` |
-
+| ISO | Workflow | R2 latest name | Image embedded | Trigger |
+|---|---|---|---|---|
+| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | 1st of month 03:00 UTC, `workflow_dispatch` |
+| Utah | `build-iso-bluefin.yml` | `utah-live-latest.iso` | `projectbluefin/utah:testing` | `workflow_dispatch` (variant=utah) |
 The Bluefin and Bluefin LTS HWE ISOs are **no longer produced automatically**. As of
 2026-09-18 this repo ships Dakota only; `build-iso-bluefin.yml` is intact but its
 `schedule` trigger is commented out, so it runs only when a maintainer dispatches it.
@@ -32,7 +32,7 @@ gh workflow run build-iso.yml --ref main
 | Workflow | File | Trigger |
 |---|---|---|
 | Dakota Build & Publish | `build-iso.yml` | 1st of month 03:00 UTC, `workflow_dispatch` |
-| Bluefin Build & Publish | `build-iso-bluefin.yml` | **disabled** 2026-09-18 — schedule commented out and workflow disabled in Actions |
+| Bluefin & Utah Build & Publish | `build-iso-bluefin.yml` | `workflow_dispatch` (active for `utah`; `bluefin` and `bluefin-lts-hwe` dormant) |
 | LUKS E2E Test | `test-luks-install.yml` | PRs to main, weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | Plain Install E2E | `test-plain-install.yml` | PRs to main, weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | ShellCheck Lint | `lint.yml` | PRs to main, push to main |
