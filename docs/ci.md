@@ -21,6 +21,7 @@ See [`docs/variants.md`](variants.md) for the full dormancy map and revival step
 | Bluefin | `build-iso-bluefin.yml` | `bluefin-live-latest.iso` | dormant (never dispatch without `-f variant=utah`) |
 | Bluefin LTS HWE | `build-iso-bluefin.yml` | `bluefin-lts-hwe-live-latest.iso` | dormant (never dispatch without `-f variant=utah`) |
 | Utah | `build-iso-bluefin.yml` | `utah-live-latest.iso` | active via dispatch (`-f variant=utah`) |
+
 The Dakota ISO is a **unified NVIDIA ISO** — the live environment boots the NVIDIA variant; the offline OCI store lets the installer deploy to non-NVIDIA hardware without a network pull (bootc auto-rebases on first upgrade).
 
 To trigger a fresh Dakota publish:
