@@ -122,8 +122,7 @@ container target:
 # Builds the live environment container from live/Containerfile, then assembles
 # the ISO on the host using build-iso.sh.  This produces a single-variant ISO
 # for local testing.  CI builds a unified ISO with both NVIDIA (live) and
-# non-NVIDIA (offline store) variants — see scripts/build-live-squashfs.sh and
-# scripts/build-offline-store.sh.
+# non-NVIDIA (offline store) variants — see scripts/build-live-squashfs.sh.
 #
 # Output: output/<target>-live.iso
 iso-sd-boot target:
@@ -162,7 +161,7 @@ chunkify src dst:
         --entrypoint="" \
         -v "${CHUNK_OUT}:/run/out:Z" \
         --mount "type=image,source={{src}},target=/chunkah" \
-        ghcr.io/tuna-os/chunkah:latest \
+        ghcr.io/tuna-os/chunkah:latest@sha256:338ac4086ed919cf511cfca5e00317a3f65db27df86d76e833775ed07237b2dc \
         sh -c 'chunkah build > /run/out/out.ociarchive'
 
     echo "==> Loading rechunked archive..."
@@ -271,7 +270,7 @@ run-iso target:
     run_args+=(--env "GPU=Y")
     run_args+=(--device=/dev/kvm)
     run_args+=(--volume "${PWD}/output/${image_name}":"/boot.iso")
-    run_args+=(ghcr.io/qemus/qemu)
+    run_args+=(ghcr.io/qemus/qemu:7.50@sha256:e7f6fda52503a546fd649670ba46e4bc23dc6dcef275bc3fac48877fbbc430df)
     xdg-open http://localhost:${port} &
     podman run "${run_args[@]}"
     echo "Connect to http://localhost:${port}"
@@ -600,7 +599,7 @@ luks-unlock target:
     fi
     echo "Waiting for Plymouth passphrase prompt (VM MAC: ${MAC})..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "dakota/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
+    sudo python3 "live/src/luks-unlock.py" libvirt "$VM_NAME" "$PASSPHRASE" "$MAC"
 
 # Connect to the serial console of the dakota-debug VM to watch boot after
 # luks-install.  At the LUKS passphrase prompt type the passphrase (default:
@@ -843,7 +842,7 @@ luks-boot-qemu-live target:
     done
 
     # Wait for the live boot GUI to render and stabilize before taking screenshot
-    sudo python3 "dakota/src/luks-unlock.py" wait-live \
+    sudo python3 "live/src/luks-unlock.py" wait-live \
         "{{luks-qemu-monitor-live}}" \
         "/tmp/luks-screenshot-live.ppm" || true
 
@@ -939,7 +938,7 @@ luks-unlock-qemu target:
     PASSPHRASE="{{luks-passphrase}}"
     echo "Unlocking LUKS on installed QEMU VM..."
     echo "Passphrase: ${PASSPHRASE}"
-    sudo python3 "dakota/src/luks-unlock.py" qemu \
+    sudo python3 "live/src/luks-unlock.py" qemu \
         "{{luks-qemu-monitor-installed}}" \
         "$PASSPHRASE" \
         "{{luks-qemu-serial-installed}}"
@@ -947,7 +946,7 @@ luks-unlock-qemu target:
     # Show key screenshots inline for terminals that support it (Kitty, iTerm2, etc.)
     for label in "Plymouth prompt" "Final boot"; do
         key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
-        bash "dakota/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
+        bash "live/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
     done
 
 # Run Python unit tests.
@@ -955,6 +954,13 @@ luks-unlock-qemu target:
 # It does NOT mean the ISO builds or installs correctly — see test-luks-install.yml / test-plain-install.yml.
 test:
     pytest tests/ -v
+
+# Pre-commit gate. Run before every commit.
+# Wraps the two checks CI enforces: the pytest suite (test.yml) and the
+# pre-commit hooks (yaml/json validation, actionlint, action-pin policy).
+check:
+    pytest tests/ -v
+    pre-commit run --all-files
 
 # ────────────────────────────────────────────────────────────────────────────
 # Plain (unencrypted) composefs install E2E test
@@ -1338,7 +1344,7 @@ plain-verify-qemu target:
             SOCAT_PREFIX=""
             if ! test -w "$MONITOR" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
             echo "screendump $SCREENSHOT" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
-            bash "dakota/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
+            bash "live/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
             exit 0
         fi

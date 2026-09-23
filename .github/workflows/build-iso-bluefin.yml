@@ -4,13 +4,16 @@ concurrency:
   group: publish-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Dormant: this repo ships the Dakota ISO only. The bluefin and
+# bluefin-lts-hwe ISO builds are kept intact but no longer run on a schedule.
+# Revive by restoring the `schedule` trigger below.
 on:
-  schedule:
-    - cron: '0 5 * * *'   # daily, 05:00 UTC (after dakota at 03:00)
+  # schedule:
+  #   - cron: '0 5 * * *'   # daily, 05:00 UTC (after dakota at 03:00)
   workflow_dispatch:
     inputs:
       variant:
-        description: 'Which variant to build (bluefin, bluefin-lts-hwe, or all)'
+        description: 'Which variant to build (bluefin, bluefin-lts-hwe, utah, or all)'
         required: false
         default: all
         type: string
@@ -45,6 +48,17 @@ jobs:
             registry: projectbluefin
             tag: stable
             iso_name: bluefin-lts-hwe-live
+          # Utah (Bluefin on Fedora Hummingbird, conventional non-composefs
+          # bootc). Draft: needs ghcr.io/projectbluefin/utah:testing
+          # published first, and the live ESP here is systemd-boot-only --
+          # Utah's signed shim+GRUB chain lives in its own ISO pipeline, so
+          # ISOs from this path boot with Secure Boot disabled.
+          - variant: utah
+            payload_image: ghcr.io/projectbluefin/utah:testing
+            live_target: utah
+            registry: projectbluefin
+            tag: testing
+            iso_name: utah-live
 
     steps:
       - name: Checkout

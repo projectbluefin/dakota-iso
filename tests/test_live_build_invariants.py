@@ -22,7 +22,9 @@ Covered invariants
 5. Variant config files are complete and consistent for known variants.
 6. Release builds keep debug-only SSH/password config inside the DEBUG guard.
 7. build-iso.yml uploads to R2 only after the full install + verify gates pass.
-8. live/src/luks-unlock.py stays in sync with dakota/src/luks-unlock.py.
+
+live/src/ is the single source of truth for the live ISO source tree; there is
+no second copy to keep in sync.
 """
 
 import re
@@ -33,7 +35,6 @@ from pathlib import Path
 
 REPO = Path(__file__).parent.parent
 LIVE_BUILD_ISO = REPO / "live" / "src" / "build-iso.sh"
-DAKOTA_BUILD_ISO = REPO / "dakota" / "src" / "build-iso.sh"
 CONTAINERFILE = REPO / "live" / "Containerfile"
 CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
 GUI_E2E_JUSTFILE = REPO / "justfile"
@@ -42,7 +43,6 @@ BUILD_ISO_BLUEFIN_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-bluefin
 TEST_LUKS_WORKFLOW = REPO / ".github" / "workflows" / "test-luks-install.yml"
 TEST_PLAIN_WORKFLOW = REPO / ".github" / "workflows" / "test-plain-install.yml"
 LIVE_LUKS_UNLOCK = REPO / "live" / "src" / "luks-unlock.py"
-DAKOTA_LUKS_UNLOCK = REPO / "dakota" / "src" / "luks-unlock.py"
 BUILD_LIVE_SQUASHFS = REPO / "scripts" / "build-live-squashfs.sh"
 ISO_SD_BOOT = REPO / "scripts" / "iso-sd-boot.sh"
 README = REPO / "README.md"
@@ -106,10 +106,6 @@ class TestBootCmdline(unittest.TestCase):
         """live/src/build-iso.sh must use LABEL=, not CDLABEL= or /dev/sr0."""
         self._check_boot_root(LIVE_BUILD_ISO)
 
-    def test_dakota_build_iso_uses_label_not_cdlabel_or_sr0(self):
-        """dakota/src/build-iso.sh must use LABEL=, not CDLABEL= or /dev/sr0."""
-        self._check_boot_root(DAKOTA_BUILD_ISO)
-
     def test_live_build_iso_contains_label_root(self):
         """live/src/build-iso.sh boot entries must use root=live:LABEL=DAKOTA_LIVE."""
         self._check_has_label(LIVE_BUILD_ISO)
@@ -134,10 +130,6 @@ class TestBootCmdline(unittest.TestCase):
     def test_live_build_iso_has_nvidia_drm_modeset(self):
         """All live/src/build-iso.sh boot entries must include nvidia-drm.modeset=1."""
         self._check_nvidia_modeset(LIVE_BUILD_ISO)
-
-    def test_dakota_build_iso_has_nvidia_drm_modeset(self):
-        """All dakota/src/build-iso.sh boot entries must include nvidia-drm.modeset=1."""
-        self._check_nvidia_modeset(DAKOTA_BUILD_ISO)
 
 
 class TestXfsprogs(unittest.TestCase):
@@ -914,7 +906,7 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
     def test_readme_download_table_has_last_three_builds_links(self):
         """README top download table must expose latest + last 3 dakota backups."""
         content = README.read_text()
-        top_table_section = content.split("\nBuilds bootable UEFI live ISOs", 1)[0]
+        top_table_section = content.split("\n## Variants", 1)[0]
         self.assertIn(
             "| Variant | Download | Checksum | Size | Published (UTC) | Validation | Last 3 builds |",
             top_table_section,
@@ -940,7 +932,7 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
     def test_readme_bluefin_rows_link_last_three_builds(self):
         """README bluefin/bluefin-lts-hwe rows must link backup slots 1..3."""
         content = README.read_text()
-        top_table_section = content.split("\nBuilds bootable UEFI live ISOs", 1)[0]
+        top_table_section = content.split("\n## Variants", 1)[0]
 
         for prefix, iso_base in (
             ("`bluefin`", "bluefin-live"),
@@ -972,17 +964,6 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             TEST_LUKS_WORKFLOW.read_text(),
             "test-luks-install.yml must gate luks-e2e on unit-tests.",
         )
-
-    def test_luks_unlock_copies_are_identical(self):
-        """live/ and dakota/ luks-unlock helpers must stay byte-for-byte aligned."""
-        self.assertEqual(
-            LIVE_LUKS_UNLOCK.read_text(),
-            DAKOTA_LUKS_UNLOCK.read_text(),
-            "live/src/luks-unlock.py and dakota/src/luks-unlock.py diverged. "
-            "Keep them identical so CI/build logic and local helpers exercise "
-            "the same unlock behavior.",
-        )
-
 
 class TestVariantConfig(unittest.TestCase):
     """Variant directories must be complete and consistent."""
@@ -1098,41 +1079,6 @@ class TestBuildIsoScript(unittest.TestCase):
         self.assertEqual(result.returncode, 0,
                          f"live/src/build-iso.sh syntax error:\n{result.stderr}")
 
-    def test_dakota_build_iso_bash_syntax(self):
-        result = subprocess.run(
-            ["bash", "-n", str(DAKOTA_BUILD_ISO)],
-            capture_output=True, text=True,
-        )
-        self.assertEqual(result.returncode, 0,
-                         f"dakota/src/build-iso.sh syntax error:\n{result.stderr}")
-
-    def test_build_iso_scripts_are_in_sync(self):
-        """live/ and dakota/ build-iso.sh must have identical boot cmdlines.
-
-        These two scripts serve different entry points (CI vs local justfile)
-        but must stay in sync on the boot cmdline to prevent split-brain bugs
-        where CI builds boot with different options than local test builds.
-        """
-        live_content = LIVE_BUILD_ISO.read_text()
-        dakota_content = DAKOTA_BUILD_ISO.read_text()
-
-        def extract_boot_lines(content):
-            return [
-                ln.strip() for ln in content.splitlines()
-                if ("root=live:" in ln or "rd.live." in ln)
-                and not ln.strip().startswith("#")
-            ]
-
-        live_boot = extract_boot_lines(live_content)
-        dakota_boot = extract_boot_lines(dakota_content)
-
-        self.assertEqual(
-            live_boot, dakota_boot,
-            "live/src/build-iso.sh and dakota/src/build-iso.sh have different "
-            "boot cmdline options. These files must be kept in sync.\n"
-            f"live:   {live_boot}\ndakota: {dakota_boot}",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
@@ -1162,6 +1108,71 @@ class TestBuildLiveSquashfs(unittest.TestCase):
             "build-live-squashfs.sh contains broken Python quoting for "
             "composeFsBackend detection: open() path inside sh -c single-quotes "
             "breaks the -c argument. Use grep or pipe to python instead.",
+        )
+
+    def test_composefs_payload_commit_squash(self):
+        """Every `buildah commit` in the composefs payload path must pass --squash.
+
+        Chunkified payload images carry ~120 layers. Committing them without
+        --squash explodes the VFS containers-storage directory embedded in the
+        squashfs, inflating ISOs from ~5 GB to ~12 GB (recurring regression
+        documented in AGENTS.md).
+        """
+        lines = BUILD_LIVE_SQUASHFS.read_text().splitlines()
+
+        start = next(
+            (i for i, l in enumerate(lines) if "embedding OCI image" in l and "composefs path" in l),
+            None,
+        )
+        self.assertIsNotNone(start, "composefs payload embedding block not found")
+        end = next(
+            (i for i, l in enumerate(lines[start:], start) if l.strip() == "else"),
+            len(lines),
+        )
+
+        commits = [l.strip() for l in lines[start:end] if re.search(r"\bbuildah commit\b", l)]
+        self.assertTrue(commits, "no `buildah commit` found in the composefs payload path")
+        for commit in commits:
+            self.assertIn(
+                "--squash",
+                commit,
+                f"`buildah commit` in the composefs payload path is missing --squash: {commit!r}. "
+                "Omitting --squash inflates ISO size from ~5 GB to ~12 GB.",
+            )
+
+    def test_build_live_squashfs_rejects_missing_positional_args(self):
+        """Positional mode must fail fast when image/output paths are absent.
+
+        The script relies on `${N:?...}` expansions so a missing <image>,
+        <output-squashfs> or <output-boot-tar> aborts with the usage message
+        instead of silently producing an empty or misplaced artifact.
+        """
+        content = BUILD_LIVE_SQUASHFS.read_text()
+        for var in ("${1:?", "${2:?", "${3:?"):
+            self.assertIn(
+                var,
+                content,
+                f"build-live-squashfs.sh must enforce positional argument via {var}...}} "
+                "so missing arguments fail with the usage message.",
+            )
+        self.assertIn(
+            "Usage: build-live-squashfs.sh",
+            content,
+            "build-live-squashfs.sh must print a usage string when positional args are missing",
+        )
+
+    def test_build_live_squashfs_target_mode_enforces_output_dir(self):
+        """Target mode (--target) must abort when --output-dir is not supplied.
+
+        Without the guard the script would default the output path and write
+        artifacts where the caller (justfile / CI) does not look for them.
+        """
+        content = BUILD_LIVE_SQUASHFS.read_text()
+        self.assertRegex(
+            content,
+            r'-z\s+"\$\{OUTPUT_DIR\}"\s*\]\]\s*&&\s*\{[^}]*--target requires --output-dir[^}]*exit 1',
+            "build-live-squashfs.sh must exit 1 with 'ERROR: --target requires --output-dir' "
+            "when --target is used without --output-dir",
         )
 
     def test_lts_images_json_defaults_to_btrfs(self):
@@ -1212,6 +1223,25 @@ class TestBuildLiveSquashfs(unittest.TestCase):
                     "Must use '$SOCAT_PREFIX socat' to support root-owned sockets "
                     "when QEMU runs with sudo."
                 )
+
+    def test_justfile_third_party_images_are_digest_pinned(self):
+        """Third-party container images in justfile recipes must be digest-pinned.
+
+        Prevents supply-chain tampering where mutable tags (e.g. :latest)
+        execute attacker-controlled code with elevated privileges.
+        """
+        justfile = REPO / "justfile"
+        content = justfile.read_text()
+        self.assertRegex(
+            content,
+            r"ghcr\.io/tuna-os/chunkah:latest@sha256:[0-9a-f]{64}",
+            "chunkah image in justfile must be pinned with sha256 digest",
+        )
+        self.assertRegex(
+            content,
+            r"ghcr\.io/qemus/qemu:7\.50@sha256:[0-9a-f]{64}",
+            "qemus/qemu image in justfile must be pinned with version tag and sha256 digest",
+        )
 
 
 class TestPayloadPristine(unittest.TestCase):

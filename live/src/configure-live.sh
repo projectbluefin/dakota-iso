@@ -90,6 +90,33 @@ passwd --delete liveuser
 # Never enabled in production ISOs.
 if [[ "${DEBUG:-0}" == "1" ]]; then
     echo "liveuser:live" | chpasswd
+    # livesys-scripts (shipped in Bluefin bases, absent in GNOME OS) runs
+    # `passwd -d liveuser`/`passwd -d root` at every boot, wiping the debug
+    # passwords set here at build time. Re-assert them at boot, after livesys
+    # has run, so the debug logins work on those variants.
+    cat > /usr/lib/systemd/system/live-debug-passwords.service << 'PWUNIT'
+[Unit]
+Description=Re-assert live debug passwords (livesys wipes them at boot)
+After=livesys.service livesys-late.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c "echo 'liveuser:live' | /usr/sbin/chpasswd; passwd --unlock root 2>/dev/null || true; echo 'root:root' | /usr/sbin/chpasswd"
+
+[Install]
+WantedBy=multi-user.target
+PWUNIT
+    mkdir -p /etc/systemd/system/multi-user.target.wants
+    ln -sf /usr/lib/systemd/system/live-debug-passwords.service \
+        /etc/systemd/system/multi-user.target.wants/live-debug-passwords.service
+    # The preset policy on these bases disables units it does not list, and
+    # `systemctl preset-all` at first boot would drop the wants symlink above.
+    # A preset file in /etc/systemd/system-preset/ takes priority over
+    # /usr/lib and forces the unit on. The sshd block below appends to this
+    # same file, so create it here and append there.
+    mkdir -p /etc/systemd/system-preset
+    echo "enable live-debug-passwords.service" \
+        > /etc/systemd/system-preset/90-live-debug.preset
 
     # Enable root login with a known password so hotfixes can be applied
     # directly via `ssh root@<ip>` or `su -` without going through sudo.
@@ -107,12 +134,18 @@ if [[ "${DEBUG:-0}" == "1" ]]; then
     SSH_UNIT="sshd.service"
     [[ ! -f /usr/lib/systemd/system/sshd.service && -f /usr/lib/systemd/system/ssh.service ]] && SSH_UNIT="ssh.service"
     mkdir -p /etc/systemd/system-preset
-    echo "enable ${SSH_UNIT}" > /etc/systemd/system-preset/90-live-debug.preset
+    echo "enable ${SSH_UNIT}" >> /etc/systemd/system-preset/90-live-debug.preset
     mkdir -p /etc/systemd/system/multi-user.target.wants
     ln -sf "/usr/lib/systemd/system/${SSH_UNIT}" \
         "/etc/systemd/system/multi-user.target.wants/${SSH_UNIT}"
 
+    mkdir -p /etc/ssh /etc/ssh/sshd_config.d
     cat >> /etc/ssh/sshd_config << 'SSHEOF'
+PermitEmptyPasswords no
+PasswordAuthentication yes
+PermitRootLogin yes
+SSHEOF
+    cat > /etc/ssh/sshd_config.d/00-live-debug.conf << 'SSHEOF'
 PermitEmptyPasswords no
 PasswordAuthentication yes
 PermitRootLogin yes

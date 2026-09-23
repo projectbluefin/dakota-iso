@@ -13,7 +13,7 @@ name: LUKS Install End-to-End Test
 # Reproduces: projectbluefin/dakota#270
 
 on:
-  pull_request:
+  push:
     branches:
       - main
   workflow_dispatch:
@@ -21,16 +21,14 @@ on:
     # Run weekly on Monday 04:00 UTC
     - cron: '0 4 * * 1'
 
-permissions:
-  issues: write
-  pull-requests: write
-  contents: write
-  actions: read
+permissions: {}
 
 jobs:
   unit-tests:
     name: Python Unit Tests
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -56,10 +54,18 @@ jobs:
     name: LUKS E2E ${{ matrix.variant }} (${{ matrix.installer_channel }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: read
     strategy:
       fail-fast: false
       matrix:
-        variant: [dakota, stable, lts]
+        # dakota-only: this repo ships the Dakota ISO. The `stable` and `lts`
+        # legs are dormant, not deleted — re-add them to this list to revive.
+        # variant: [dakota, stable, lts]
+        variant: [dakota]
         installer_channel: [dev, stable]
 
     steps:
@@ -109,6 +115,7 @@ jobs:
         uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
           go-version: '1.23'
+          cache: false
 
       # Track fisherman's active line. This used to pin the June branch
       # fix/overlay-driver-for-ostree-bootc-install, which froze the gate on a

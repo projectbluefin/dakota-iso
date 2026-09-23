@@ -4,20 +4,27 @@ How the GitHub Actions workflows build, test, and publish Dakota ISOs.
 
 ## ISOs produced
 
-Three NVIDIA-unified ISOs are built and published to R2:
+One NVIDIA-unified ISO is built and published to R2 on a schedule:
 
 | ISO | Workflow | R2 latest name | Image embedded |
 |---|---|---|---|
 | Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` |
-| Bluefin | `build-iso-bluefin.yml` | `bluefin-live-latest.iso` | `projectbluefin/bluefin-nvidia:stable` |
-| Bluefin LTS HWE | `build-iso-bluefin.yml` | `bluefin-lts-hwe-live-latest.iso` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` |
 
-All three are **unified NVIDIA ISOs** — the live environment boots the NVIDIA variant; the offline OCI store lets the installer deploy to non-NVIDIA hardware without a network pull (bootc auto-rebases on first upgrade).
+The Bluefin and Bluefin LTS HWE ISOs are **no longer produced automatically**. As of
+2026-09-18 this repo ships Dakota only; `build-iso-bluefin.yml` is intact but its
+`schedule` trigger is commented out, so it runs only when a maintainer dispatches it.
+See [`docs/variants.md`](variants.md) for the full dormancy map and revival steps.
 
-To trigger a fresh publish of all three:
+| ISO | Workflow | R2 latest name | State |
+|---|---|---|---|
+| Bluefin | `build-iso-bluefin.yml` | `bluefin-live-latest.iso` | workflow disabled |
+| Bluefin LTS HWE | `build-iso-bluefin.yml` | `bluefin-lts-hwe-live-latest.iso` | workflow disabled |
+
+The ISO is a **unified NVIDIA ISO** — the live environment boots the NVIDIA variant; the offline OCI store lets the installer deploy to non-NVIDIA hardware without a network pull (bootc auto-rebases on first upgrade).
+
+To trigger a fresh Dakota publish:
 ```bash
 gh workflow run build-iso.yml --ref main
-gh workflow run build-iso-bluefin.yml --ref main
 ```
 
 ## Workflows
@@ -25,9 +32,9 @@ gh workflow run build-iso-bluefin.yml --ref main
 | Workflow | File | Trigger |
 |---|---|---|
 | Dakota Build & Publish | `build-iso.yml` | 1st of month 03:00 UTC, `workflow_dispatch` |
-| Bluefin Build & Publish | `build-iso-bluefin.yml` | 1st of month 05:00 UTC, `workflow_dispatch` |
-| LUKS E2E Test | `test-luks-install.yml` | PRs to main, weekly Mon 04:00 UTC, `workflow_dispatch` |
-| Plain Install E2E | `test-plain-install.yml` | PRs to main, weekly Tue 04:00 UTC, `workflow_dispatch` |
+| Bluefin Build & Publish | `build-iso-bluefin.yml` | **disabled** 2026-09-18 — schedule commented out and workflow disabled in Actions |
+| LUKS E2E Test | `test-luks-install.yml` | PRs to main, weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
+| Plain Install E2E | `test-plain-install.yml` | PRs to main, weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
 | ShellCheck Lint | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
@@ -117,13 +124,17 @@ server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
 
 ## build-iso-bluefin.yml
 
-**Triggers:** 1st of each month 05:00 UTC, `workflow_dispatch`
+**Triggers:** none. The workflow is `disabled_manually` in Actions and its daily
+`schedule` is commented out, as of 2026-09-18 when this repo narrowed to Dakota.
 **Matrix:** `bluefin`, `bluefin-lts-hwe`
 **Runner:** `ubuntu-24.04`
 
 This workflow builds the Bluefin and Bluefin LTS live ISOs, runs a QEMU smoke boot,
 and uploads to R2 only when that smoke boot succeeds. It does **not** run the full
 Dakota install/verify E2E sequence because those workflows are Dakota-specific.
+
+It is kept intact rather than deleted so the Bluefin ISOs can be revived without
+reconstructing the pipeline. Restore the `schedule:` block in the workflow to do so.
 
 ### Boot verification: use AHCI, not SCSI CD (2026-06)
 
@@ -242,8 +253,8 @@ Runs `pytest tests/ -v` against Python 3.11.
 
 | File | Tests | What it checks |
 |---|---|---|
-| `tests/test_live_build_invariants.py` | 32 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, publish workflows, E2E workflow wiring, and variant config files. Also pins the DEBUG-only SSH guard, publish gating/concurrency, and `live/src` vs `dakota/src` `luks-unlock.py` sync. |
-| `tests/test_luks_unlock.py` | 52 | `dakota/src/luks-unlock.py` routing, passphrase injection key sequences, and screenshot parsing. `tests/test_live_build_invariants.py` separately asserts the `live/src` helper stays byte-for-byte identical so local helpers and CI exercise the same logic. |
+| `tests/test_live_build_invariants.py` | 32 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, publish workflows, E2E workflow wiring, and variant config files. Also pins the DEBUG-only SSH guard and publish gating/concurrency. |
+| `tests/test_luks_unlock.py` | 52 | `live/src/luks-unlock.py` routing, passphrase injection key sequences, and screenshot parsing. |
 | `tests/test_multi_arch_iso.py` | 2 | `live/src/build-iso.sh --arch` flag: single-arch backwards compat and two-arch assembly. **Skipped when `xorriso`/`mtools` are absent.** CI installs these tools so the tests run; they are skipped only in local environments lacking them — and the skip message names the exact apt packages to install. |
 
 Run locally with:
@@ -597,7 +608,7 @@ fully installed.
 after BIOS handoff with no display output.
 
 **Root cause:** `nvidia-drm.modeset=1` was never set in any of the four boot entry
-locations in `live/src/build-iso.sh` and `dakota/src/build-iso.sh`. Without KMS
+locations in `live/src/build-iso.sh`. Without KMS
 enabled, the NVIDIA proprietary driver cannot take over the framebuffer from the
 BIOS, leaving the screen dark even though the system is running fine.
 

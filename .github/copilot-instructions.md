@@ -1,7 +1,9 @@
 # dakota-iso — Copilot Instructions
 
-> This repo builds bootable UEFI live ISOs from projectbluefin images (GNOME OS / bootc / composefs).
-> Variants: `dakota`, `bluefin`, `bluefin-lts-hwe` — all NVIDIA-unified.
+> This repo builds the bootable UEFI live ISO from projectbluefin images (GNOME OS / bootc / composefs).
+> Active variant: `dakota` (NVIDIA-unified). `bluefin` and `bluefin-lts-hwe` are **dormant**
+> since 2026-09-18 — off every PR check and schedule, `build-iso-bluefin.yml` disabled at the
+> Actions level. Do not re-add them to CI matrices; see [`docs/variants.md`](../docs/variants.md).
 
 ## Fast path
 
@@ -48,6 +50,9 @@ Changes to these require maintainer review:
 ```bash
 just check   # run before every commit (agentic-model hard rule)
 ```
+
+`check` runs the pytest suite plus the pre-commit hooks (yaml/json validation,
+actionlint, action-pin policy) — the same two gates CI enforces.
 
 ## Human gates
 
