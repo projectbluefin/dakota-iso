@@ -47,7 +47,7 @@ ISO_SD_BOOT = REPO / "scripts" / "iso-sd-boot.sh"
 README = REPO / "README.md"
 
 # Variant directories that must be fully configured.
-KNOWN_VARIANTS = ["dakota", "bluefin", "bluefin-lts-hwe"]
+KNOWN_VARIANTS = ["dakota", "bluefin", "bluefin-lts-hwe", "utah"]
 
 # Required files in every variant directory.
 VARIANT_REQUIRED_FILES = ["payload_ref", "live_target", "tag", "registry"]
@@ -856,6 +856,29 @@ class TestVariantConfig(unittest.TestCase):
                     f"got: {payload!r}",
                 )
 
+
+    def test_workflow_payload_matches_offline_nvidia_imgref(self):
+        """For non-composefs variants, build-iso-bluefin.yml payload_image must match live/src/<variant>/nvidia_imgref."""
+        content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
+        for variant in ["bluefin", "bluefin-lts-hwe", "utah"]:
+            nvidia_file = REPO / "live" / "src" / variant / "nvidia_imgref"
+            if nvidia_file.exists():
+                nvidia_ref = nvidia_file.read_text().strip()
+                # Find the matrix payload_image for this variant
+                m = re.search(
+                    rf"- variant:\s*{re.escape(variant)}\s+payload_image:\s*([^\s]+)",
+                    content,
+                )
+                self.assertIsNotNone(
+                    m, f"Could not find variant {variant} payload_image in {BUILD_ISO_BLUEFIN_WORKFLOW.name}"
+                )
+                payload_image = m.group(1).strip()
+                self.assertEqual(
+                    payload_image,
+                    nvidia_ref,
+                    f"Variant {variant} payload_image ({payload_image}) in {BUILD_ISO_BLUEFIN_WORKFLOW.name} "
+                    f"must match live/src/{variant}/nvidia_imgref ({nvidia_ref}) so offline installs find the image in local store.",
+                )
 
 class TestBuildIsoScript(unittest.TestCase):
     """Static analysis of build-iso.sh for correctness invariants."""

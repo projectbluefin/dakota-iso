@@ -5,7 +5,7 @@
     {
       "name": "Utah",
       "imgref": "ghcr.io/projectbluefin/utah:testing",
-      "nvidia_imgref": "ghcr.io/projectbluefin/utah-nvidia:testing",
+      "nvidia_imgref": "ghcr.io/projectbluefin/utah:testing",
       "desc": "Utah — Bluefin on Fedora Hummingbird",
       "icon": "resource:///org/bootcinstaller/Installer/images/bluefin.png",
       "bootloader": "grub2",
