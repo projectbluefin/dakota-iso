@@ -116,7 +116,7 @@ ENV TARGET=${TARGET} INSTALLER_CHANNEL=${INSTALLER_CHANNEL} DEBUG=${DEBUG}
 # fuse-overlayfs supports overlay-on-overlay for kernels without native support
 # (e.g. CentOS Stream 10 in bluefin-lts).
 RUN if command -v dnf >/dev/null 2>&1; then \
-        dnf install -y systemd-boot-unsigned fuse-overlayfs dbus-daemon \
+        dnf install -y systemd-boot-unsigned fuse-overlayfs dbus-daemon rsync \
         && dnf clean all; \
     fi
 
