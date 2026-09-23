@@ -367,6 +367,8 @@ TTYPath=/dev/ttyS0
 [Install]
 WantedBy=multi-user.target
 LREOF
+mkdir -p /etc/systemd/system-preset
+echo "enable live-ready.service" >> /etc/systemd/system-preset/90-live-debug.preset
 systemctl enable live-ready.service || true
 
 # fisherman (tuna-installer backend) creates /var/fisherman-tmp and bind-mounts
