@@ -11,7 +11,7 @@ workflow files and variant config are intact.
 |---|---|
 | `test-luks-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
 | `test-plain-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
-| `build-iso-bluefin.yml` | **enabled** for `workflow_dispatch` of `utah`; `bluefin` and `bluefin-lts-hwe` dormant with schedules commented out |
+| `build-iso-bluefin.yml` | **enabled** for `workflow_dispatch` of `utah` (always pass `-f variant=utah`); `bluefin` and `bluefin-lts-hwe` dormant with schedules commented out |
 | `build-iso.yml` (dakota) | active |
 | Required checks on `main` | `LUKS E2E dakota (dev)`, `LUKS E2E dakota (stable)`, `ShellCheck` |
 

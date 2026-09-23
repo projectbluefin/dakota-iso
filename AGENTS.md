@@ -14,7 +14,8 @@ Home repo: [projectbluefin/dakota-iso](https://github.com/projectbluefin/dakota-
 removed from the PR/schedule matrices in `test-luks-install.yml` and `test-plain-install.yml`.
 `build-iso-bluefin.yml` is enabled for manual dispatch of the `utah` variant (added in #216,
 published to R2 as `utah-live-latest.iso`), while scheduled triggers remain commented out.
-Their code, docs and size invariants below are retained for revival. Revival steps: [`docs/variants.md`](docs/variants.md).
+The bluefin and bluefin-lts-hwe code, docs and size invariants below are retained for revival,
+not for current CI. **Do not re-add bluefin or bluefin-lts-hwe to any workflow matrix.** Revival steps: [`docs/variants.md`](docs/variants.md).
 
 ## The System You Are Part Of
 

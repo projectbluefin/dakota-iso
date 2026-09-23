@@ -10,17 +10,18 @@ One NVIDIA-unified ISO is built and published to R2 on a schedule, and Utah is p
 |---|---|---|---|---|
 | Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | 1st of month 03:00 UTC, `workflow_dispatch` |
 | Utah | `build-iso-bluefin.yml` | `utah-live-latest.iso` | `projectbluefin/utah:testing` | `workflow_dispatch` (variant=utah) |
+
 The Bluefin and Bluefin LTS HWE ISOs are **no longer produced automatically**. As of
-2026-09-18 this repo ships Dakota only; `build-iso-bluefin.yml` is intact but its
-`schedule` trigger is commented out, so it runs only when a maintainer dispatches it.
+2026-09-18 this repo ships Dakota and Utah; `build-iso-bluefin.yml` is enabled for the
+`utah` variant, but its daily `schedule` is commented out, and the bluefin variants are dormant.
 See [`docs/variants.md`](variants.md) for the full dormancy map and revival steps.
 
 | ISO | Workflow | R2 latest name | State |
 |---|---|---|---|
-| Bluefin | `build-iso-bluefin.yml` | `bluefin-live-latest.iso` | workflow disabled |
-| Bluefin LTS HWE | `build-iso-bluefin.yml` | `bluefin-lts-hwe-live-latest.iso` | workflow disabled |
+| Bluefin | `build-iso-bluefin.yml` | `bluefin-live-latest.iso` | dormant (never dispatch without `-f variant=utah`) |
+| Bluefin LTS HWE | `build-iso-bluefin.yml` | `bluefin-lts-hwe-live-latest.iso` | dormant (never dispatch without `-f variant=utah`) |
+| Utah | `build-iso-bluefin.yml` | `utah-live-latest.iso` | active via dispatch (`-f variant=utah`) |
 
-The ISO is a **unified NVIDIA ISO** — the live environment boots the NVIDIA variant; the offline OCI store lets the installer deploy to non-NVIDIA hardware without a network pull (bootc auto-rebases on first upgrade).
 
 To trigger a fresh Dakota publish:
 ```bash
