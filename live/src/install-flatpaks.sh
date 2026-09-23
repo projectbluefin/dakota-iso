@@ -27,7 +27,11 @@ sleep 1
 # ── Seed flatpak repo from build cache (warm start) ──────────────────────────
 if [ -d "${FLATPAK_CACHE}/repo/refs" ]; then
     echo "Seeding flatpak repo from build cache..."
-    rsync -a --ignore-existing "${FLATPAK_CACHE}/repo/" /var/lib/flatpak/repo/ || true
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --ignore-existing "${FLATPAK_CACHE}/repo/" /var/lib/flatpak/repo/ || true
+    else
+        cp -a -n "${FLATPAK_CACHE}/repo/." /var/lib/flatpak/repo/ || true
+    fi
     echo "Cache seed complete"
 fi
 
@@ -149,5 +153,10 @@ flatpak uninstall --system --noninteractive --unused || true
 # ── Save flatpak repo to build cache for next build ──────────────────────────
 echo "Saving flatpak repo to build cache..."
 mkdir -p "${FLATPAK_CACHE}"
-rsync -a --delete /var/lib/flatpak/repo/ "${FLATPAK_CACHE}/repo/"
+if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete /var/lib/flatpak/repo/ "${FLATPAK_CACHE}/repo/"
+else
+    rm -rf "${FLATPAK_CACHE}/repo"
+    cp -a /var/lib/flatpak/repo "${FLATPAK_CACHE}/repo"
+fi
 echo "Cache updated"
