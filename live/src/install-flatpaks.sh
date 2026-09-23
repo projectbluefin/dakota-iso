@@ -27,6 +27,9 @@ sleep 1
 # ── Seed flatpak repo from build cache (warm start) ──────────────────────────
 if [ -d "${FLATPAK_CACHE}/repo/refs" ]; then
     echo "Seeding flatpak repo from build cache..."
+    # cp, unlike rsync, will not create the destination directory, and
+    # /var/lib/flatpak/repo does not exist until flatpak first runs.
+    mkdir -p /var/lib/flatpak/repo
     if command -v rsync >/dev/null 2>&1; then
         rsync -a --ignore-existing "${FLATPAK_CACHE}/repo/" /var/lib/flatpak/repo/ || true
     else

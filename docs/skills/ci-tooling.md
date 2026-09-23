@@ -308,4 +308,5 @@ When building live ISOs on minimal Fedora/CentOS/Hummingbird bases (e.g. Utah):
    On distributions where `systemctl preset-all` runs on early boot, units without an explicit
    preset in `/etc/systemd/system-preset/` may be disabled or masked. Services critical for CI
    boot signaling (like `live-ready.service`) must be registered in a preset file
-   (`/etc/systemd/system-preset/90-live-debug.preset`).
+   (`/etc/systemd/system-preset/90-live.preset`).  This file ships in every build; the
+   DEBUG-only `90-live-debug.preset` is deliberately not used for it.
