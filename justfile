@@ -93,12 +93,30 @@ build-bg target:
     echo "Build PID $! — tailing log (Ctrl-C is safe, build continues)"
     tail -f "${LOG}"
 
-# Helper: returns "--bootc-installer-payload-ref <ref>" or "" if no payload_ref file
+# Helper: returns "--bootc-installer-payload-ref <ref>" (digest-pinned after
+# cosign verification) or "" if no payload_ref file.  image-builder network-
+# pulls this ref at ISO build time, so pin exactly what was verified.
+# Exits non-zero if verification fails — never emit the flag without a value,
+# or word splitting in the caller makes the next argument the flag's value.
 _payload_ref_flag target:
-    @if [ -f "{{target}}/payload_ref" ]; then echo "--bootc-installer-payload-ref $(cat '{{target}}/payload_ref' | tr -d '[:space:]')"; fi
+    #!/usr/bin/bash
+    set -euo pipefail
+    if [ -f "{{target}}/payload_ref" ]; then
+        REF=$(cat '{{target}}/payload_ref' | tr -d '[:space:]')
+        case "$REF" in
+            ghcr.io/projectbluefin/*|ghcr.io/ublue-os/*)
+                REF=$(scripts/verify-image-signature.sh "$REF") ;;
+        esac
+        if [ -z "$REF" ]; then
+            echo "ERROR: {{target}}/payload_ref is empty — expected an image reference" >&2
+            exit 1
+        fi
+        echo "--bootc-installer-payload-ref $REF"
+    fi
 
 container target:
     #!/usr/bin/bash
+    set -euo pipefail
     test -f "{{target}}/payload_ref" || { echo "ERROR: {{target}}/payload_ref not found — create it with the base image reference, e.g.: echo 'ghcr.io/projectbluefin/dakota:latest' > {{target}}/payload_ref"; exit 1; }
     # live_target overrides the Containerfile TARGET build-arg when the live
     # environment image differs from the variant directory name.
@@ -107,6 +125,9 @@ container target:
     LIVE_TARGET=$(cat "{{target}}/live_target" 2>/dev/null | tr -d '[:space:]' || echo "{{target}}")
     LIVE_TAG=$(cat "{{target}}/tag" 2>/dev/null | tr -d '[:space:]' || echo "stable")
     LIVE_REGISTRY=$(cat "{{target}}/registry" 2>/dev/null | tr -d '[:space:]' || echo "projectbluefin")
+    # Verify the cosign signature of the live base image and pin the build to
+    # the verified digest — a mutable tag alone does not prove project CI built it.
+    BASE_PINNED=$(scripts/verify-image-signature.sh "ghcr.io/${LIVE_REGISTRY}/${LIVE_TARGET}:${LIVE_TAG}")
     podman build --cap-add sys_admin --security-opt label=disable \
         --layers \
         --build-arg DEBUG={{debug}} \
@@ -114,6 +135,7 @@ container target:
         --build-arg TARGET="${LIVE_TARGET}" \
         --build-arg TAG="${LIVE_TAG}" \
         --build-arg REGISTRY="${LIVE_REGISTRY}" \
+        --build-arg BASE_DIGEST="@${BASE_PINNED##*@}" \
         --build-arg CACHE_BUST="$(date +%Y%m%d)" \
         -t {{target}}-installer -f ./live/Containerfile ./live
 
@@ -134,7 +156,10 @@ iso-sd-boot target:
     COMPRESSION={{compression}} \
     bash scripts/iso-sd-boot.sh
 iso target:
-    {{image-builder}} build --bootc-ref localhost/{{target}}-installer --bootc-default-fs ext4 `just _payload_ref_flag {{target}}` bootc-generic-iso
+    #!/usr/bin/bash
+    set -euo pipefail
+    PAYLOAD_FLAG="$(just _payload_ref_flag {{target}})"
+    {{image-builder}} build --bootc-ref localhost/{{target}}-installer --bootc-default-fs ext4 $PAYLOAD_FLAG bootc-generic-iso
 
 # Run chunkah content-based layer splitting against a source image and push to a destination.
 #
@@ -148,8 +173,14 @@ chunkify src dst:
     #!/usr/bin/bash
     set -euo pipefail
 
-    echo "==> Pulling source image: {{src}}"
-    podman pull {{src}}
+    echo "==> Verifying and pulling source image: {{src}}"
+    SRC="{{src}}"
+    case "$SRC" in
+        ghcr.io/projectbluefin/*|ghcr.io/ublue-os/*)
+            SRC=$(scripts/verify-image-signature.sh "$SRC")
+            ;;
+    esac
+    podman pull "$SRC"
 
     echo "==> Running chunkah on {{src}}..."
     # Use /var (not /tmp) — the OCI archive can exceed the tmpfs size for large images
