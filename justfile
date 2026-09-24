@@ -142,6 +142,13 @@ iso target:
 # Pulls the source image, runs chunkah to produce a zstd:chunked OCI archive,
 # loads the result into podman, and pushes it to the destination ref.
 #
+# TLS: the push only disables certificate verification for local destinations
+# (localhost, 127.0.0.1, [::1], and RFC1918 addresses). Every other
+# destination — including hostname-addressed LAN registries such as
+# registry.lan:5000 or myhost.local:5000 — is pushed with TLS verification on.
+# For a self-signed LAN registry, add it to containers-registries.conf(5) with
+# insecure = true rather than turning verification off globally.
+#
 # Usage:
 #   just chunkify ghcr.io/projectbluefin/dakota:latest 192.168.122.1:5000/dakota:chunked
 #   just chunkify ghcr.io/projectbluefin/dakota:latest ghcr.io/projectbluefin/dakota:chunked
@@ -174,7 +181,19 @@ chunkify src dst:
 
     echo "==> Tagging and pushing to {{dst}}..."
     podman tag "${LOADED_ID}" "{{dst}}"
-    podman push --tls-verify=false "{{dst}}"
+    PUSH_TLS_ARGS=()
+    shopt -s extglob
+    case "{{dst}}" in
+        localhost|localhost:+([0-9])|localhost/*|localhost:+([0-9])/* | \
+        127.0.0.1|127.0.0.1:+([0-9])|127.0.0.1/*|127.0.0.1:+([0-9])/* | \
+        '[::1]'|'[::1]:'+([0-9])|'[::1]/'*|'[::1]:'+([0-9])/* | \
+        10.@(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9]).@(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9]).@(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])?(:+([0-9]))?(/*) | \
+        192.168.@(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9]).@(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])?(:+([0-9]))?(/*) | \
+        172.@(1[6-9]|2[0-9]|3[01]).@(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9]).@(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])?(:+([0-9]))?(/*))
+            PUSH_TLS_ARGS+=(--tls-verify=false)
+            ;;
+    esac
+    podman push "${PUSH_TLS_ARGS[@]}" "{{dst}}"
 
     echo "==> Done: {{dst}}"
 
