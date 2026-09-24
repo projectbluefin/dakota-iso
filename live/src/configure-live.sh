@@ -367,6 +367,12 @@ TTYPath=/dev/ttyS0
 [Install]
 WantedBy=multi-user.target
 LREOF
+# live-ready.service ships in every build, not just DEBUG ones, so its preset
+# lives in its own file rather than the DEBUG-only 90-live-debug.preset.  The
+# preset policy on these bases disables units it does not list, and
+# `systemctl preset-all` at first boot would otherwise drop the enable below.
+mkdir -p /etc/systemd/system-preset
+echo "enable live-ready.service" > /etc/systemd/system-preset/90-live.preset
 systemctl enable live-ready.service || true
 
 # fisherman (tuna-installer backend) creates /var/fisherman-tmp and bind-mounts

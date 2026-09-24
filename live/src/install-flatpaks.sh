@@ -27,7 +27,14 @@ sleep 1
 # ── Seed flatpak repo from build cache (warm start) ──────────────────────────
 if [ -d "${FLATPAK_CACHE}/repo/refs" ]; then
     echo "Seeding flatpak repo from build cache..."
-    rsync -a --ignore-existing "${FLATPAK_CACHE}/repo/" /var/lib/flatpak/repo/ || true
+    # cp, unlike rsync, will not create the destination directory, and
+    # /var/lib/flatpak/repo does not exist until flatpak first runs.
+    mkdir -p /var/lib/flatpak/repo
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --ignore-existing "${FLATPAK_CACHE}/repo/" /var/lib/flatpak/repo/ || true
+    else
+        cp -a -n "${FLATPAK_CACHE}/repo/." /var/lib/flatpak/repo/ || true
+    fi
     echo "Cache seed complete"
 fi
 
@@ -149,5 +156,22 @@ flatpak uninstall --system --noninteractive --unused || true
 # ── Save flatpak repo to build cache for next build ──────────────────────────
 echo "Saving flatpak repo to build cache..."
 mkdir -p "${FLATPAK_CACHE}"
-rsync -a --delete /var/lib/flatpak/repo/ "${FLATPAK_CACHE}/repo/"
+if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete /var/lib/flatpak/repo/ "${FLATPAK_CACHE}/repo/"
+else
+    # Stage into a sibling dir first so a failed copy cannot leave the cache
+    # empty: the warm repo is only replaced once the copy fully succeeds.
+    rm -rf "${FLATPAK_CACHE}/repo.new"
+    if cp -a /var/lib/flatpak/repo "${FLATPAK_CACHE}/repo.new"; then
+        rm -rf "${FLATPAK_CACHE}/repo.old"
+        if [ -d "${FLATPAK_CACHE}/repo" ]; then
+            mv "${FLATPAK_CACHE}/repo" "${FLATPAK_CACHE}/repo.old"
+        fi
+        mv "${FLATPAK_CACHE}/repo.new" "${FLATPAK_CACHE}/repo"
+        rm -rf "${FLATPAK_CACHE}/repo.old"
+    else
+        echo "WARNING: cache save failed; keeping previous warm cache" >&2
+        rm -rf "${FLATPAK_CACHE}/repo.new"
+    fi
+fi
 echo "Cache updated"

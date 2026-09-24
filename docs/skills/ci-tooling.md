@@ -287,3 +287,26 @@ curl -sIL https://projectbluefin.dev/dakota-live-latest.iso | grep -i content-le
 Note the same protected-branch rule is why every PR needs `gh pr merge --admin`: the
 required contexts `LUKS E2E (dev)` / `LUKS E2E (stable)` no longer match any job name
 since the E2E matrix gained a variant dimension, so they never report.
+
+---
+
+## Live ISO build requirements for minimal/non-standard bases (2026-09-23)
+
+When building live ISOs on minimal Fedora/CentOS/Hummingbird bases (e.g. Utah):
+
+1. **`dbus-daemon` required for Flatpak pre-installation:**
+   `live/src/install-flatpaks.sh` starts `dbus-daemon --system --fork`. Modern Fedora/Hummingbird
+   defaults to `dbus-broker` instead of `dbus-daemon`. `dbus-daemon` must be installed via DNF
+   in `live/Containerfile` during the live environment setup stage.
+
+2. **Build cache synchronization without `rsync`:**
+   Minimal base images may not ship `rsync` in their standard repositories. `install-flatpaks.sh`
+   uses `cp -a` fallbacks when `rsync` is absent to ensure flatpak cache seeding and updating
+   does not abort the build.
+
+3. **`systemd` presets override build-time enablement:**
+   On distributions where `systemctl preset-all` runs on early boot, units without an explicit
+   preset in `/etc/systemd/system-preset/` may be disabled or masked. Services critical for CI
+   boot signaling (like `live-ready.service`) must be registered in a preset file
+   (`/etc/systemd/system-preset/90-live.preset`).  This file ships in every build; the
+   DEBUG-only `90-live-debug.preset` is deliberately not used for it.
