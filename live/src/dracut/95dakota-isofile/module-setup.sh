@@ -11,7 +11,10 @@ depends() {
 }
 
 installkernel() {
-    instmods loop iso9660 squashfs overlay
+    # isofs is the module name on kernels that build ISO 9660 support as
+    # "isofs" rather than "iso9660"; requesting both keeps the ISO mountable on
+    # every kernel this module ships on, production media included.
+    instmods loop iso9660 isofs squashfs overlay
     instmods usb-storage xhci-pci xhci_hcd ehci-pci ehci_hcd uhci-hcd ohci-hcd
     instmods sd_mod sr_mod virtio_blk virtio_pci virtio_scsi
     instmods exfat vfat fat ntfs3 ext4 nls_cp437 nls_iso8859_1 nls_utf8

@@ -1,0 +1,126 @@
+name: Scheduled GUI Installer E2E
+
+on:
+  schedule:
+    # Run weekly after the LUKS and plain installer E2E workflows.
+    - cron: '0 4 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  gui-installer-e2e:
+    name: GUI installer E2E ${{ matrix.variant }} (${{ matrix.installer_channel }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [dakota]
+        installer_channel: [dev, stable]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            just podman buildah skopeo mtools xorriso squashfs-tools dosfstools \
+            qemu-system-x86 ovmf socat sshpass imagemagick
+
+      - name: Enable KVM access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo adduser "$USER" kvm || true
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Configure podman storage
+        run: bash .github/scripts/configure_podman_storage.sh
+
+      - name: Build debug ISO
+        env:
+          INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
+        run: |
+          sudo mkdir -p /var/iso-build
+          sudo just \
+            debug=1 \
+            installer_channel="$INSTALLER_CHANNEL" \
+            output_dir=/var/iso-build \
+            iso-sd-boot "${{ matrix.variant }}"
+          mkdir -p output
+          sudo cp /var/iso-build/${{ matrix.variant }}-live.iso \
+            output/${{ matrix.variant }}-debug-live.iso
+          sudo chown -R "$USER:$(id -gn)" output/
+
+      - name: Run GUI installer E2E
+        id: gui_test
+        timeout-minutes: 90
+        run: just gui-e2e "${{ matrix.variant }}"
+
+      - name: Collect GUI diagnostics
+        if: always()
+        run: |
+          mkdir -p artifacts
+          for log in \
+            /tmp/dakota-plain-qemu-live-serial.log \
+            /tmp/dakota-plain-qemu-installed-serial.log \
+            /tmp/dakota-plain-qemu-live-serial.log.atspi.log \
+            output/${{ matrix.variant }}-gui-installer-logs.txt; do
+            [[ -f "$log" ]] && cp "$log" artifacts/
+          done
+
+          capture_screenshot() {
+            local monitor="$1" screenshot="$2" prefix=""
+            [[ -S "$monitor" ]] || return 0
+            [[ -w "$monitor" ]] || prefix="sudo"
+            echo "screendump ${screenshot}" | $prefix socat - "UNIX-CONNECT:${monitor}" \
+              2>/dev/null || true
+          }
+          capture_screenshot /tmp/dakota-plain-qemu-live.sock artifacts/gui-live.ppm
+          [[ -f /tmp/plain-screenshot-final.ppm ]] && \
+            cp /tmp/plain-screenshot-final.ppm artifacts/gui-installed.ppm
+          for screenshot in artifacts/*.ppm; do
+            [[ -f "$screenshot" ]] || continue
+            convert "$screenshot" "${screenshot%.ppm}.png" 2>/dev/null || true
+          done
+
+          ssh_opts=(
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o LogLevel=ERROR
+            -o ConnectTimeout=5
+            -o PreferredAuthentications=password
+          )
+          {
+            echo "=== /var/log/bootc-installer.log ==="
+            sshpass -p live ssh "${ssh_opts[@]}" liveuser@127.0.0.1 -p 2223 \
+              'sudo cat /var/log/bootc-installer.log' 2>&1 || true
+            echo "=== fisherman output ==="
+            sshpass -p live ssh "${ssh_opts[@]}" liveuser@127.0.0.1 -p 2223 \
+              'cat /home/liveuser/.cache/bootc-installer/fisherman-output.log' 2>&1 || true
+          } > artifacts/installer-logs.txt
+
+      - name: Upload GUI installer diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gui-installer-e2e-${{ matrix.variant }}-${{ matrix.installer_channel }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
