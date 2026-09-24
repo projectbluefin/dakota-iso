@@ -55,6 +55,8 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
         self.script_under_test = self.sandbox / "scripts" / "build-live-squashfs.sh"
         shutil.copy2(SCRIPT, self.script_under_test)
         self.script_under_test.chmod(0o755)
+        shutil.copy2(REPO / "scripts" / "variant-config.sh", self.sandbox / "scripts" / "variant-config.sh")
+        (self.sandbox / "scripts" / "variant-config.sh").chmod(0o755)
 
         # Setup mock container mount
         self.mount_dir = self.sandbox / "mock-image-mount"
