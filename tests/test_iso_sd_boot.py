@@ -81,6 +81,8 @@ class IsoSdBootHarness(unittest.TestCase):
         self.script_under_test = self.sandbox / "scripts" / "iso-sd-boot.sh"
         self.script_under_test.write_text(script_content)
         self.script_under_test.chmod(0o755)
+        shutil.copy2(REPO / "scripts" / "variant-config.sh", self.sandbox / "scripts" / "variant-config.sh")
+        (self.sandbox / "scripts" / "variant-config.sh").chmod(0o755)
 
         # Create target directories
         self.setup_target("dakota", payload_ref="ghcr.io/projectbluefin/dakota:stable\n",
