@@ -1,11 +1,11 @@
 # Utah system flatpaks
 # Mirrors the Bluefin Brewfile-derived set Utah bakes into its own live ISO
-# (plus Ghostty, which Utah installs from the TunaOS remote — not on Flathub,
-# so it cannot ride this list; see projectbluefin/utah iso/live/src).
+# plus Ghostty, Utah's only terminal, from the TunaOS OCI remote.
 # Installed into the live squashfs at build time; copied offline to the
 # target by the installer during installation.
 #
-# Format: one app ID per line, resolved from the flathub remote.
+# Format: one app ID per line from flathub, or "remote:app-id" (see
+# install-flatpaks.sh for the known remotes).
 be.alexandervanhee.gradia
 com.github.PintaProject.Pinta
 com.github.tchx84.Flatseal
@@ -42,3 +42,4 @@ org.gnome.Weather
 org.mozilla.firefox
 org.mozilla.thunderbird
 page.tesk.Refine
+tuna-os:com.mitchellh.ghostty

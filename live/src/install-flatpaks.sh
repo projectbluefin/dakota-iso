@@ -130,13 +130,34 @@ VARIANT=$(echo "${TARGET:-dakota-nvidia}" | sed 's/-nvidia-open$//;s/-nvidia$//'
 if [ -f "/src/${VARIANT}/flatpaks" ]; then
     FLATPAKS_LIST="/src/${VARIANT}/flatpaks"
 fi
-readarray -t WANTED < <(grep -v '^[[:space:]]*#' "${FLATPAKS_LIST}" | grep -v '^[[:space:]]*$')
+readarray -t ENTRIES < <(grep -v '^[[:space:]]*#' "${FLATPAKS_LIST}" | grep -v '^[[:space:]]*$')
+
+# An entry is an app ID from Flathub, or "remote:app-id" for an app a variant
+# takes from another remote. Utah's terminal is Ghostty from the TunaOS OCI
+# remote -- Hummingbird packages no ptyxis or vte -- and without this form the
+# Utah ISO shipped no terminal at all.
+declare -A REMOTE_URLS=(
+    [tuna-os]="https://tunaos.org/flatpak/tuna-os.flatpakrepo"
+)
+declare -A BY_REMOTE=()
+WANTED=()
+for entry in "${ENTRIES[@]}"; do
+    remote=flathub app="${entry}"
+    if [[ "${entry}" == *:* ]]; then
+        remote="${entry%%:*}" app="${entry#*:}"
+        [[ -n "${REMOTE_URLS[${remote}]:-}" ]] || { echo "Unknown flatpak remote '${remote}' in ${FLATPAKS_LIST}" >&2; exit 1; }
+    fi
+    BY_REMOTE[${remote}]+="${app} "
+    WANTED+=("${app}")
+done
 
 # Install or update everything in the list (--or-update = skip if current)
 # --no-related skips locale packs and debug symbols (~3 GB uncompressed)
-if [ "${#WANTED[@]}" -gt 0 ]; then
-    flatpak install --system --noninteractive --no-related --or-update flathub "${WANTED[@]}"
-fi
+for remote in "${!BY_REMOTE[@]}"; do
+    [[ "${remote}" == flathub ]] || flatpak remote-add --system --if-not-exists "${remote}" "${REMOTE_URLS[${remote}]}"
+    read -ra apps <<< "${BY_REMOTE[${remote}]}"
+    flatpak install --system --noninteractive --no-related --or-update "${remote}" "${apps[@]}"
+done
 
 # Remove any system app that is no longer in the wanted list
 readarray -t INSTALLED < <(flatpak list --app --system --columns=application 2>/dev/null || true)
