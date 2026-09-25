@@ -21,7 +21,23 @@ FLATPAK_CACHE="/var/cache/flatpak-dl"
 mkdir -p "${FLATPAK_CACHE}/tmp"
 export TMPDIR="${FLATPAK_CACHE}/tmp"
 mkdir -p /run/dbus
+# An OCI flatpak remote (tuna-os, for Utah's Ghostty) makes flatpak spawn a
+# session bus of its own, and a bus refuses to start without a machine id --
+# which a container build does not have:
+#   Cannot spawn a message bus without a machine-id
+# Flathub's ostree remotes never ask for either. The id is build-time only;
+# systemd regenerates a real one on first boot. Same fix as
+# projectbluefin/utah iso/live/src/install-flatpaks.sh.
+CREATED_MACHINE_ID=0
+if [[ ! -s /etc/machine-id ]]; then
+    CREATED_MACHINE_ID=1
+    systemd-machine-id-setup >/dev/null 2>&1 || dbus-uuidgen > /etc/machine-id
+fi
 dbus-daemon --system --fork --nopidfile
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    DBUS_SESSION_BUS_ADDRESS="$(dbus-daemon --session --fork --print-address)"
+    export DBUS_SESSION_BUS_ADDRESS
+fi
 sleep 1
 
 # ── Seed flatpak repo from build cache (warm start) ──────────────────────────
@@ -196,3 +212,10 @@ else
     fi
 fi
 echo "Cache updated"
+
+# Do not ship the build-time machine id: every live boot would share it.
+# An empty file lets systemd generate one per boot, as it did before.
+if [[ "${CREATED_MACHINE_ID}" == 1 ]]; then
+    : > /etc/machine-id
+    rm -f /var/lib/dbus/machine-id
+fi
