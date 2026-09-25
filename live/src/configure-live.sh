@@ -440,7 +440,7 @@ install -Dm644 "$SCRIPT_DIR/images/dakotaraptor.png" /usr/share/bootc-installer/
 #   nvidia_imgref    — nvidia image ref used as local_imgref offline store
 #   bootloader       — "systemd" (default) or "grub"
 #   composefs        — "true" (default) or "false"
-#   flatpak_var_path — flatpak data path inside target (default: state/os/default/var/lib/flatpak)
+#   flatpak_var_path — unused; the installer reads flatpak_var_path from images.json, where it is the target's var root (fisherman appends lib/flatpak): state/os/default/var for composefs, omitted for ostree
 #   images_json      — variant-specific images.json (optional, overrides live/src/etc/bootc-installer/images.json)
 TARGET="${TARGET:-dakota-nvidia}"
 
