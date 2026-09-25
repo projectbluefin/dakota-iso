@@ -12,15 +12,21 @@ name: LUKS Install End-to-End Test
 #
 # Reproduces: projectbluefin/dakota#270
 
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
   schedule:
     # Run weekly on Monday 04:00 UTC
     - cron: '0 4 * * 1'
-
 permissions: {}
 
 jobs:
