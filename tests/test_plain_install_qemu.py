@@ -97,6 +97,8 @@ class PlainInstallHarness(unittest.TestCase):
         shutil.copy(SCRIPT, self.workdir / "scripts" / "plain-install-qemu.sh")
         # The script scp's this into the VM; only its existence matters here.
         (self.workdir / "scripts" / "fisherman-install.sh").write_text("#!/usr/bin/bash\n")
+        shutil.copy(REPO / "scripts" / "variant-config.sh", self.workdir / "scripts" / "variant-config.sh")
+        (self.workdir / "scripts" / "variant-config.sh").chmod(0o755)
 
         self.bindir = self.tmpdir / "bin"
         self.bindir.mkdir()

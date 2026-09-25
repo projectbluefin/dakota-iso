@@ -850,6 +850,25 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
                 f"{workflow.name} must define workflow-level concurrency.",
             )
 
+    def test_e2e_workflows_define_push_concurrency(self):
+        """Expensive post-merge E2E runs must cancel superseded runs on push."""
+        for workflow in [TEST_LUKS_WORKFLOW, TEST_PLAIN_WORKFLOW]:
+            content = workflow.read_text()
+            self.assertIn(
+                "\nconcurrency:\n",
+                content,
+                f"{workflow.name} must define concurrency.",
+            )
+            self.assertIn(
+                "cancel-in-progress: ${{ github.event_name == 'push' }}",
+                content,
+                f"{workflow.name} must cancel in-progress runs on push events.",
+            )
+            self.assertIn(
+                "paths-ignore:",
+                content,
+                f"{workflow.name} should ignore doc-only pushes.",
+            )
     def test_build_iso_rotates_and_prunes_dakota_backups(self):
         """Dakota publisher must maintain exactly 3 backup ISO slots."""
         content = BUILD_ISO_WORKFLOW.read_text()

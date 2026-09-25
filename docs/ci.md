@@ -35,15 +35,15 @@ gh workflow run build-iso.yml --ref main
 |---|---|---|
 | Dakota Build & Publish | `build-iso.yml` | 1st of month 03:00 UTC, `workflow_dispatch` |
 | Bluefin & Utah Build & Publish | `build-iso-bluefin.yml` | `workflow_dispatch` (active for `utah`; `bluefin` and `bluefin-lts-hwe` dormant) |
-| LUKS E2E Test | `test-luks-install.yml` | PRs to main, weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
-| Plain Install E2E | `test-plain-install.yml` | PRs to main, weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
+| LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
+| Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
 | ShellCheck Lint | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
 
 ## build-iso.yml
 
-**Triggers:** 1st of each month 03:00 UTC, `workflow_dispatch`
+**Triggers:** Daily 03:00 UTC (`0 3 * * *`), `workflow_dispatch`
 **Job:** `build-and-publish` (single job, no matrix)
 **Runner:** `ubuntu-24.04`
 **Runs as:** root via `sudo`
@@ -507,19 +507,27 @@ Total worst-case ceiling: **100 min** (vs. 90 min monolithic), with precise attr
 Gates 1+2 use 4 GiB to keep the overlay tmpfs tight (~2 GiB) for ENOSPC testing.
 Gate 3 switches to 8 GiB for realistic btrfs+composefs install performance.
 
-### Build trigger reduced to monthly + on-demand to cap churn (2026-06)
+### Build trigger restored to daily + on-demand (2026-07)
 
-The original `build-iso.yml` ran on every push to `live/**`/`scripts/**` and
-on a daily cron, creating excessive CI and publish churn.
-
-**Fix:** push triggers and the daily cron were removed. The workflow now runs:
-- `schedule: cron '0 3 1 * *'` — 1st of each month at 03:00 UTC
+The original `build-iso.yml` ran on every push to `live/**`/`scripts/**`.
+Push triggers were removed, and the build schedule was restored to run:
+- `schedule: cron '0 3 * * *'` — daily at 03:00 UTC
 - `workflow_dispatch` — on demand for releases, hotfixes, or manual triggers
 
-This keeps automatic publishing stable while preserving on-demand manual runs.
-For mid-cycle named releases (e.g. a new alpha), use the manual promotion flow
-documented in `docs/r2-promotion.md`.
+This keeps fresh Dakota image updates flowing daily while preserving on-demand
+manual runs. For mid-cycle named releases (e.g. a new alpha), use the manual
+promotion flow documented in `docs/r2-promotion.md`.
 
+### E2E on push to main: cancel superseded runs, skip doc-only pushes (2026-09-22)
+
+When multiple PRs are merged to `main` in close succession, each merge triggers
+the heavy E2E workflows (`test-luks-install.yml` and `test-plain-install.yml`),
+which run for 45–104 minutes per build.
+
+**Fix:**
+- Added workflow-level `concurrency` with `group: e2e-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}` and `cancel-in-progress: ${{ github.event_name == 'push' }}` so subsequent merges cancel superseded builder runs without interrupting scheduled or manual dispatches.
+- Added `paths-ignore: ['docs/**', '**/*.md']` to avoid building E2E images for documentation-only changes.
+- Invariant guarded by `test_e2e_workflows_define_push_concurrency` in `tests/test_live_build_invariants.py`.
 ### btrfs composefs install — root cause chain and fixes (2026-06)
 
 **Context:** dakota-nvidia:stable uses GNOME OS / freedesktop-sdk. Its initramfs
