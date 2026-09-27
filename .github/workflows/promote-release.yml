@@ -19,8 +19,7 @@ on:
         default: dakota
         options:
           - dakota
-          - bluefin
-          - bluefin-lts-hwe
+          - utah
       release_name:
         description: Named release suffix, e.g. alpha6
         required: true
