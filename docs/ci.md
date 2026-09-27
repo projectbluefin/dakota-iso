@@ -696,7 +696,10 @@ because squashing destroys the ostree commit structure bootc requires, producing
 Expected commit object, not File
 ```
 
-Fix: `build-live-squashfs.sh` detects `composeFsBackend` from `recipe.json` and:
+Fix: `build-live-squashfs.sh` resolves `composeFsBackend` per variant — in
+`--target` mode from `scripts/variant-config.sh` (`variant_composefs`, the single
+host-side authority), in positional mode from the `recipe.json` baked into the
+live container — and:
 - **composefs = true** (dakota): squash → VFS containers-storage (unchanged)
 - **composefs = false** (bluefin/*): store OCI layout directly at `/var/lib/containers/oci-store`
 

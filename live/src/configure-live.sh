@@ -448,27 +448,27 @@ TARGET="${TARGET:-dakota-nvidia}"
 VARIANT=$(echo "$TARGET" | sed 's/-nvidia-open$//;s/-nvidia$//')
 VARIANT_DIR="/tmp/src/${VARIANT}"
 
+# read_variant_config <key> <default> — trimmed contents of
+# $VARIANT_DIR/<key>, or <default> when the file is absent or blank.
+# Mirrors _vc_read in scripts/variant-config.sh, which cannot be sourced here
+# because it is not copied into the live container build context.
+read_variant_config() {
+    local path="$VARIANT_DIR/$1" default="$2" value
+    if [[ -f "$path" ]]; then
+        value=$(tr -d '[:space:]' < "$path")
+        if [[ -n "$value" ]]; then
+            printf '%s' "$value"
+            return 0
+        fi
+    fi
+    printf '%s' "$default"
+}
+
 # Read per-variant config with defaults
-if [[ -f "$VARIANT_DIR/base_imgref" ]]; then
-    BASE_IMGREF=$(tr -d '[:space:]' < "$VARIANT_DIR/base_imgref")
-else
-    BASE_IMGREF="ghcr.io/projectbluefin/dakota:stable"
-fi
-if [[ -f "$VARIANT_DIR/nvidia_imgref" ]]; then
-    NVIDIA_IMGREF=$(tr -d '[:space:]' < "$VARIANT_DIR/nvidia_imgref")
-else
-    NVIDIA_IMGREF="ghcr.io/projectbluefin/dakota-nvidia:stable"
-fi
-BOOTLOADER="systemd"
-if [[ -f "$VARIANT_DIR/bootloader" ]]; then
-    _BL=$(tr -d '[:space:]' < "$VARIANT_DIR/bootloader")
-    [[ -n "$_BL" ]] && BOOTLOADER="$_BL"
-fi
-COMPOSEFS="true"
-if [[ -f "$VARIANT_DIR/composefs" ]]; then
-    _CFS=$(tr -d '[:space:]' < "$VARIANT_DIR/composefs")
-    [[ -n "$_CFS" ]] && COMPOSEFS="$_CFS"
-fi
+BASE_IMGREF=$(read_variant_config base_imgref "ghcr.io/projectbluefin/dakota:stable")
+NVIDIA_IMGREF=$(read_variant_config nvidia_imgref "ghcr.io/projectbluefin/dakota-nvidia:stable")
+BOOTLOADER=$(read_variant_config bootloader "systemd")
+COMPOSEFS=$(read_variant_config composefs "true")
 
 mkdir -p /etc/bootc-installer
 # Use variant-specific images.json if present, otherwise use the shared one.
