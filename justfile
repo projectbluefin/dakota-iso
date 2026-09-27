@@ -104,7 +104,7 @@ _payload_ref_flag target:
     if [ -f "{{target}}/payload_ref" ]; then
         REF=$(cat '{{target}}/payload_ref' | tr -d '[:space:]')
         case "$REF" in
-            ghcr.io/projectbluefin/*|ghcr.io/ublue-os/*)
+            ghcr.io/projectbluefin/*)
                 REF=$(scripts/verify-image-signature.sh "$REF") ;;
         esac
         if [ -z "$REF" ]; then
@@ -184,7 +184,7 @@ chunkify src dst:
     echo "==> Verifying and pulling source image: {{src}}"
     SRC="{{src}}"
     case "$SRC" in
-        ghcr.io/projectbluefin/*|ghcr.io/ublue-os/*)
+        ghcr.io/projectbluefin/*)
             SRC=$(scripts/verify-image-signature.sh "$SRC")
             ;;
     esac
