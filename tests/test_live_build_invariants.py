@@ -65,6 +65,18 @@ LIVE_SRC_VARIANT_FILES = [
 ]
 
 
+def strip_yaml_comments(text: str) -> str:
+    """Drop whole-line YAML comments so retired (commented-out) entries are invisible."""
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
+def active_matrix_variants(workflow_text: str) -> set:
+    """Variant names present as live (uncommented) matrix entries in a workflow."""
+    return set(re.findall(r"- variant:\s*(\S+)", strip_yaml_comments(workflow_text)))
+
+
 class TestBootCmdline(unittest.TestCase):
     """Ensure LABEL=DAKOTA_LIVE is used (not CDLABEL= or /dev/sr0).
 
@@ -1085,9 +1097,19 @@ class TestVariantConfig(unittest.TestCase):
 
 
     def test_workflow_payload_matches_offline_nvidia_imgref(self):
-        """For non-composefs variants, build-iso-bluefin.yml payload_image must match live/src/<variant>/nvidia_imgref."""
-        content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
+        """For active non-composefs variants, build-iso-bluefin.yml payload_image must match live/src/<variant>/nvidia_imgref."""
+        content = strip_yaml_comments(BUILD_ISO_BLUEFIN_WORKFLOW.read_text())
+        active = active_matrix_variants(BUILD_ISO_BLUEFIN_WORKFLOW.read_text())
+        self.assertIn(
+            "utah",
+            active,
+            f"{BUILD_ISO_BLUEFIN_WORKFLOW.name} must still build the utah variant; "
+            "if every matrix entry is retired this invariant checks nothing.",
+        )
         for variant in ["bluefin", "bluefin-lts-hwe", "utah"]:
+            if variant not in active:
+                # Retired from the build matrix; live/src config is kept for revival.
+                continue
             nvidia_file = REPO / "live" / "src" / variant / "nvidia_imgref"
             if nvidia_file.exists():
                 nvidia_ref = nvidia_file.read_text().strip()
