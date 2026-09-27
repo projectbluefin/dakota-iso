@@ -135,12 +135,16 @@ fi
 #     bootcDirect resolves containers-storage:<ref> via the additional store.
 #     Mirrors projectbluefin/iso commit 34fe6659.
 #
-# Detect composefs from the recipe.json baked into the live container.
+# In --target mode, variant-config.sh is the single authority for the variant.
+# In positional mode, detect composefs from the recipe.json baked into the live
+# container.
 # Run python3 directly (not via sh -c) to avoid nested double-quote parsing
 # failures: sh -c 'python3 -c "...open("...")"' breaks because the inner
 # double-quotes terminate the outer sh argument prematurely.
 COMPOSEFS_BACKEND=false
-if podman run --rm --entrypoint="" "${IMAGE}" \
+if [[ -n "${TARGET}" ]]; then
+    COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")
+elif podman run --rm --entrypoint="" "${IMAGE}" \
        grep -qi '"composeFsBackend": *true' /etc/bootc-installer/recipe.json \
        2>/dev/null; then
     COMPOSEFS_BACKEND=true
