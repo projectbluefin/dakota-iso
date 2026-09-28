@@ -1,4 +1,4 @@
-name: Build and Publish Bluefin Live ISOs
+name: Build and Publish Utah Live ISO
 
 concurrency:
   group: publish-${{ github.workflow }}-${{ github.ref }}
@@ -8,8 +8,8 @@ concurrency:
 # published from dakota-iso. This repository exclusively produces Dakota and Utah ISOs.
 # The Bluefin/Bluefin-LTS matrix entries below are disabled.
 on:
-  # schedule:
-  #   - cron: '0 5 * * *'   # daily, 05:00 UTC (after dakota at 03:00)
+  schedule:
+    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       variant:

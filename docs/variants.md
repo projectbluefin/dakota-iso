@@ -5,27 +5,25 @@ How the Dakota ISO build target works.
 ## Scope: dakota and utah
 
 This repo ships the Dakota and Utah ISOs. The `bluefin` and `bluefin-lts-hwe` ISO builds are
-retired (#228): their `build-iso-bluefin.yml` matrix entries are commented out and they are not
-promotable. Scripts and `live/src/<variant>/` config are kept so a variant can be revived.
+retired (#228): their matrix entries in `build-iso-utah.yml` (renamed from `build-iso-bluefin.yml`)
+are commented out and they are not promotable. Scripts and `live/src/<variant>/` config are kept so a variant can be revived.
 
 | Surface | State |
 |---|---|
 | `test-luks-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
 | `test-plain-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
-| `build-iso-bluefin.yml` | **enabled**, `workflow_dispatch` only (no schedule); matrix builds `utah` alone — `bluefin` / `bluefin-lts-hwe` entries retired as comments. Dispatch with `-f variant=utah` |
+| `build-iso-utah.yml` | **active**, daily schedule 04:00 UTC (`0 4 * * *`) + `workflow_dispatch`; matrix builds `utah` — `bluefin` / `bluefin-lts-hwe` entries retired as comments |
 | `build-iso.yml` (dakota) | active |
 | Required on `main` (ruleset `main — review policy`) | 1 approving review; status check `ShellCheck` |
 
 Retired bluefin builds stay off because their matrix entries are commented out, not because
-the workflow is disabled — the workflow must stay enabled for Utah. There is no `schedule`,
-so every Utah publish is a manual dispatch.
+the workflow is disabled — `build-iso-utah.yml` is enabled and scheduled for daily Utah builds.
 
 ### Reviving a variant
 
 1. Uncomment the variant in the `test-luks-install.yml` / `test-plain-install.yml` matrix.
-2. For the bluefin ISO build, uncomment the variant's matrix entry in `build-iso-bluefin.yml`
-   and re-add it to the `promote-release.yml` choices. Restore the `schedule:` block only if it
-   should publish nightly.
+2. For the bluefin ISO build, uncomment the variant's matrix entry in `build-iso-utah.yml`
+   and re-add it to the `promote-release.yml` choices.
 3. Add the corresponding `LUKS E2E <variant> (<channel>)` contexts to the
    `main — review policy` ruleset.
 
@@ -38,7 +36,7 @@ The `stable` and `lts` legs were red at the time of the change — `sshpass` got
 | Variant | Live env image | Payload (offline store) | Bootloader | Composefs | Filesystem | State |
 |---|---|---|---|---|---|---|
 | `dakota` | `projectbluefin/dakota-nvidia:stable` | same | systemd-boot | yes | btrfs | active |
-| `utah` | `projectbluefin/utah:testing` | same | grub2 (live ESP systemd-boot, Secure Boot off) | no | btrfs | active (manual dispatch) |
+| `utah` | `projectbluefin/utah:testing` | same | grub2 (live ESP systemd-boot, Secure Boot off) | no | btrfs | active (daily schedule 04:00 UTC) |
 | `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs | retired |
 | `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs | retired |
 

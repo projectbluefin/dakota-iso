@@ -1,9 +1,8 @@
 # dakota-iso — Copilot Instructions
 
 > This repo builds the bootable UEFI live ISO from projectbluefin images (GNOME OS / bootc / composefs).
-> Active variant: `dakota` (NVIDIA-unified). `bluefin` and `bluefin-lts-hwe` are **dormant**
-> since 2026-09-18 — off every PR check and schedule, `build-iso-bluefin.yml` disabled at the
-> Actions level. Do not re-add them to CI matrices; see [`docs/variants.md`](../docs/variants.md).
+> Active variants: `dakota` (NVIDIA-unified, daily at 03:00 UTC) and `utah` (`build-iso-utah.yml`, daily at 04:00 UTC).
+> `bluefin` and `bluefin-lts-hwe` are **retired** (#228) — matrix entries disabled. Do not re-add them to CI matrices; see [`docs/variants.md`](../docs/variants.md).
 
 ## Fast path
 

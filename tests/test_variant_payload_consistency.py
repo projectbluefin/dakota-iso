@@ -25,7 +25,8 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).parent.parent
-BUILD_ISO_BLUEFIN_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-bluefin.yml"
+BUILD_ISO_UTAH_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-utah.yml"
+BUILD_ISO_BLUEFIN_WORKFLOW = BUILD_ISO_UTAH_WORKFLOW
 
 
 def _matrix_entries():
