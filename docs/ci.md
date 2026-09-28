@@ -18,8 +18,8 @@ See [`docs/variants.md`](variants.md) for the full dormancy map and revival step
 
 | ISO | Workflow | R2 latest name | State |
 |---|---|---|---|
-| Bluefin | `build-iso-bluefin.yml` | `bluefin-live-latest.iso` | dormant (never dispatch without `-f variant=utah`) |
-| Bluefin LTS HWE | `build-iso-bluefin.yml` | `bluefin-lts-hwe-live-latest.iso` | dormant (never dispatch without `-f variant=utah`) |
+| Bluefin | `build-iso-bluefin.yml` | `bluefin-live-latest.iso` | retired (#228) — matrix entry disabled |
+| Bluefin LTS HWE | `build-iso-bluefin.yml` | `bluefin-lts-hwe-live-latest.iso` | retired (#228) — matrix entry disabled |
 | Utah | `build-iso-bluefin.yml` | `utah-live-latest.iso` | active via dispatch (`-f variant=utah`) |
 
 The Dakota ISO is a **unified NVIDIA ISO** — the live environment boots the NVIDIA variant; the offline OCI store lets the installer deploy to non-NVIDIA hardware without a network pull (bootc auto-rebases on first upgrade).
@@ -34,7 +34,7 @@ gh workflow run build-iso.yml --ref main
 | Workflow | File | Trigger |
 |---|---|---|
 | Dakota Build & Publish | `build-iso.yml` | 1st of month 03:00 UTC, `workflow_dispatch` |
-| Bluefin & Utah Build & Publish | `build-iso-bluefin.yml` | `workflow_dispatch` (active for `utah`; `bluefin` and `bluefin-lts-hwe` dormant) |
+| Bluefin & Utah Build & Publish | `build-iso-bluefin.yml` | `workflow_dispatch` (active for `utah`; `bluefin` and `bluefin-lts-hwe` retired in #228) |
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |

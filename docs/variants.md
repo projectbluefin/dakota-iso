@@ -4,28 +4,28 @@ How the Dakota ISO build target works.
 
 ## Scope: dakota and utah
 
-This repo ships the Dakota and Utah ISOs. As of 2026-09-18 the `bluefin` and `bluefin-lts-hwe`
-variants no longer run on schedule. Nothing was deleted — the build targets, scripts,
-workflow files and variant config are intact.
+This repo ships the Dakota and Utah ISOs. The `bluefin` and `bluefin-lts-hwe` ISO builds are
+retired (#228): their `build-iso-bluefin.yml` matrix entries are commented out and they are not
+promotable. Scripts and `live/src/<variant>/` config are kept so a variant can be revived.
+
 | Surface | State |
 |---|---|
 | `test-luks-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
 | `test-plain-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
-| `build-iso-bluefin.yml` | **enabled** for `workflow_dispatch` of `utah` (always pass `-f variant=utah`); `bluefin` and `bluefin-lts-hwe` dormant with schedules commented out |
+| `build-iso-bluefin.yml` | **enabled**, `workflow_dispatch` only (no schedule); matrix builds `utah` alone — `bluefin` / `bluefin-lts-hwe` entries retired as comments. Dispatch with `-f variant=utah` |
 | `build-iso.yml` (dakota) | active |
-| Required checks on `main` | `LUKS E2E dakota (dev)`, `LUKS E2E dakota (stable)`, `ShellCheck` |
+| Required on `main` (ruleset `main — review policy`) | 1 approving review; status check `ShellCheck` |
 
-The bluefin ISO build is disabled twice on purpose. The Actions-level disable stops it
-now; the commented-out `schedule` records the intent in version control, so re-enabling
-the workflow in the UI does not silently resume a nightly R2 publish.
+Retired bluefin builds stay off because their matrix entries are commented out, not because
+the workflow is disabled — the workflow must stay enabled for Utah. There is no `schedule`,
+so every Utah publish is a manual dispatch.
 
 ### Reviving a variant
 
 1. Uncomment the variant in the `test-luks-install.yml` / `test-plain-install.yml` matrix.
-2. For the bluefin ISO build, restore the `schedule:` block and re-enable the workflow:
-   ```bash
-   gh api -X PUT repos/projectbluefin/dakota-iso/actions/workflows/build-iso-bluefin.yml/enable
-   ```
+2. For the bluefin ISO build, uncomment the variant's matrix entry in `build-iso-bluefin.yml`
+   and re-add it to the `promote-release.yml` choices. Restore the `schedule:` block only if it
+   should publish nightly.
 3. Add the corresponding `LUKS E2E <variant> (<channel>)` contexts to the
    `main — review policy` ruleset.
 
@@ -38,8 +38,9 @@ The `stable` and `lts` legs were red at the time of the change — `sshpass` got
 | Variant | Live env image | Payload (offline store) | Bootloader | Composefs | Filesystem | State |
 |---|---|---|---|---|---|---|
 | `dakota` | `projectbluefin/dakota-nvidia:stable` | same | systemd-boot | yes | btrfs | active |
-| `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs | dormant |
-| `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs | dormant |
+| `utah` | `projectbluefin/utah:testing` | same | grub2 (live ESP systemd-boot, Secure Boot off) | no | btrfs | active (manual dispatch) |
+| `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs | retired |
+| `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs | retired |
 
 **All variants default to btrfs. XFS is available as a user-selectable option in the installer UI only.**
 
