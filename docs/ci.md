@@ -4,7 +4,7 @@ How the GitHub Actions workflows build, test, and publish Dakota ISOs.
 
 ## ISOs produced
 
-One NVIDIA-unified ISO is built and published to R2 on a schedule, and Utah is published via dispatch:
+Two ISOs are built and published to R2 on a daily schedule (both also support `workflow_dispatch`):
 
 | ISO | Workflow | R2 latest name | Image embedded | Trigger |
 |---|---|---|---|---|
