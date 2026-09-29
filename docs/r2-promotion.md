@@ -112,16 +112,16 @@ https://projectbluefin.dev/dakota-live-backup-1.iso
 https://projectbluefin.dev/dakota-live-backup-2.iso
 https://projectbluefin.dev/dakota-live-backup-3.iso
 
-https://projectbluefin.dev/bluefin-live-latest.iso
-https://projectbluefin.dev/bluefin-live-backup-1.iso
-https://projectbluefin.dev/bluefin-live-backup-2.iso
-https://projectbluefin.dev/bluefin-live-backup-3.iso
-
-https://projectbluefin.dev/bluefin-lts-hwe-live-latest.iso
-https://projectbluefin.dev/bluefin-lts-hwe-live-backup-1.iso
-https://projectbluefin.dev/bluefin-lts-hwe-live-backup-2.iso
-https://projectbluefin.dev/bluefin-lts-hwe-live-backup-3.iso
+https://projectbluefin.dev/utah-live-latest.iso
+https://projectbluefin.dev/utah-live-latest.iso-CHECKSUM
+https://projectbluefin.dev/utah-live-backup-1.iso
+https://projectbluefin.dev/utah-live-backup-2.iso
+https://projectbluefin.dev/utah-live-backup-3.iso
 ```
+
+The `bluefin-live-*` and `bluefin-lts-hwe-live-*` URLs are retired (#228): those matrix
+entries are commented out in `build-iso-utah.yml` and are not `promote-release.yml`
+choices, so nothing refreshes them. Any objects still in the bucket are stale.
 
 Named releases follow the same pattern:
 ```
