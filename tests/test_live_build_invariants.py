@@ -830,8 +830,8 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             "Dakota live-container builds must not reuse stale build layers.",
         )
 
-    def test_build_iso_bluefin_upload_waits_for_boot_verification(self):
-        """Bluefin uploads must wait for the smoke-boot gate to pass."""
+    def test_build_iso_utah_upload_waits_for_boot_verification(self):
+        """Utah live uploads must wait for the smoke-boot gate to pass."""
         content = BUILD_ISO_UTAH_WORKFLOW.read_text()
         upload_block = content.split("- name: Upload ISO to Cloudflare R2", 1)[1].split(
             "\n      - name:", 1
@@ -905,8 +905,8 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             "build-iso.yml must explicitly prune backup slots older than the most recent 3.",
         )
 
-    def test_build_iso_bluefin_rotates_and_prunes_backups(self):
-        """Bluefin publisher must maintain exactly 3 backup slots per iso_name."""
+    def test_build_iso_utah_rotates_and_prunes_backups(self):
+        """Utah live publisher must maintain exactly 3 backup slots per iso_name."""
         content = BUILD_ISO_UTAH_WORKFLOW.read_text()
         self.assertIn(
             "BASE=\"${{ matrix.iso_name }}\"",

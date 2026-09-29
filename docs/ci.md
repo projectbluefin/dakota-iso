@@ -158,7 +158,7 @@ OVMF reliably auto-discovers AHCI optical drives on q35 regardless of CPU speed.
 The local `boot-iso-serial` justfile recipe uses SCSI + KVM (`-accel kvm -cpu host`)
 which works, but CI cannot use KVM.
 
-### Adding a new Bluefin variant to the matrix
+### Adding a new live variant to the matrix
 
 When a new image is ready to publish:
 1. Add the matrix entry to `build-iso-utah.yml`
@@ -273,7 +273,7 @@ release-significant gate for that artifact — not before it. In practice:
 - `build-iso.yml` must wait for ENOSPC, full install, installed-boot verification,
   **and** the final production ISO smoke boot before updating `dakota-live-latest.iso`
 - `build-iso-utah.yml` must wait for its QEMU smoke boot before updating
-  `bluefin-live-latest.iso` / `bluefin-lts-hwe-live-latest.iso`
+  `utah-live-latest.iso`
 - Publish workflows define workflow-level `concurrency` so overlapping manual/scheduled
   runs cannot race each other on the `latest` pointers
 - Expensive E2E jobs (`plain-e2e`, `luks-e2e`) depend on `unit-tests` so cheap failures
