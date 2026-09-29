@@ -40,7 +40,6 @@ CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
 GUI_E2E_JUSTFILE = REPO / "justfile"
 BUILD_ISO_WORKFLOW = REPO / ".github" / "workflows" / "build-iso.yml"
 BUILD_ISO_UTAH_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-utah.yml"
-BUILD_ISO_BLUEFIN_WORKFLOW = BUILD_ISO_UTAH_WORKFLOW
 TEST_LUKS_WORKFLOW = REPO / ".github" / "workflows" / "test-luks-install.yml"
 TEST_PLAIN_WORKFLOW = REPO / ".github" / "workflows" / "test-plain-install.yml"
 LIVE_LUKS_UNLOCK = REPO / "live" / "src" / "luks-unlock.py"
@@ -833,29 +832,29 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
 
     def test_build_iso_bluefin_upload_waits_for_boot_verification(self):
         """Bluefin uploads must wait for the smoke-boot gate to pass."""
-        content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
+        content = BUILD_ISO_UTAH_WORKFLOW.read_text()
         upload_block = content.split("- name: Upload ISO to Cloudflare R2", 1)[1].split(
             "\n      - name:", 1
         )[0]
         self.assertIn(
             "steps.boot_verify.outcome == 'success'",
             upload_block,
-            "build-iso-bluefin.yml must gate R2 upload on successful boot verification.",
+            "build-iso-utah.yml must gate R2 upload on successful boot verification.",
         )
         self.assertIn(
             "- name: Boot verification status",
             content,
-            "build-iso-bluefin.yml must restore a red CI status when boot verification fails.",
+            "build-iso-utah.yml must restore a red CI status when boot verification fails.",
         )
         self.assertIn(
             "steps.boot_verify.outcome == 'failure'",
             content,
-            "build-iso-bluefin.yml must explicitly fail the job when boot verification fails.",
+            "build-iso-utah.yml must explicitly fail the job when boot verification fails.",
         )
 
     def test_publish_workflows_define_concurrency(self):
         """Monthly publishers must not race each other on latest pointers."""
-        for workflow in [BUILD_ISO_WORKFLOW, BUILD_ISO_BLUEFIN_WORKFLOW]:
+        for workflow in [BUILD_ISO_WORKFLOW, BUILD_ISO_UTAH_WORKFLOW]:
             content = workflow.read_text()
             self.assertIn(
                 "\nconcurrency:\n",
@@ -908,31 +907,31 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
 
     def test_build_iso_bluefin_rotates_and_prunes_backups(self):
         """Bluefin publisher must maintain exactly 3 backup slots per iso_name."""
-        content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
+        content = BUILD_ISO_UTAH_WORKFLOW.read_text()
         self.assertIn(
             "BASE=\"${{ matrix.iso_name }}\"",
             content,
-            "build-iso-bluefin.yml must derive a base name from matrix.iso_name.",
+            "build-iso-utah.yml must derive a base name from matrix.iso_name.",
         )
         self.assertIn(
             "${BASE}-backup-1.iso",
             content,
-            "build-iso-bluefin.yml must rotate latest into backup-1 before overwrite.",
+            "build-iso-utah.yml must rotate latest into backup-1 before overwrite.",
         )
         self.assertIn(
             "${BASE}-backup-2.iso",
             content,
-            "build-iso-bluefin.yml must keep a second backup slot per iso_name.",
+            "build-iso-utah.yml must keep a second backup slot per iso_name.",
         )
         self.assertIn(
             "${BASE}-backup-3.iso",
             content,
-            "build-iso-bluefin.yml must keep a third backup slot per iso_name.",
+            "build-iso-utah.yml must keep a third backup slot per iso_name.",
         )
         self.assertIn(
             "Delete backup slots beyond 3",
             content,
-            "build-iso-bluefin.yml must explicitly prune backup slots older than 3.",
+            "build-iso-utah.yml must explicitly prune backup slots older than 3.",
         )
 
     def test_readme_download_table_has_last_three_builds_links(self):
@@ -1098,13 +1097,13 @@ class TestVariantConfig(unittest.TestCase):
 
 
     def test_workflow_payload_matches_offline_nvidia_imgref(self):
-        """For active non-composefs variants, build-iso-bluefin.yml payload_image must match live/src/<variant>/nvidia_imgref."""
-        content = strip_yaml_comments(BUILD_ISO_BLUEFIN_WORKFLOW.read_text())
-        active = active_matrix_variants(BUILD_ISO_BLUEFIN_WORKFLOW.read_text())
+        """For active non-composefs variants, build-iso-utah.yml payload_image must match live/src/<variant>/nvidia_imgref."""
+        content = strip_yaml_comments(BUILD_ISO_UTAH_WORKFLOW.read_text())
+        active = active_matrix_variants(BUILD_ISO_UTAH_WORKFLOW.read_text())
         self.assertIn(
             "utah",
             active,
-            f"{BUILD_ISO_BLUEFIN_WORKFLOW.name} must still build the utah variant; "
+            f"{BUILD_ISO_UTAH_WORKFLOW.name} must still build the utah variant; "
             "if every matrix entry is retired this invariant checks nothing.",
         )
         for variant in ["bluefin", "bluefin-lts-hwe", "utah"]:
@@ -1120,13 +1119,13 @@ class TestVariantConfig(unittest.TestCase):
                     content,
                 )
                 self.assertIsNotNone(
-                    m, f"Could not find variant {variant} payload_image in {BUILD_ISO_BLUEFIN_WORKFLOW.name}"
+                    m, f"Could not find variant {variant} payload_image in {BUILD_ISO_UTAH_WORKFLOW.name}"
                 )
                 payload_image = m.group(1).strip()
                 self.assertEqual(
                     payload_image,
                     nvidia_ref,
-                    f"Variant {variant} payload_image ({payload_image}) in {BUILD_ISO_BLUEFIN_WORKFLOW.name} "
+                    f"Variant {variant} payload_image ({payload_image}) in {BUILD_ISO_UTAH_WORKFLOW.name} "
                     f"must match live/src/{variant}/nvidia_imgref ({nvidia_ref}) so offline installs find the image in local store.",
                 )
 

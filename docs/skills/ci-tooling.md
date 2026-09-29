@@ -21,7 +21,7 @@ metadata:
 ## When to Use
 
 Load this skill when:
-- Editing `.github/workflows/build-iso.yml` or `build-iso-bluefin.yml`
+- Editing `.github/workflows/build-iso.yml` or `build-iso-utah.yml`
 - Adding or removing a variant from the build matrix
 - Changing R2 upload logic, backup rotation, or publish policy
 - Debugging missing backup slots or unexpected bucket clutter
@@ -60,14 +60,15 @@ Slots beyond 3 are pruned by the `Delete backup slots beyond 3` step.
 | Workflow | Variants (matrix iso_name) |
 |---|---|
 | `build-iso.yml` | `dakota` (single job, no matrix) |
-| `build-iso-bluefin.yml` | `bluefin-live`, `bluefin-lts-hwe-live` |
+| `build-iso-utah.yml` | `utah-live` |
 
 **`stable-live` and `lts-live` do not exist.** They were removed in June 2026.
+**`bluefin-live` and `bluefin-lts-hwe-live` are retired (#228)** — their matrix entries are commented out.
 
-### Adding a new Bluefin variant
+### Adding a new live variant
 
 1. Create `<variant>/payload_ref`, `<variant>/live_target`, `<variant>/live_title` files
-2. Add matrix entry to `build-iso-bluefin.yml` with `iso_name: <variant>-live`
+2. Add matrix entry to `build-iso-utah.yml` with `iso_name: <variant>-live`
 3. Add `live/src/<variant>/` config files (`images.json`, `recipe.json`)
 4. Commit variant files and matrix update in the same PR
 5. Build with `just debug=1 iso-sd-boot <variant>` locally before CI
@@ -116,7 +117,7 @@ slow and the VM falls through to PXE. Always use AHCI for CI smoke boots:
 - `backup-4.iso` or higher appears → prune step is missing or broken
 - Dated `YYYYMMDD-SHA` objects appear → an old workflow branch was re-run; delete them
 - README dakota row has `—` for size/date after a build → README refresh step failed; check `contents: write` permission
-- `build-iso-bluefin.yml` matrix lists a variant with no `<variant>/` directory → stale matrix entry
+- `build-iso-utah.yml` matrix lists a variant with no `<variant>/` directory → stale matrix entry
 
 ## Verification
 
@@ -124,8 +125,8 @@ Before submitting CI workflow changes:
 
 - [ ] Backup rotation order: backup-2→3, backup-1→2, latest→backup-1, then upload
 - [ ] `Delete backup slots beyond 3` step present for the affected workflow
-- [ ] No `stable` or `lts` entries in `build-iso-bluefin.yml` matrix
-- [ ] AHCI (`ich9-ahci`) used for smoke boot in bluefin CI (not SCSI)
+- [ ] No `stable` or `lts` entries in `build-iso-utah.yml` matrix
+- [ ] AHCI (`ich9-ahci`) used for smoke boot in `build-iso-utah.yml` (not SCSI)
 - [ ] `contents: write` permission present in `build-iso.yml` job (required for README push)
 - [ ] Tests pass: `python -m pytest tests/test_live_build_invariants.py -q`
 - [ ] `rclone lsf R2:testing --files-only | sort` shows only `*-latest.iso`, `*-backup-{1,2,3}.iso`, and named alphas

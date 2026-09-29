@@ -1,7 +1,7 @@
 """Guard the offline-install contract: the image a live ISO embeds must be the
 image the installer asks for.
 
-`.github/workflows/build-iso-bluefin.yml` pulls `matrix.payload_image` and
+`.github/workflows/build-iso-utah.yml` pulls `matrix.payload_image` and
 embeds exactly that one image into the live squashfs containers-storage.
 `live/src/configure-live.sh` independently reads `live/src/<variant>/nvidia_imgref`
 and writes it into the generated recipe as `local_imgref`, which is what the
@@ -26,12 +26,11 @@ import yaml
 
 REPO = Path(__file__).parent.parent
 BUILD_ISO_UTAH_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-utah.yml"
-BUILD_ISO_BLUEFIN_WORKFLOW = BUILD_ISO_UTAH_WORKFLOW
 
 
 def _matrix_entries():
-    """Return the build-iso-bluefin.yml matrix includes keyed by variant."""
-    with BUILD_ISO_BLUEFIN_WORKFLOW.open() as handle:
+    """Return the build-iso-utah.yml matrix includes keyed by variant."""
+    with BUILD_ISO_UTAH_WORKFLOW.open() as handle:
         workflow = yaml.safe_load(handle)
 
     includes = []
@@ -60,7 +59,7 @@ class TestVariantPayloadConsistency(unittest.TestCase):
         self.assertTrue(
             self.entries,
             f"no matrix includes with a 'variant' key found in "
-            f"{BUILD_ISO_BLUEFIN_WORKFLOW.name} — the consistency checks below "
+            f"{BUILD_ISO_UTAH_WORKFLOW.name} — the consistency checks below "
             f"would silently pass over every variant",
         )
 
@@ -102,7 +101,7 @@ class TestVariantPayloadConsistency(unittest.TestCase):
                         value,
                         str(entry[matrix_key]),
                         f"{variant}/{field} is {value!r} but "
-                        f"{BUILD_ISO_BLUEFIN_WORKFLOW.name} uses "
+                        f"{BUILD_ISO_UTAH_WORKFLOW.name} uses "
                         f"{str(entry[matrix_key])!r} for matrix key {matrix_key!r}",
                     )
 

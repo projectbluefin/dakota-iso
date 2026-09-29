@@ -162,7 +162,7 @@ to fail with an invalid reference error. Always strip when reading payload_ref:
 ### Templating a variant for an unpublished image (2026-06)
 
 Create all variant files and commit them, but add the CI matrix entry **commented out**
-in `build-iso-bluefin.yml`. This keeps files reviewable without breaking CI.
+in `build-iso-utah.yml`. This keeps files reviewable without breaking CI.
 When the image is published, enabling it is a single-line uncomment.
 
 ### Fedora/Silverblue-based variants: grub2 + no composefs (2026-06)

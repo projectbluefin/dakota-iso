@@ -42,7 +42,7 @@ Currently advisory (warns but does not block merge). Treat warnings as hard requ
 
 | Changed path | Update this skill |
 |---|---|
-| `.github/workflows/build-iso.yml`, `build-iso-bluefin.yml` | `docs/ci.md` |
+| `.github/workflows/build-iso.yml`, `build-iso-utah.yml` | `docs/ci.md` |
 | `.github/workflows/test-*.yml` | `docs/skills/e2e-ci.md` or `docs/luks-testing.md` |
 | `.github/workflows/skill-drift.yml` | `docs/skills/skill-drift.md` (this file) |
 | `justfile` | whichever skill owns the changed recipe |

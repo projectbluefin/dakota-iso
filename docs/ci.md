@@ -161,7 +161,7 @@ which works, but CI cannot use KVM.
 ### Adding a new Bluefin variant to the matrix
 
 When a new image is ready to publish:
-1. Add the matrix entry to `build-iso-bluefin.yml`
+1. Add the matrix entry to `build-iso-utah.yml`
 2. Commit the variant files in `<variant>/` and `live/src/<variant>/` in the same PR
 
 ## test-luks-install.yml
@@ -272,7 +272,7 @@ release-significant gate for that artifact — not before it. In practice:
 
 - `build-iso.yml` must wait for ENOSPC, full install, installed-boot verification,
   **and** the final production ISO smoke boot before updating `dakota-live-latest.iso`
-- `build-iso-bluefin.yml` must wait for its QEMU smoke boot before updating
+- `build-iso-utah.yml` must wait for its QEMU smoke boot before updating
   `bluefin-live-latest.iso` / `bluefin-lts-hwe-live-latest.iso`
 - Publish workflows define workflow-level `concurrency` so overlapping manual/scheduled
   runs cannot race each other on the `latest` pointers
@@ -717,14 +717,14 @@ Flatpak release cut before it reaches a dakota ISO.
 
 ### Workflow matrix must be kept in sync with variant config files (2026-06)
 
-`build-iso-bluefin.yml` has a `strategy.matrix` that hardcodes `payload_image`,
+`build-iso-utah.yml` has a `strategy.matrix` that hardcodes `payload_image`,
 `live_target`, `registry`, and `tag` per variant. These same values live in the
 variant config files (`bluefin-lts-hwe/payload_ref`, `bluefin-lts-hwe/registry`, etc.).
 
 **They can and do drift independently.**
 
 **Rule:** Every change to a variant config file (`payload_ref`, `registry`, `live_target`)
-must be accompanied by the matching matrix update in `build-iso-bluefin.yml` in the same commit.
+must be accompanied by the matching matrix update in `build-iso-utah.yml` in the same commit.
 
 **Long-term fix (Design Gate — requires human approval):** Remove the duplication by having
 the matrix read config values from the variant files at build time instead of hardcoding them.
