@@ -260,6 +260,68 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("ERROR: --target requires --output-dir", res.stderr)
 
+    def _write_variant_composefs(self, bootloader_variant, value):
+        vdir = self.sandbox / "live" / "src" / bootloader_variant
+        vdir.mkdir(parents=True, exist_ok=True)
+        (vdir / "composefs").write_text(value)
+
+    def run_target_mode(self, target, *, composefs_stub):
+        """Run --target mode with the recipe.json probe stubbed to composefs_stub."""
+        return self.run_script(
+            "--target", target,
+            "--oci-image", f"ghcr.io/projectbluefin/{target}-nvidia:stable",
+            "--output-dir", str(self.sandbox / "output"),
+            composefs=composefs_stub,
+        )
+
+    def test_target_mode_reads_composefs_from_variant_config(self):
+        """--target mode resolves composefs via variant-config.sh, not the recipe.json probe."""
+        self._write_variant_composefs("bluefin", "false")
+        # Stub says composefs=true; variant-config.sh says false and must win.
+        res = self.run_target_mode("bluefin", composefs_stub=True)
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+        self.assertIn("composeFsBackend=false", res.stdout)
+
+        calls = self.recorded_calls()
+        buildah_commits = [c for c in calls if c.startswith("buildah commit")]
+        self.assertTrue(len(buildah_commits) >= 1, "buildah commit was not called")
+        for commit_call in buildah_commits:
+            self.assertNotIn(
+                "--squash",
+                commit_call,
+                f"composefs=false variant must not squash the payload: {commit_call!r}",
+            )
+
+    def test_target_mode_composefs_true_squashes_payload(self):
+        """--target mode with composefs=true squashes the payload even if the probe says false."""
+        self._write_variant_composefs("dakota", "true")
+        res = self.run_target_mode("dakota", composefs_stub=False)
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+        self.assertIn("composeFsBackend=true", res.stdout)
+
+        calls = self.recorded_calls()
+        buildah_commits = [c for c in calls if c.startswith("buildah commit")]
+        self.assertTrue(len(buildah_commits) >= 1, "buildah commit was not called")
+        self.assertTrue(
+            any("--squash" in c for c in buildah_commits),
+            f"composefs=true variant must squash the payload: {buildah_commits!r}",
+        )
+
+    def test_target_mode_composefs_defaults_to_true(self):
+        """--target mode with no live/src/<variant>/composefs file defaults to true."""
+        res = self.run_target_mode("dakota", composefs_stub=False)
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+        self.assertIn("composeFsBackend=true", res.stdout)
+
+    def test_target_mode_composefs_uses_live_target_derivation(self):
+        """--target mode reads composefs from live_target with the -nvidia suffix stripped."""
+        (self.sandbox / "bluefin").mkdir(parents=True, exist_ok=True)
+        (self.sandbox / "bluefin" / "live_target").write_text("bluefin-nvidia\n")
+        self._write_variant_composefs("bluefin", "false")
+        res = self.run_target_mode("bluefin", composefs_stub=True)
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+        self.assertIn("composeFsBackend=false", res.stdout)
+
     def test_compression_release_sets_high_compression_level(self):
         """SUPERISO_COMPRESSION=release sets zstd level 15 and 1M block size."""
         out_sfs = self.sandbox / "output" / "dakota.sfs"
