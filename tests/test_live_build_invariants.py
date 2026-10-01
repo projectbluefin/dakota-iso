@@ -39,7 +39,7 @@ CONTAINERFILE = REPO / "live" / "Containerfile"
 CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
 GUI_E2E_JUSTFILE = REPO / "justfile"
 BUILD_ISO_WORKFLOW = REPO / ".github" / "workflows" / "build-iso.yml"
-BUILD_ISO_BLUEFIN_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-bluefin.yml"
+BUILD_ISO_UTAH_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-utah.yml"
 TEST_LUKS_WORKFLOW = REPO / ".github" / "workflows" / "test-luks-install.yml"
 TEST_PLAIN_WORKFLOW = REPO / ".github" / "workflows" / "test-plain-install.yml"
 LIVE_LUKS_UNLOCK = REPO / "live" / "src" / "luks-unlock.py"
@@ -63,6 +63,18 @@ LIVE_SRC_VARIANT_FILES = [
     "registry",
     "images.json",
 ]
+
+
+def strip_yaml_comments(text: str) -> str:
+    """Drop whole-line YAML comments so retired (commented-out) entries are invisible."""
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
+def active_matrix_variants(workflow_text: str) -> set:
+    """Variant names present as live (uncommented) matrix entries in a workflow."""
+    return set(re.findall(r"- variant:\s*(\S+)", strip_yaml_comments(workflow_text)))
 
 
 class TestBootCmdline(unittest.TestCase):
@@ -818,31 +830,31 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             "Dakota live-container builds must not reuse stale build layers.",
         )
 
-    def test_build_iso_bluefin_upload_waits_for_boot_verification(self):
-        """Bluefin uploads must wait for the smoke-boot gate to pass."""
-        content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
+    def test_build_iso_utah_upload_waits_for_boot_verification(self):
+        """Utah live uploads must wait for the smoke-boot gate to pass."""
+        content = BUILD_ISO_UTAH_WORKFLOW.read_text()
         upload_block = content.split("- name: Upload ISO to Cloudflare R2", 1)[1].split(
             "\n      - name:", 1
         )[0]
         self.assertIn(
             "steps.boot_verify.outcome == 'success'",
             upload_block,
-            "build-iso-bluefin.yml must gate R2 upload on successful boot verification.",
+            "build-iso-utah.yml must gate R2 upload on successful boot verification.",
         )
         self.assertIn(
             "- name: Boot verification status",
             content,
-            "build-iso-bluefin.yml must restore a red CI status when boot verification fails.",
+            "build-iso-utah.yml must restore a red CI status when boot verification fails.",
         )
         self.assertIn(
             "steps.boot_verify.outcome == 'failure'",
             content,
-            "build-iso-bluefin.yml must explicitly fail the job when boot verification fails.",
+            "build-iso-utah.yml must explicitly fail the job when boot verification fails.",
         )
 
     def test_publish_workflows_define_concurrency(self):
         """Monthly publishers must not race each other on latest pointers."""
-        for workflow in [BUILD_ISO_WORKFLOW, BUILD_ISO_BLUEFIN_WORKFLOW]:
+        for workflow in [BUILD_ISO_WORKFLOW, BUILD_ISO_UTAH_WORKFLOW]:
             content = workflow.read_text()
             self.assertIn(
                 "\nconcurrency:\n",
@@ -893,33 +905,33 @@ class TestReleaseSafetyInvariants(unittest.TestCase):
             "build-iso.yml must explicitly prune backup slots older than the most recent 3.",
         )
 
-    def test_build_iso_bluefin_rotates_and_prunes_backups(self):
-        """Bluefin publisher must maintain exactly 3 backup slots per iso_name."""
-        content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
+    def test_build_iso_utah_rotates_and_prunes_backups(self):
+        """Utah live publisher must maintain exactly 3 backup slots per iso_name."""
+        content = BUILD_ISO_UTAH_WORKFLOW.read_text()
         self.assertIn(
             "BASE=\"${{ matrix.iso_name }}\"",
             content,
-            "build-iso-bluefin.yml must derive a base name from matrix.iso_name.",
+            "build-iso-utah.yml must derive a base name from matrix.iso_name.",
         )
         self.assertIn(
             "${BASE}-backup-1.iso",
             content,
-            "build-iso-bluefin.yml must rotate latest into backup-1 before overwrite.",
+            "build-iso-utah.yml must rotate latest into backup-1 before overwrite.",
         )
         self.assertIn(
             "${BASE}-backup-2.iso",
             content,
-            "build-iso-bluefin.yml must keep a second backup slot per iso_name.",
+            "build-iso-utah.yml must keep a second backup slot per iso_name.",
         )
         self.assertIn(
             "${BASE}-backup-3.iso",
             content,
-            "build-iso-bluefin.yml must keep a third backup slot per iso_name.",
+            "build-iso-utah.yml must keep a third backup slot per iso_name.",
         )
         self.assertIn(
             "Delete backup slots beyond 3",
             content,
-            "build-iso-bluefin.yml must explicitly prune backup slots older than 3.",
+            "build-iso-utah.yml must explicitly prune backup slots older than 3.",
         )
 
     def test_readme_download_table_has_last_three_builds_links(self):
@@ -1085,9 +1097,19 @@ class TestVariantConfig(unittest.TestCase):
 
 
     def test_workflow_payload_matches_offline_nvidia_imgref(self):
-        """For non-composefs variants, build-iso-bluefin.yml payload_image must match live/src/<variant>/nvidia_imgref."""
-        content = BUILD_ISO_BLUEFIN_WORKFLOW.read_text()
+        """For active non-composefs variants, build-iso-utah.yml payload_image must match live/src/<variant>/nvidia_imgref."""
+        content = strip_yaml_comments(BUILD_ISO_UTAH_WORKFLOW.read_text())
+        active = active_matrix_variants(BUILD_ISO_UTAH_WORKFLOW.read_text())
+        self.assertIn(
+            "utah",
+            active,
+            f"{BUILD_ISO_UTAH_WORKFLOW.name} must still build the utah variant; "
+            "if every matrix entry is retired this invariant checks nothing.",
+        )
         for variant in ["bluefin", "bluefin-lts-hwe", "utah"]:
+            if variant not in active:
+                # Retired from the build matrix; live/src config is kept for revival.
+                continue
             nvidia_file = REPO / "live" / "src" / variant / "nvidia_imgref"
             if nvidia_file.exists():
                 nvidia_ref = nvidia_file.read_text().strip()
@@ -1097,13 +1119,13 @@ class TestVariantConfig(unittest.TestCase):
                     content,
                 )
                 self.assertIsNotNone(
-                    m, f"Could not find variant {variant} payload_image in {BUILD_ISO_BLUEFIN_WORKFLOW.name}"
+                    m, f"Could not find variant {variant} payload_image in {BUILD_ISO_UTAH_WORKFLOW.name}"
                 )
                 payload_image = m.group(1).strip()
                 self.assertEqual(
                     payload_image,
                     nvidia_ref,
-                    f"Variant {variant} payload_image ({payload_image}) in {BUILD_ISO_BLUEFIN_WORKFLOW.name} "
+                    f"Variant {variant} payload_image ({payload_image}) in {BUILD_ISO_UTAH_WORKFLOW.name} "
                     f"must match live/src/{variant}/nvidia_imgref ({nvidia_ref}) so offline installs find the image in local store.",
                 )
 

@@ -1,19 +1,19 @@
-name: Build and Publish Bluefin Live ISOs
+name: Build and Publish Utah Live ISO
 
 concurrency:
   group: publish-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-# Dormant: this repo ships the Dakota ISO only. The bluefin and
-# bluefin-lts-hwe ISO builds are kept intact but no longer run on a schedule.
-# Revive by restoring the `schedule` trigger below.
+# Retired / Disabled: Bluefin and Bluefin-LTS ISOs are no longer built or
+# published from dakota-iso. This repository exclusively produces Dakota and Utah ISOs.
+# The Bluefin/Bluefin-LTS matrix entries below are disabled.
 on:
-  # schedule:
-  #   - cron: '0 5 * * *'   # daily, 05:00 UTC (after dakota at 03:00)
+  schedule:
+    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       variant:
-        description: 'Which variant to build (bluefin, bluefin-lts-hwe, utah, or all)'
+        description: 'Which variant to build (utah only; bluefin and bluefin-lts-hwe are retired)'
         required: false
         default: all
         type: string
@@ -36,23 +36,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - variant: bluefin
-            payload_image: ghcr.io/projectbluefin/bluefin-nvidia:stable
-            live_target: bluefin-nvidia
-            registry: projectbluefin
-            tag: stable
-            iso_name: bluefin-live
-          - variant: bluefin-lts-hwe
-            payload_image: ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable
-            live_target: bluefin-lts-hwe-nvidia
-            registry: projectbluefin
-            tag: stable
-            iso_name: bluefin-lts-hwe-live
+          # Retired: Bluefin and Bluefin-LTS ISOs are disabled per maintainer decision.
+          # - variant: bluefin
+          #   payload_image: ghcr.io/projectbluefin/bluefin-nvidia:stable
+          #   live_target: bluefin-nvidia
+          #   registry: projectbluefin
+          #   tag: stable
+          #   iso_name: bluefin-live
+          # - variant: bluefin-lts-hwe
+          #   payload_image: ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable
+          #   live_target: bluefin-lts-hwe-nvidia
+          #   registry: projectbluefin
+          #   tag: stable
+          #   iso_name: bluefin-lts-hwe-live
           # Utah (Bluefin on Fedora Hummingbird, conventional non-composefs
-          # bootc). Draft: needs ghcr.io/projectbluefin/utah:testing
-          # published first, and the live ESP here is systemd-boot-only --
-          # Utah's signed shim+GRUB chain lives in its own ISO pipeline, so
-          # ISOs from this path boot with Secure Boot disabled.
+          # bootc). Live ESP here is systemd-boot-only -- Utah's signed shim+GRUB
+          # chain lives in its own ISO pipeline, so ISOs from this path boot with
+          # Secure Boot disabled.
           - variant: utah
             payload_image: ghcr.io/projectbluefin/utah:testing
             live_target: utah
@@ -294,5 +294,5 @@ jobs:
       - name: Boot verification status
         if: always() && steps.boot_verify.outcome == 'failure'
         run: |
-          echo "::error::Bluefin ISO failed the UEFI smoke boot — upload was skipped"
+          echo "::error::${{ matrix.variant }} ISO failed the UEFI smoke boot — upload was skipped"
           exit 1

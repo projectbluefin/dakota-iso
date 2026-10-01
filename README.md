@@ -15,16 +15,18 @@ inside the squashfs so the target OS can be installed on any hardware without a 
 
 | Variant | Base image | Bootloader | Composefs | State |
 |---------|-----------|------------|-----------|-------|
-| `dakota` | `ghcr.io/projectbluefin/dakota-nvidia:stable` | systemd-boot | yes | **active** — built, tested and published |
-| `bluefin` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | grub2 | no | dormant — workflow disabled |
-| `bluefin-lts-hwe` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | grub2 | no | dormant — workflow disabled |
+| `dakota` | `ghcr.io/projectbluefin/dakota-nvidia:stable` | systemd-boot | yes | **active** — built, tested, and published daily |
+| `utah` | `ghcr.io/projectbluefin/utah:testing` | grub2 | no | **active** — built and published daily via `build-iso-utah.yml` |
+| `bluefin` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | grub2 | no | retired (#228) — matrix entry disabled |
+| `bluefin-lts-hwe` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | grub2 | no | retired (#228) — matrix entry disabled |
 
-This repo ships the Dakota ISO. Since 2026-09-18 the Bluefin and Bluefin LTS HWE
-variants are no longer built on a schedule or exercised by PR checks. Their code is
-intact — see [`docs/variants.md`](docs/variants.md) for the revival steps.
+This repo ships the Dakota and Utah live ISOs. Bluefin and Bluefin LTS HWE
+variants are retired (#228) from CI builds and release promotion. Their offline configs
+remain intact in `live/src/` — see [`docs/variants.md`](docs/variants.md) for revival steps.
 
-All ISOs embed the NVIDIA variant as the offline store. Non-NVIDIA hardware
-auto-rebases on the first `bootc upgrade` after installation.
+The Dakota ISO embeds the NVIDIA variant as the offline store; non-NVIDIA hardware
+auto-rebases on the first `bootc upgrade` after installation. Utah uses `ghcr.io/projectbluefin/utah:testing`
+directly for both live and payload.
 
 ## How it works
 

@@ -4,23 +4,23 @@ How the GitHub Actions workflows build, test, and publish Dakota ISOs.
 
 ## ISOs produced
 
-One NVIDIA-unified ISO is built and published to R2 on a schedule, and Utah is published via dispatch:
+Two ISOs are built and published to R2 on a daily schedule (both also support `workflow_dispatch`):
 
 | ISO | Workflow | R2 latest name | Image embedded | Trigger |
 |---|---|---|---|---|
-| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | 1st of month 03:00 UTC, `workflow_dispatch` |
-| Utah | `build-iso-bluefin.yml` | `utah-live-latest.iso` | `projectbluefin/utah:testing` | `workflow_dispatch` (variant=utah) |
+| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | Daily 03:00 UTC, `workflow_dispatch` |
+| Utah | `build-iso-utah.yml` | `utah-live-latest.iso` | `projectbluefin/utah:testing` | Daily 04:00 UTC, `workflow_dispatch` |
 
-The Bluefin and Bluefin LTS HWE ISOs are **no longer produced automatically**. As of
-2026-09-18 this repo ships Dakota and Utah; `build-iso-bluefin.yml` is enabled for the
-`utah` variant, but its daily `schedule` is commented out, and the bluefin variants are dormant.
+The Bluefin and Bluefin LTS HWE ISOs are **retired**. As of
+#228 this repo ships Dakota and Utah; `build-iso-utah.yml` runs daily at 04:00 UTC
+and via `workflow_dispatch`.
 See [`docs/variants.md`](variants.md) for the full dormancy map and revival steps.
 
 | ISO | Workflow | R2 latest name | State |
 |---|---|---|---|
-| Bluefin | `build-iso-bluefin.yml` | `bluefin-live-latest.iso` | dormant (never dispatch without `-f variant=utah`) |
-| Bluefin LTS HWE | `build-iso-bluefin.yml` | `bluefin-lts-hwe-live-latest.iso` | dormant (never dispatch without `-f variant=utah`) |
-| Utah | `build-iso-bluefin.yml` | `utah-live-latest.iso` | active via dispatch (`-f variant=utah`) |
+| Bluefin | `build-iso-utah.yml` | `bluefin-live-latest.iso` | retired (#228) — matrix entry disabled |
+| Bluefin LTS HWE | `build-iso-utah.yml` | `bluefin-lts-hwe-live-latest.iso` | retired (#228) — matrix entry disabled |
+| Utah | `build-iso-utah.yml` | `utah-live-latest.iso` | active daily 04:00 UTC + dispatch |
 
 The Dakota ISO is a **unified NVIDIA ISO** — the live environment boots the NVIDIA variant; the offline OCI store lets the installer deploy to non-NVIDIA hardware without a network pull (bootc auto-rebases on first upgrade).
 
@@ -33,8 +33,8 @@ gh workflow run build-iso.yml --ref main
 
 | Workflow | File | Trigger |
 |---|---|---|
-| Dakota Build & Publish | `build-iso.yml` | 1st of month 03:00 UTC, `workflow_dispatch` |
-| Bluefin & Utah Build & Publish | `build-iso-bluefin.yml` | `workflow_dispatch` (active for `utah`; `bluefin` and `bluefin-lts-hwe` dormant) |
+| Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch` |
+| Utah Build & Publish | `build-iso-utah.yml` | Daily 04:00 UTC, `workflow_dispatch` (bluefin entries retired in #228) |
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
@@ -124,19 +124,16 @@ link to the CI run. This requires `contents: write` permission on the job.
 ⚠️ Direct uploads from the local host hang (routing issue). Always use R2→R2
 server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
 
-## build-iso-bluefin.yml
+## build-iso-utah.yml
 
-**Triggers:** none. The workflow is `disabled_manually` in Actions and its daily
-`schedule` is commented out, as of 2026-09-18 when this repo narrowed to Dakota.
-**Matrix:** `bluefin`, `bluefin-lts-hwe`
+**Triggers:** Daily 04:00 UTC (`0 4 * * *`), `workflow_dispatch`.
+**Matrix:** `utah` (active); `bluefin` and `bluefin-lts-hwe` retired in #228.
 **Runner:** `ubuntu-24.04`
 
-This workflow builds the Bluefin and Bluefin LTS live ISOs, runs a QEMU smoke boot,
+This workflow builds the Utah live ISO, runs a QEMU smoke boot,
 and uploads to R2 only when that smoke boot succeeds. It does **not** run the full
 Dakota install/verify E2E sequence because those workflows are Dakota-specific.
-
-It is kept intact rather than deleted so the Bluefin ISOs can be revived without
-reconstructing the pipeline. Restore the `schedule:` block in the workflow to do so.
+Bluefin and Bluefin LTS matrix entries are retired (#228) and kept commented out.
 
 ### Boot verification: use AHCI, not SCSI CD (2026-06)
 
@@ -161,10 +158,10 @@ OVMF reliably auto-discovers AHCI optical drives on q35 regardless of CPU speed.
 The local `boot-iso-serial` justfile recipe uses SCSI + KVM (`-accel kvm -cpu host`)
 which works, but CI cannot use KVM.
 
-### Adding a new Bluefin variant to the matrix
+### Adding a new live variant to the matrix
 
 When a new image is ready to publish:
-1. Add the matrix entry to `build-iso-bluefin.yml`
+1. Add the matrix entry to `build-iso-utah.yml`
 2. Commit the variant files in `<variant>/` and `live/src/<variant>/` in the same PR
 
 ## test-luks-install.yml
@@ -275,8 +272,8 @@ release-significant gate for that artifact — not before it. In practice:
 
 - `build-iso.yml` must wait for ENOSPC, full install, installed-boot verification,
   **and** the final production ISO smoke boot before updating `dakota-live-latest.iso`
-- `build-iso-bluefin.yml` must wait for its QEMU smoke boot before updating
-  `bluefin-live-latest.iso` / `bluefin-lts-hwe-live-latest.iso`
+- `build-iso-utah.yml` must wait for its QEMU smoke boot before updating
+  `utah-live-latest.iso`
 - Publish workflows define workflow-level `concurrency` so overlapping manual/scheduled
   runs cannot race each other on the `latest` pointers
 - Expensive E2E jobs (`plain-e2e`, `luks-e2e`) depend on `unit-tests` so cheap failures
@@ -723,14 +720,14 @@ Flatpak release cut before it reaches a dakota ISO.
 
 ### Workflow matrix must be kept in sync with variant config files (2026-06)
 
-`build-iso-bluefin.yml` has a `strategy.matrix` that hardcodes `payload_image`,
+`build-iso-utah.yml` has a `strategy.matrix` that hardcodes `payload_image`,
 `live_target`, `registry`, and `tag` per variant. These same values live in the
 variant config files (`bluefin-lts-hwe/payload_ref`, `bluefin-lts-hwe/registry`, etc.).
 
 **They can and do drift independently.**
 
 **Rule:** Every change to a variant config file (`payload_ref`, `registry`, `live_target`)
-must be accompanied by the matching matrix update in `build-iso-bluefin.yml` in the same commit.
+must be accompanied by the matching matrix update in `build-iso-utah.yml` in the same commit.
 
 **Long-term fix (Design Gate — requires human approval):** Remove the duplication by having
 the matrix read config values from the variant files at build time instead of hardcoding them.
