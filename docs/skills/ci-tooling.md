@@ -173,10 +173,13 @@ while read -r pin; do
 done
 ```
 
-Resolve the intended tag before pinning — never hand-write a SHA:
+Resolve the intended tag before pinning — never hand-write a SHA. Dereference to the
+**commit** SHA; `git/ref/tags/<tag>` returns the tag object SHA for annotated tags,
+which runners reject with `HTTP 422 — no such commit` (see
+[Annotated tags vs commit SHAs in GitHub Action pins](#annotated-tags-vs-commit-shas-in-github-action-pins-2026-10-01)):
 
 ```bash
-gh api repos/actions/setup-go/git/ref/tags/v5.3.0 -q .object.sha
+gh api repos/actions/setup-go/commits/v5.3.0 -q .sha
 ```
 
 **Automated since 2026-08-01:** `TestActionPinsResolve` in
