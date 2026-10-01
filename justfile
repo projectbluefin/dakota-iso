@@ -139,6 +139,7 @@ container target:
         --build-arg BASE_DIGEST="@${BASE_PINNED##*@}" \
         --build-arg CACHE_BUST="$(date +%Y%m%d)" \
         -t {{target}}-installer -f ./live/Containerfile ./live
+    podman tag "${BASE_PINNED}" "ghcr.io/${LIVE_REGISTRY}/${LIVE_TARGET}:${LIVE_TAG}" 2>/dev/null || true
 
 # Build a systemd-boot UEFI live ISO for the given target.
 #
@@ -199,7 +200,7 @@ chunkify src dst:
         --security-opt label=disable \
         --entrypoint="" \
         -v "${CHUNK_OUT}:/run/out:Z" \
-        --mount "type=image,source={{src}},target=/chunkah" \
+        --mount "type=image,source=${SRC},target=/chunkah" \
         ghcr.io/tuna-os/chunkah:latest@sha256:338ac4086ed919cf511cfca5e00317a3f65db27df86d76e833775ed07237b2dc \
         sh -c 'chunkah build > /run/out/out.ociarchive'
 
