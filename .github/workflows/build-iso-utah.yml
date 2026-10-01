@@ -50,10 +50,9 @@ jobs:
           #   tag: stable
           #   iso_name: bluefin-lts-hwe-live
           # Utah (Bluefin on Fedora Hummingbird, conventional non-composefs
-          # bootc). Draft: needs ghcr.io/projectbluefin/utah:testing
-          # published first, and the live ESP here is systemd-boot-only --
-          # Utah's signed shim+GRUB chain lives in its own ISO pipeline, so
-          # ISOs from this path boot with Secure Boot disabled.
+          # bootc). Live ESP here is systemd-boot-only -- Utah's signed shim+GRUB
+          # chain lives in its own ISO pipeline, so ISOs from this path boot with
+          # Secure Boot disabled.
           - variant: utah
             payload_image: ghcr.io/projectbluefin/utah:testing
             live_target: utah
@@ -295,5 +294,5 @@ jobs:
       - name: Boot verification status
         if: always() && steps.boot_verify.outcome == 'failure'
         run: |
-          echo "::error::Bluefin ISO failed the UEFI smoke boot — upload was skipped"
+          echo "::error::${{ matrix.variant }} ISO failed the UEFI smoke boot — upload was skipped"
           exit 1
