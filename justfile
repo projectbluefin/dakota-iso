@@ -139,7 +139,7 @@ container target:
         --build-arg BASE_DIGEST="@${BASE_PINNED##*@}" \
         --build-arg CACHE_BUST="$(date +%Y%m%d)" \
         -t {{target}}-installer -f ./live/Containerfile ./live
-    podman tag "${BASE_PINNED}" "ghcr.io/${LIVE_REGISTRY}/${LIVE_TARGET}:${LIVE_TAG}" 2>/dev/null || true
+    podman tag "${BASE_PINNED}" "ghcr.io/${LIVE_REGISTRY}/${LIVE_TARGET}:${LIVE_TAG}"
 
 # Build a systemd-boot UEFI live ISO for the given target.
 #
