@@ -55,6 +55,7 @@ Dakota without a network pull.
 | `podman` | Rootless works; needs `--cap-add sys_admin` for the live env build |
 | `buildah` | Squash OCI layers before VFS import |
 | `skopeo` | Copy images into the offline store |
+| `cosign` + `jq` | Verify the cosign signature of ghcr images before they are built into the ISO (`scripts/verify-image-signature.sh` fetches a pinned cosign if absent) |
 | `just` | Task runner — `cargo install just` or distro package |
 | KVM + `qemu-system-x86_64` | For local boot testing on amd64 only |
 | OVMF firmware | `edk2-ovmf` (Fedora/RHEL) or `ovmf` (Debian/Ubuntu) — amd64 |

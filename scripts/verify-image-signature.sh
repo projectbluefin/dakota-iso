@@ -37,12 +37,36 @@ case "$ref" in
         ;;
 esac
 
-for cmd in cosign jq; do
-    command -v "$cmd" >/dev/null 2>&1 || {
-        echo "ERROR: '$cmd' not found on PATH — install cosign and jq to verify image signatures" >&2
+command -v jq >/dev/null 2>&1 || {
+    echo "ERROR: 'jq' not found on PATH — install jq to verify image signatures" >&2
+    exit 1
+}
+
+# Self-install fallback for hosts without cosign (e.g. CI runners that do
+# not run sigstore/cosign-installer). Version matches the installer's
+# default; the checksums are hardcoded so a tampered release asset is refused.
+COSIGN_VERSION="v2.4.3"
+if ! command -v cosign >/dev/null 2>&1; then
+    case "$(uname -m)" in
+        x86_64)  cosign_arch=amd64; cosign_sha=caaad125acef1cb81d58dcdc454a1e429d09a750d1e9e2b3ed1aed8964454708 ;;
+        aarch64) cosign_arch=arm64; cosign_sha=bd0f9763bca54de88699c3656ade2f39c9a1c7a2916ff35601caf23a79be0629 ;;
+        *)
+            echo "ERROR: cosign not found and no pinned fallback for arch '$(uname -m)' — install cosign" >&2
+            exit 1
+            ;;
+    esac
+    cosign_dir=$(mktemp -d)
+    trap 'rm -rf "$cosign_dir"' EXIT
+    echo "==> cosign not found; fetching pinned cosign ${COSIGN_VERSION} (${cosign_arch})" >&2
+    curl -fsSL --retry 3 -o "${cosign_dir}/cosign" \
+        "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${cosign_arch}"
+    echo "${cosign_sha}  ${cosign_dir}/cosign" | sha256sum -c --quiet - || {
+        echo "ERROR: cosign ${COSIGN_VERSION} download failed checksum verification" >&2
         exit 1
     }
-done
+    chmod +x "${cosign_dir}/cosign"
+    PATH="${cosign_dir}:${PATH}"
+fi
 
 echo "==> Verifying cosign signature: ${ref}" >&2
 verified=$(cosign verify "${ref}" \
