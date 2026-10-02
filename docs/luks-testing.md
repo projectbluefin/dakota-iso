@@ -23,8 +23,36 @@ luks-test-qemu dakota
   ├─ luks-boot-qemu-live       → daemonize QEMU with live ISO + blank install disk
   ├─ luks-install-qemu         → SSH fisherman LUKS install + BLS patch + shutdown
   ├─ luks-boot-qemu-installed  → daemonize QEMU booting installed disk (no ISO)
-  └─ luks-unlock-qemu          → send passphrase via QEMU monitor, verify boot
+  ├─ luks-unlock-qemu          → send passphrase via QEMU monitor, verify boot
+  └─ luks-verify-qemu          → SSH into the unlocked, booted system and assert:
+                                  UEFI boot entry present, installer Flatpak
+                                  excluded, LUKS cmdline UUID parseable
+                                  (projectbluefin/dakota#651)
 ```
+
+### Post-boot assertions (dakota#651)
+
+`luks-install-qemu`/`plain-install-qemu` call `fisherman-install.sh --enable-debug-ssh`,
+which (mirroring `live/src/configure-live.sh`'s `DEBUG=1` convention) patches the
+*installed* deployment directly on disk to set `root:root` and force-enable
+`sshd.service`, purely for E2E use — this is never part of a shipped image.
+
+After the installed system boots (and, for LUKS, is unlocked),
+`scripts/verify-post-install.sh <ssh_port> <encryption_type>` SSHes in as
+`root` and checks:
+
+1. `efibootmgr -v` shows `BootCurrent` + a `Boot####` entry (fisherman #2 —
+   requires the `/sys/firmware/efi/efivars` bind-mount in fisherman's
+   `podman run` invocation).
+2. `flatpak list --system --app` does **not** include `org.bootcinstaller`
+   (fisherman #1 — `CopyFlatpaks` must not carry the live-ISO-only installer
+   app onto the installed target).
+3. LUKS only: `/proc/cmdline` contains a parseable `rd.luks.uuid=` or
+   `rd.luks.name=` entry (projectbluefin/common#385).
+
+The same script backs `plain-verify-qemu` (encryption type `none`, skips
+assertion 3) and the new `luks-verify-qemu` recipe (encryption type
+`luks-passphrase`).
 
 ### Key paths
 
@@ -32,6 +60,7 @@ luks-test-qemu dakota
 |---|---|
 | `luks-qemu-disk` | `/var/tmp/dakota-luks-install.qcow2` |
 | `luks-qemu-ssh-port` | `2222` |
+| `luks-qemu-ssh-port-installed` | `2224` (forwarded post-reboot for post-boot assertions) |
 | `luks-qemu-monitor-live` | `/tmp/dakota-qemu-live.sock` |
 | `luks-qemu-monitor-installed` | `/tmp/dakota-qemu-installed.sock` |
 | `luks-qemu-serial-live` | `/tmp/dakota-qemu-live-serial.log` |
