@@ -173,10 +173,13 @@ while read -r pin; do
 done
 ```
 
-Resolve the intended tag before pinning — never hand-write a SHA:
+Resolve the intended tag before pinning — never hand-write a SHA. Dereference to the
+**commit** SHA; `git/ref/tags/<tag>` returns the tag object SHA for annotated tags,
+which runners reject with `HTTP 422 — no such commit` (see
+[Annotated tags vs commit SHAs in GitHub Action pins](#annotated-tags-vs-commit-shas-in-github-action-pins-2026-10-01)):
 
 ```bash
-gh api repos/actions/setup-go/git/ref/tags/v5.3.0 -q .object.sha
+gh api repos/actions/setup-go/commits/v5.3.0 -q .sha
 ```
 
 **Automated since 2026-08-01:** `TestActionPinsResolve` in
@@ -328,3 +331,26 @@ When building live ISOs on minimal Fedora/CentOS/Hummingbird bases (e.g. Utah):
    Scoping by `github.event_name` ensures that post-merge pushes cancel superseded push runs without cancelling active `workflow_dispatch` or scheduled runs.
 2. Added `paths-ignore: ['docs/**', '**/*.md']` to the `push:` trigger to eliminate builder spam on doc-only merges.
 3. Regression tested via `test_e2e_workflows_define_push_concurrency` in `tests/test_live_build_invariants.py`.
+
+---
+
+## Annotated tags vs commit SHAs in GitHub Action pins (2026-10-01)
+
+When resolving SHAs for Action pinning, querying `git/ref/tags/<tag>` returns the SHA of the **tag object** for annotated tags (e.g. `sigstore/cosign-installer@v3.8.1`), not the commit SHA. GitHub Actions runners fail in *Set up job* with `HTTP 422 — no such commit` if a tag object SHA is pinned in `uses:`.
+
+Always dereference the commit SHA directly:
+```bash
+gh api repos/<owner>/<repo>/commits/<tag> -q .sha
+```
+
+---
+
+## `sudo just` drops runner PATH for user-installed binaries (2026-10-01)
+
+Action installers (such as `sigstore/cosign-installer`) install tools under `$HOME` (e.g. `$HOME/.cosign`) and append to `$GITHUB_PATH`. When CI steps invoke recipes with `sudo just ...` (like `iso-sd-boot`), `sudo` resets `PATH` according to `secure_path`, making the tool unavailable (`command not found`).
+
+Always symlink user-installed binaries into `/usr/local/bin` before running `sudo just`:
+```yaml
+- name: Symlink Cosign for sudo access
+  run: sudo ln -sf "$(command -v cosign)" /usr/local/bin/cosign
+```

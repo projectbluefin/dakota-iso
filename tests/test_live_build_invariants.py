@@ -1559,7 +1559,7 @@ class TestActionPinsResolve(unittest.TestCase):
                 "Unresolvable action pin(s) — these jobs will die in 'Set up job' "
                 "with no build log:\n  " + "\n  ".join(bad)
                 + "\n\nResolve the intended tag instead of hand-writing a SHA:\n"
-                "  gh api repos/<owner>/<repo>/git/ref/tags/<tag> -q .object.sha"
+                "  gh api repos/<owner>/<repo>/commits/<tag> -q .sha"
             )
         if unverified and len(unverified) == len(pins):
             self.skipTest(
