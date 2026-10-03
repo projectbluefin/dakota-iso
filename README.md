@@ -107,6 +107,12 @@ The `live/Containerfile` accepts a `TARGET` build-arg (defaulting to `dakota-nvi
 justfile reads `<target>/payload_ref` and passes the target name as `TARGET`. Installer
 configs are patched at build time to reference the correct image.
 
+Every `ghcr.io/projectbluefin/*` image the build consumes (the live base and the
+`payload_ref`) must carry a keyless cosign signature from projectbluefin CI;
+`scripts/verify-image-signature.sh` verifies it and pins the build to the verified
+digest. `just container` verifies the live base unconditionally, so a variant's
+`registry` file must stay `projectbluefin` — other registries are refused.
+
 ## Testing
 
 ### Serial console (headless, CI-friendly)
