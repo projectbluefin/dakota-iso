@@ -58,6 +58,16 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
         shutil.copy2(REPO / "scripts" / "variant-config.sh", self.sandbox / "scripts" / "variant-config.sh")
         (self.sandbox / "scripts" / "variant-config.sh").chmod(0o755)
 
+        # Stub the signature verifier: record the ref and echo a digest-pinned ref,
+        # the contract build-live-squashfs.sh relies on in --target mode.
+        self.verifier_stub = self.sandbox / "scripts" / "verify-image-signature.sh"
+        self.verifier_stub.write_text(textwrap.dedent("""\
+            #!/usr/bin/bash
+            echo "verify-image-signature $*" >> "$STUB_CALLS"
+            echo "${1%%[:@]*}@sha256:feedface"
+        """))
+        self.verifier_stub.chmod(0o755)
+
         # Setup mock container mount
         self.mount_dir = self.sandbox / "mock-image-mount"
         self.mount_dir.mkdir(parents=True, exist_ok=True)
@@ -312,6 +322,24 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         res = self.run_target_mode("dakota", composefs_stub=False)
         self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
         self.assertIn("composeFsBackend=true", res.stdout)
+
+    def test_target_mode_verifies_live_base_and_pins_digest(self):
+        """--target mode verifies the live base image and passes the digest to podman build."""
+        res = self.run_target_mode("dakota", composefs_stub=False)
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+        calls = self.calls_log.read_text()
+        self.assertIn("verify-image-signature ghcr.io/projectbluefin/dakota:stable", calls)
+        build = next(l for l in calls.splitlines() if l.startswith("podman build"))
+        self.assertIn("--build-arg BASE_DIGEST=@sha256:feedface", build)
+        self.assertIn("--build-arg TAG=stable", build)
+        self.assertIn("--build-arg REGISTRY=projectbluefin", build)
+
+    def test_target_mode_fails_closed_when_verification_fails(self):
+        """--target mode aborts before podman build when the verifier exits non-zero."""
+        self.verifier_stub.write_text("#!/usr/bin/bash\necho 'ERROR: bad signature' >&2\nexit 1\n")
+        res = self.run_target_mode("dakota", composefs_stub=False)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("podman build", self.calls_log.read_text())
 
     def test_target_mode_composefs_uses_live_target_derivation(self):
         """--target mode reads composefs from live_target with the -nvidia suffix stripped."""

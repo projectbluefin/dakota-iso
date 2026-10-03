@@ -84,7 +84,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y podman buildah skopeo \
-            mtools xorriso squashfs-tools dosfstools isomd5sum
+            mtools xorriso squashfs-tools dosfstools isomd5sum jq
 
       - name: Log in to GHCR
         if: steps.should_build.outputs.build == 'true'
@@ -92,9 +92,31 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Install Cosign
+        if: steps.should_build.outputs.build == 'true'
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      # Verify cosign signatures and pin to verified digests — the mutable
+      # tag alone does not prove the image was built by project CI.
+      - name: Verify image signatures
+        if: steps.should_build.outputs.build == 'true'
+        id: sigs
+        run: |
+          PAYLOAD_PINNED=$(scripts/verify-image-signature.sh ${{ matrix.payload_image }})
+          echo "payload_pinned=${PAYLOAD_PINNED}" >> "$GITHUB_OUTPUT"
+          BASE="ghcr.io/${{ matrix.registry }}/${{ matrix.live_target }}:${{ matrix.tag }}"
+          if [ "$BASE" != "${{ matrix.payload_image }}" ]; then
+            BASE_PINNED=$(scripts/verify-image-signature.sh "$BASE")
+          else
+            BASE_PINNED="$PAYLOAD_PINNED"
+          fi
+          echo "base_digest=@${BASE_PINNED##*@}" >> "$GITHUB_OUTPUT"
+
       - name: Pull offline payload image
         if: steps.should_build.outputs.build == 'true'
-        run: sudo podman pull ${{ matrix.payload_image }}
+        run: |
+          sudo podman pull "${{ steps.sigs.outputs.payload_pinned }}"
+          sudo podman tag "${{ steps.sigs.outputs.payload_pinned }}" "${{ matrix.payload_image }}"
 
       - name: Build live container
         if: steps.should_build.outputs.build == 'true'
@@ -105,6 +127,7 @@ jobs:
             --build-arg TARGET=${{ matrix.live_target }} \
             --build-arg TAG=${{ matrix.tag }} \
             --build-arg REGISTRY=${{ matrix.registry }} \
+            --build-arg BASE_DIGEST="${{ steps.sigs.outputs.base_digest }}" \
             --build-arg INSTALLER_CHANNEL=stable \
             -t localhost/${{ matrix.live_target }}-live:latest \
             ./live
