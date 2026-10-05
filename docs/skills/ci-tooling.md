@@ -11,7 +11,7 @@ tags:
   - r2
 description: Workflow definitions, runner environment, caching, and release automation for dakota-iso.
 version: "1.5"
-last_updated: "2026-09-22"
+last_updated: "2026-10-05"
 metadata:
   type: reference
 ---
@@ -354,3 +354,29 @@ Always symlink user-installed binaries into `/usr/local/bin` before running `sud
 - name: Symlink Cosign for sudo access
   run: sudo ln -sf "$(command -v cosign)" /usr/local/bin/cosign
 ```
+
+---
+
+## Building one-off public test ISOs from PR images (2026-10-05)
+
+When building an experimental one-off ISO for community testing (e.g. testing an alternative kernel or package from a PR in `projectbluefin/dakota`):
+
+### 1. Invariant tests require a separate workflow file
+`tests/test_live_build_invariants.py` enforces production release safety invariants specifically keyed to `.github/workflows/build-iso.yml` (e.g. stable payload refs, 3-slot backup rotation, README updates).
+- **Do not edit `build-iso.yml`** on a branch: `just check` will fail release invariant assertions.
+- **Create a dedicated throwaway workflow** (e.g. `.github/workflows/oneoff-iso-pr<N>.yml`) copied from `build-iso.yml` with:
+  - Target image / tag pointing to the PR image (`ghcr.io/projectbluefin/dakota:pr-<N>`).
+  - Output ISO name set to `dakota-live-<name>.iso`.
+  - Backup rotation removed (to avoid evicting production rollback backups).
+  - README refresh step removed.
+  - Triggered via `on: push: branches: [oneoff/<name>]` because `workflow_dispatch` only resolves workflows present on the repository's default branch.
+
+### 2. Override variant image references
+The installer reads `recipe.json` and `images.json` derived from `live/src/<variant>/` during live container configuration (`live/src/configure-live.sh`):
+- If `live/src/dakota/` does not exist, defaults fallback to `ghcr.io/projectbluefin/dakota:stable` and `ghcr.io/projectbluefin/dakota-nvidia:stable`.
+- Create `live/src/dakota/base_imgref` and `live/src/dakota/nvidia_imgref` populated with the PR image ref.
+- Create `live/src/dakota/images.json` pointing `default_image`, `imgref`, and `nvidia_imgref` to the PR image.
+- Update `dakota/payload_ref` with the PR image ref so QEMU E2E test recipes (`plain-enospc-gate`, `plain-install-qemu`) test against the PR payload instead of stock.
+
+### 3. Cleanup
+After the build finishes and artifacts are verified at `https://projectbluefin.dev/<name>.iso`, delete the throwaway branch.
