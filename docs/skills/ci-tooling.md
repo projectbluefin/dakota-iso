@@ -11,7 +11,7 @@ tags:
   - r2
 description: Workflow definitions, runner environment, caching, and release automation for dakota-iso.
 version: "1.5"
-last_updated: "2026-09-22"
+last_updated: "2026-10-05"
 metadata:
   type: reference
 ---
@@ -354,3 +354,34 @@ Always symlink user-installed binaries into `/usr/local/bin` before running `sud
 - name: Symlink Cosign for sudo access
   run: sudo ln -sf "$(command -v cosign)" /usr/local/bin/cosign
 ```
+
+---
+
+## Building one-off public test ISOs from PR images (2026-10-05)
+
+When building an experimental one-off ISO for community testing (e.g. testing an alternative kernel or package from a PR in `projectbluefin/dakota`):
+
+### 1. Invariant tests require a separate workflow file
+`tests/test_live_build_invariants.py` enforces production release safety invariants specifically keyed to `.github/workflows/build-iso.yml` (e.g. stable payload refs, 3-slot backup rotation, README updates).
+- **Do not edit `build-iso.yml`** on a branch: `just check` will fail release invariant assertions.
+- **Create a dedicated throwaway workflow** (e.g. `.github/workflows/oneoff-iso-pr<N>.yml`) copied from `build-iso.yml` with:
+  - Target image / tag pointing to the PR images. The `dakota` variant needs **both** PR images: `ghcr.io/projectbluefin/dakota:pr-<N>` (what installed systems track) and `ghcr.io/projectbluefin/dakota-nvidia:pr-<N>` (live env + offline store payload).
+  - The hardcoded `ghcr.io/projectbluefin/dakota-nvidia:stable` refs in `build-iso.yml` replaced with `dakota-nvidia:pr-<N>` — both the offline-store pull (`IMAGE=` in the pull step) and the `--oci-image` passed to the squashfs/embed step. Otherwise the VFS store embeds stock `:stable` and the recipe's `local_imgref` (§2) points at an image that is not in the store.
+  - Output ISO name set to `dakota-live-<name>.iso`.
+  - Backup rotation removed (to avoid evicting production rollback backups).
+  - README refresh step removed.
+  - Triggered via `on: push: branches: [oneoff/<name>]` because `workflow_dispatch` only resolves workflows present on the repository's default branch.
+
+### 2. Override variant image references
+The installer reads `recipe.json` and `images.json` derived from `live/src/<variant>/` during live container configuration (`live/src/configure-live.sh`):
+- If `live/src/dakota/` does not exist, defaults fallback to `ghcr.io/projectbluefin/dakota:stable` and `ghcr.io/projectbluefin/dakota-nvidia:stable`.
+- For the `dakota` variant the "nvidia" slots are the offline-store payload, not an nvidia-only option: `configure-live.sh` writes `NVIDIA_IMGREF` into the recipe's `image`/`local_imgref` (`containers-storage:<ref>`), and `dakota/payload_ref` is `dakota-nvidia:stable` at head. Keep the nvidia/non-nvidia split when overriding:
+  - `live/src/dakota/base_imgref` → `ghcr.io/projectbluefin/dakota:pr-<N>` (recipe `imgref`/`targetImgref`).
+  - `live/src/dakota/nvidia_imgref` → `ghcr.io/projectbluefin/dakota-nvidia:pr-<N>` (must match the image embedded in the offline store, see §1).
+  - `live/src/dakota/images.json`: point `default_image`/`imgref` at `dakota:pr-<N>` and `nvidia_imgref` at `dakota-nvidia:pr-<N>`.
+  - `dakota/payload_ref` → `ghcr.io/projectbluefin/dakota-nvidia:pr-<N>` so QEMU E2E test recipes (`plain-enospc-gate`, `plain-install-qemu`) test against the PR payload instead of stock.
+- The live environment image is **not** taken from `payload_ref`. Locally, `just container` builds it from `dakota/live_target` (`dakota-nvidia`) + `dakota/tag` (`stable`) via `scripts/variant-config.sh` — set `dakota/tag` to `pr-<N>`. The CI workflow calls `podman build ./live` directly with `TARGET=dakota-nvidia` and the Containerfile default `TAG=stable`, so the throwaway workflow must also pass `--build-arg TAG=pr-<N>` to the live container build step. Both require the `dakota-nvidia:pr-<N>` image to exist.
+- Never put the non-nvidia `dakota:pr-<N>` ref in an nvidia slot — nvidia hardware would install without drivers and the store lookup would miss.
+
+### 3. Cleanup
+After the build finishes and artifacts are verified at `https://projectbluefin.dev/<name>.iso`, delete the throwaway branch.
