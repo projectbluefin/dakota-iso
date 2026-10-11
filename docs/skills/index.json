@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-22",
+  "generated_at": "2026-10-11",
   "schema_version": "1.0",
   "skills": [
     {
@@ -87,8 +87,8 @@
         "governance"
       ],
       "description": "Label taxonomy, queue states, and lifecycle rules for issues and pull requests in dakota-iso.",
-      "version": "1.0",
-      "last_updated": "2026-07-30",
+      "version": "2.0",
+      "last_updated": "2026-10-11",
       "doc_type": "procedure"
     },
     {

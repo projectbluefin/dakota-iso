@@ -5,7 +5,7 @@ opened ──▶ review ──▶ lgtm + CI green ──▶ merged
            [needs-human]   [human approves]
 ```
 
-> Add `queue/hold` at any time to block merge.
+> Add `hold` at any time to block merge (`/hold`, `/hold cancel`).
 
 ## What does this change?
 

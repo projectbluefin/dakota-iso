@@ -11,91 +11,49 @@ tags:
   - issue-tracking
   - governance
 description: Label taxonomy, queue states, and lifecycle rules for issues and pull requests in dakota-iso.
-version: "1.0"
-last_updated: "2026-07-30"
+version: "2.0"
+last_updated: "2026-10-11"
 metadata:
   type: procedure
 ---
 
 # Label Workflow — dakota-iso
 
-## The one-line model
+dakota-iso uses [Prow](https://github.com/cncf/prow-github-actions) (cncf/prow-github-actions v3.0.1) and org-wide configuration from [`projectbluefin/.project/prow.yaml`](https://github.com/projectbluefin/.project/blob/main/prow.yaml).
 
-**Humans decide what gets built. Agents build it.**
-
-Humans file, triage, and approve work. Agents claim, implement, and ship it.
-Labels are the handoff signal between the two.
+Full org lifecycle documentation lives in the shared [Project Bluefin label-workflow guide](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md).
 
 ---
 
 ## Issue lifecycle
 
-```
-filed → triage → queue/agent-ready → queue/claimed → done (closed)
-```
+1. **Filed.** New issues receive `needs-human` and their initial `kind/` label from the issue template.
+2. **Triage.** Maintainers review the issue, refine the `kind/*` label, and set `/area` or `/priority`.
+3. **Accepted.** When scope is clear and approved, comment `/triage accepted`.
+4. **Agent pickup.** Maintainers remove `needs-human` when work is open for automation. Hive assigns work only when `triage/accepted` is present and neither `needs-human` nor `blocked` is set.
+5. **Blocked.** Use `/label blocked` while waiting on dependencies outside the repo; `/remove-label blocked` when unblocked.
 
-| Label | Actor | Next action |
-|---|---|---|
-| *(no queue label)* | **Human** triager | Review, set `kind/` label, then add `queue/agent-ready` when ready |
-| `queue/agent-ready` | **Agent** / contributor | Self-assign and start work; change to `queue/claimed` |
-| `queue/claimed` | **Agent** | Implement → open PR with `Closes #NNN` |
-| `queue/hold` | *nobody* | Intentionally paused — read comments for reason |
-| `needs-human` | **Human** | Agent is blocked — read the issue comment, unblock |
+---
 
 ## PR lifecycle
 
-```
-opened ──▶ review ──▶ lgtm + CI green ──▶ merged
-           [needs-human]   [human approves]
-```
-
-- PRs need a human `lgtm` or review approval before merge
-- Add `queue/hold` at any time to pause automation
-- Close stale PRs after 30 days of inactivity
+1. **Opened.** Reviewers are requested from `OWNERS`.
+2. **Review.** Reviewers comment `/lgtm` when satisfied. Any new push clears `lgtm`.
+3. **Approve.** An `OWNERS` approver comments `/approve` (or approves via GitHub review).
+4. **Merge.** When checks pass with `lgtm` and `approved`, Prow merges the PR via squash merge.
+5. **Hold.** Comment `/hold` to pause merge; `/hold cancel` to resume.
 
 ---
 
-## Label reference
+## Active label taxonomy
 
-| Label | Meaning |
-|---|---|
-| `bug` | Something is broken |
-| `enhancement` | New feature or improvement |
-| `documentation` | Docs-only change |
-| `queue/agent-ready` | Approved and ready for agent pickup |
-| `queue/claimed` | An agent or contributor is actively working this |
-| `queue/hold` | Intentionally paused |
-| `needs-human` | Agent is blocked; human input required |
-| `source:agent` | Filed or changed by an AI agent |
-| `source:gha` | Filed by GitHub Actions / automation |
-| `source:manual` | Filed by a human |
-| `good first issue` | Good for first-time contributors |
-
----
-
-## Finding work
-
-```bash
-# Agent-ready issues in this repo
-gh issue list --repo projectbluefin/dakota-iso \
-  --label "queue/agent-ready" --assignee ""
-
-# P0 blockers across the org
-gh search issues --label "hive/p0" --owner projectbluefin --state open \
-  --json number,title,repository
-```
-
----
-
-## Filing an issue
-
-When you discover a bug or gap:
-
-1. Check for duplicates first
-2. Use a descriptive title (Conventional Commits style: `type: description`)
-3. Include reproduction steps or context
-4. Add `source:agent` if filed by an AI agent
-5. **Do not** self-apply `queue/agent-ready` — that's a human triage decision
+| Category | Labels | Applied by |
+|---|---|---|
+| **Kind** | `kind/bug`, `kind/feature`, `kind/cleanup`, `kind/documentation`, `kind/regression`, `kind/security` | Template or `/kind <name>` |
+| **Area** | `area/desktop`, `area/flatpak`, `area/gaming`, `area/hardware`, `area/installer`, `area/dx` | `/area <name>`, `/remove-area <name>` |
+| **Triage** | `triage/accepted`, `needs-triage`, `needs-kind` | `/triage accepted`, Prow required-label checks |
+| **Priority** | `priority/critical-urgent`, `priority/important-soon` | `/priority <level>` |
+| **Gates** | `needs-human`, `hold`, `blocked`, `lgtm`, `approved` | Maintainers, `/hold`, `/label blocked`, `/lgtm`, `/approve` |
 
 ---
 

@@ -328,11 +328,10 @@ See [`docs/skills/human-gates.md`](docs/skills/human-gates.md) for full evidence
 ## Factory workflow, labels, and ownership
 
 Use the shared lifecycle and labels in
-[`docs/skills/label-workflow.md`](docs/skills/label-workflow.md). Humans
-triage and approve; agents claim `status/queued` issues. Clankers is
-authenticated Hive transport only, not merge authority. Templates are
-synchronized from `projectbluefin/bonedigger`; keep Dakota-ISO ownership
-local and never write to `ublue-os/*`.
+[`docs/skills/label-workflow.md`](docs/skills/label-workflow.md) and org
+Prow config in `projectbluefin/.project`. Humans triage and approve via
+`/triage accepted`, `/lgtm`, and `/approve`; agents claim work when
+`needs-human` is cleared. Never write to `ublue-os/*`.
 
 ## Verification Requirements
 
