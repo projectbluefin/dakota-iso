@@ -42,6 +42,19 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      # Verify the cosign signature of the payload (also the live base image)
+      # and pin to the verified digest — the mutable :stable tag alone does
+      # not prove the image was built by this project's CI.
+      - name: Verify payload image signature
+        id: payload
+        run: |
+          PINNED=$(scripts/verify-image-signature.sh ghcr.io/projectbluefin/dakota-nvidia:stable)
+          echo "pinned=${PINNED}" >> "$GITHUB_OUTPUT"
+          echo "digest=@${PINNED##*@}" >> "$GITHUB_OUTPUT"
+
       # Pull nvidia payload image — the only image needed in the offline store.
       # Non-nvidia users install from this store; their installed system tracks
       # dakota:stable and rebases on first bootc upgrade automatically.
@@ -51,9 +64,10 @@ jobs:
           if sudo podman image exists "$IMAGE"; then
             sudo podman rmi "$IMAGE"
           fi
+          IMAGE="${{ steps.payload.outputs.pinned }}"
           sudo podman pull "$IMAGE"
-
-      # Build only the NVIDIA live container — it's the one that boots live.
+          # Tag the verified digest under the tag the rest of the build expects.
+          sudo podman tag "$IMAGE" ghcr.io/projectbluefin/dakota-nvidia:stable
       # Non-NVIDIA is available for install via the offline store.
       - name: Build live container — dakota-nvidia
         run: |
@@ -63,6 +77,7 @@ jobs:
             --cap-add sys_admin --security-opt label=disable \
             --layers \
             --build-arg TARGET=dakota-nvidia \
+            --build-arg BASE_DIGEST="${{ steps.payload.outputs.digest }}" \
             --build-arg INSTALLER_CHANNEL=stable \
             -t localhost/dakota-nvidia-live:latest \
             ./live

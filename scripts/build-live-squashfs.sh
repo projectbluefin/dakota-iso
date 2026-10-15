@@ -59,7 +59,14 @@ if [[ -n "${TARGET}" ]]; then
     [[ -z "${OUTPUT_DIR}" ]] && { echo "ERROR: --target requires --output-dir" >&2; exit 1; }
 
     LIVE_TARGET=$(variant_live_target "${TARGET}")
+    LIVE_TAG=$(variant_tag "${TARGET}")
+    LIVE_REGISTRY=$(variant_registry "${TARGET}")
     echo ">>> [live-squashfs] building live container: target=${TARGET} live_target=${LIVE_TARGET} channel=${INSTALLER_CHANNEL:-stable} debug=${DEBUG_ARG}"
+
+    # Verify the cosign signature of the live base image and pin the build to
+    # the verified digest — same gate as the justfile `container` recipe.
+    BASE_PINNED=$("$(dirname "${BASH_SOURCE[0]}")/verify-image-signature.sh" \
+        "ghcr.io/${LIVE_REGISTRY}/${LIVE_TARGET}:${LIVE_TAG}")
 
     podman build \
         --cap-add sys_admin \
@@ -67,6 +74,9 @@ if [[ -n "${TARGET}" ]]; then
         --layers \
         --build-arg INSTALLER_CHANNEL="${INSTALLER_CHANNEL:-stable}" \
         --build-arg TARGET="${LIVE_TARGET}" \
+        --build-arg TAG="${LIVE_TAG}" \
+        --build-arg REGISTRY="${LIVE_REGISTRY}" \
+        --build-arg BASE_DIGEST="@${BASE_PINNED##*@}" \
         --build-arg DEBUG="${DEBUG_ARG}" \
         -t "${TARGET}-installer" \
         -f ./live/Containerfile ./live

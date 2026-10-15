@@ -14,6 +14,7 @@ The docs are the source of truth for build quirks, disk space requirements, and 
 - `podman` (rootless)
 - `xorriso` (via brew: `brew install xorriso`, or distro package)
 - `mtools` (via brew or distro)
+- `cosign` and `jq` — `just container` / `just iso` verify the cosign signature of the live base image before building (a pinned cosign is fetched automatically if missing)
 - ~25 GB free disk space on `/var` (not `/tmp` — tmpfs is too small)
 - See [`docs/build.md`](docs/build.md) for full setup details
 
@@ -70,6 +71,6 @@ just boot-iso-serial dakota
 - In the PR description, say what you built locally and how you verified boot/install behavior
 - If you touch build logic or installer behavior, test the resulting ISO before pushing
 
-Use the shared [label workflow](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md):
-humans triage and approve, agents claim `status/queued`, and Clankers only
-transports Hive assignments. Templates are synchronized from bonedigger.
+Use the shared [label workflow](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md)
+and Prow commands: humans triage with `/triage accepted`, review with `/lgtm`,
+and approve with `/approve`. Never write to `ublue-os/*`.

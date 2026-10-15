@@ -54,14 +54,16 @@ gh workflow run build-iso.yml --ref main
 1. **Free disk space** — `ublue-os/remove-unwanted-software` reclaims ~119 GB at `/var/iso-build`
 2. **Install deps** — `apt-get install podman buildah skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
-4. **Pull payload image** — removes any local `dakota-nvidia:stable` tag, then pulls the current unified ISO base
-5. **Build live container** — `podman build --pull=always --no-cache live/ --build-arg TARGET=dakota-nvidia` → `localhost/dakota-nvidia-live:latest`
-6. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `<target>.rootfs.sfs` + `<target>-boot.tar` (~4.5 GB dakota, ~6 GB bluefin/lts-hwe)
-7. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (no `--store` flag — OCI already embedded in squashfs as VFS)
-8. **Generate checksum** — latest variant
-9. **Plain-install E2E gates** — live boot, ENOSPC export gate, full install, installed-boot verification
-10. **Boot verification** — QEMU UEFI smoke boot on the production ISO
-11. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, and production boot smoke all succeed
+4. **Install cosign** — `sigstore/cosign-installer` (SHA-pinned)
+5. **Verify payload signature** — `scripts/verify-image-signature.sh ghcr.io/projectbluefin/dakota-nvidia:stable` checks the keyless cosign signature (identity `^https://github\.com/projectbluefin/`) and prints the digest-pinned ref; the job fails if verification fails
+6. **Pull payload image** — removes any local `dakota-nvidia:stable` tag, pulls the verified digest, and re-tags it `dakota-nvidia:stable` for the later steps
+7. **Build live container** — `podman build --pull=always --no-cache live/ --build-arg TARGET=dakota-nvidia --build-arg BASE_DIGEST=@sha256:…` → `localhost/dakota-nvidia-live:latest`; `BASE_DIGEST` pins both `FROM` lines in `live/Containerfile` to the verified digest
+8. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `<target>.rootfs.sfs` + `<target>-boot.tar` (~4.5 GB dakota, ~6 GB bluefin/lts-hwe)
+9. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (no `--store` flag — OCI already embedded in squashfs as VFS)
+10. **Generate checksum** — latest variant
+11. **Plain-install E2E gates** — live boot, ENOSPC export gate, full install, installed-boot verification
+12. **Boot verification** — QEMU UEFI smoke boot on the production ISO
+13. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, and production boot smoke all succeed
 
 > ⚠️ **Do not add `--store` back or re-add the offline store squashfs step.**
 > The OCI image is already embedded in the live squashfs via VFS containers-storage.

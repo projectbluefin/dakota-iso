@@ -19,6 +19,7 @@ them are checked here against the workflow matrix as the single source of truth.
 """
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -26,6 +27,9 @@ import yaml
 
 REPO = Path(__file__).parent.parent
 BUILD_ISO_UTAH_WORKFLOW = REPO / ".github" / "workflows" / "build-iso-utah.yml"
+BUILD_ISO_DAKOTA_WORKFLOW = REPO / ".github" / "workflows" / "build-iso.yml"
+CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
+SHARED_IMAGES_JSON = REPO / "live" / "src" / "etc" / "bootc-installer" / "images.json"
 
 
 def _matrix_entries():
@@ -144,6 +148,136 @@ class TestVariantPayloadConsistency(unittest.TestCase):
                         f"live/src/{variant}/nvidia_imgref, so the catalogue offers "
                         f"an image the ISO does not carry",
                     )
+
+
+def _dakota_workflow_runs():
+    """Return the concatenated `run:` scripts of build-iso.yml."""
+    with BUILD_ISO_DAKOTA_WORKFLOW.open() as handle:
+        workflow = yaml.safe_load(handle)
+
+    runs = []
+    for job in workflow["jobs"].values():
+        for step in job.get("steps") or []:
+            if "run" in step:
+                runs.append(step["run"])
+    return "\n".join(runs)
+
+
+def _configure_live_default(key: str) -> str:
+    """Return the literal default configure-live.sh uses for read_variant_config <key>."""
+    match = re.search(
+        rf'read_variant_config {re.escape(key)} "([^"]+)"', CONFIGURE_LIVE.read_text()
+    )
+    if match is None:
+        raise AssertionError(
+            f"configure-live.sh no longer reads {key!r} via read_variant_config "
+            f"with a literal default; update this guard"
+        )
+    return match.group(1)
+
+
+class TestDakotaPayloadConsistency(unittest.TestCase):
+    """The published Dakota ISO must embed the image its installer requests.
+
+    Dakota has no matrix and no live/src/dakota/ dir, so none of the checks
+    above reach it. Its refs live in four places wired only by convention:
+
+    - `.github/workflows/build-iso.yml` hardcodes the payload it pulls and
+      embeds, and the live container TARGET, for the *published* ISO;
+    - `dakota/{payload_ref,live_target}` drive `just iso-sd-boot dakota`,
+      which is what the LUKS / plain-install E2E gates build and test;
+    - `live/src/configure-live.sh` falls back to literal defaults for
+      `base_imgref` / `nvidia_imgref`, which become the installer's
+      `imgref` / `local_imgref` because live/src/dakota/ does not exist;
+    - the shared `live/src/etc/bootc-installer/images.json` catalogue.
+
+    `dakota/payload_ref` is treated as the source of truth.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.payload_ref = _read_scalar(REPO / "dakota" / "payload_ref")
+        cls.live_target = _read_scalar(REPO / "dakota" / "live_target")
+        cls.runs = _dakota_workflow_runs()
+
+    def test_dakota_has_no_variant_src_dir(self):
+        """The default-based checks below only hold while live/src/dakota/ is absent."""
+        self.assertFalse(
+            (REPO / "live" / "src" / "dakota").exists(),
+            "live/src/dakota/ now exists, so configure-live.sh reads it instead of "
+            "its literal defaults; extend TestVariantPayloadConsistency to dakota",
+        )
+
+    def test_published_iso_embeds_the_tested_payload(self):
+        """Every image build-iso.yml pulls or embeds must be dakota/payload_ref."""
+        refs = re.findall(r"(?:--oci-image|\bIMAGE=)\s*(\S+)", self.runs)
+        self.assertTrue(
+            refs,
+            f"no `--oci-image` / `IMAGE=` found in {BUILD_ISO_DAKOTA_WORKFLOW.name}; "
+            f"this guard would silently pass",
+        )
+        for ref in refs:
+            with self.subTest(ref=ref):
+                self.assertEqual(
+                    ref,
+                    self.payload_ref,
+                    f"{BUILD_ISO_DAKOTA_WORKFLOW.name} embeds {ref!r} but "
+                    f"dakota/payload_ref (what the E2E gates test) is "
+                    f"{self.payload_ref!r}",
+                )
+
+    def test_published_iso_boots_the_tested_live_target(self):
+        """build-iso.yml's live container TARGET must be dakota/live_target."""
+        targets = re.findall(r"--build-arg TARGET=(\S+)", self.runs)
+        self.assertTrue(
+            targets,
+            f"no `--build-arg TARGET=` found in {BUILD_ISO_DAKOTA_WORKFLOW.name}",
+        )
+        for target in targets:
+            with self.subTest(target=target):
+                self.assertEqual(
+                    target,
+                    self.live_target,
+                    f"{BUILD_ISO_DAKOTA_WORKFLOW.name} builds TARGET={target!r} but "
+                    f"dakota/live_target is {self.live_target!r}",
+                )
+
+    def test_installer_requests_the_embedded_payload(self):
+        """configure-live.sh's nvidia_imgref default becomes local_imgref for dakota."""
+        nvidia_default = _configure_live_default("nvidia_imgref")
+        self.assertEqual(
+            nvidia_default,
+            self.payload_ref,
+            f"configure-live.sh defaults nvidia_imgref to {nvidia_default!r} but the "
+            f"Dakota ISO embeds {self.payload_ref!r}; offline install will fail with "
+            f"'pull failed attempt podman pull containers-storage {nvidia_default}'",
+        )
+
+    def test_shared_images_json_matches_configure_live_defaults(self):
+        """The shared catalogue must offer the same refs the recipe is built from."""
+        base_default = _configure_live_default("base_imgref")
+        nvidia_default = _configure_live_default("nvidia_imgref")
+
+        with SHARED_IMAGES_JSON.open() as handle:
+            catalogue = json.load(handle)
+
+        self.assertEqual(
+            catalogue["default_image"],
+            base_default,
+            "live/src/etc/bootc-installer/images.json default_image does not match "
+            "configure-live.sh's base_imgref default",
+        )
+        images = catalogue.get("images") or []
+        self.assertTrue(images, "shared images.json lists no images")
+        for image in images:
+            with self.subTest(image=image.get("name")):
+                self.assertEqual(image["imgref"], base_default)
+                self.assertEqual(
+                    image["nvidia_imgref"],
+                    nvidia_default,
+                    f"shared images.json entry {image['name']!r} offers "
+                    f"{image['nvidia_imgref']!r}, which the Dakota ISO does not carry",
+                )
 
 
 if __name__ == "__main__":

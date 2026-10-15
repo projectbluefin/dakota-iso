@@ -55,6 +55,7 @@ Dakota without a network pull.
 | `podman` | Rootless works; needs `--cap-add sys_admin` for the live env build |
 | `buildah` | Squash OCI layers before VFS import |
 | `skopeo` | Copy images into the offline store |
+| `cosign` + `jq` | Verify the cosign signature of ghcr images before they are built into the ISO (`scripts/verify-image-signature.sh` fetches a pinned cosign if absent) |
 | `just` | Task runner — `cargo install just` or distro package |
 | KVM + `qemu-system-x86_64` | For local boot testing on amd64 only |
 | OVMF firmware | `edk2-ovmf` (Fedora/RHEL) or `ovmf` (Debian/Ubuntu) — amd64 |
@@ -105,6 +106,12 @@ just iso-sd-boot my-variant
 The `live/Containerfile` accepts a `TARGET` build-arg (defaulting to `dakota-nvidia`). The
 justfile reads `<target>/payload_ref` and passes the target name as `TARGET`. Installer
 configs are patched at build time to reference the correct image.
+
+Every `ghcr.io/projectbluefin/*` image the build consumes (the live base and the
+`payload_ref`) must carry a keyless cosign signature from projectbluefin CI;
+`scripts/verify-image-signature.sh` verifies it and pins the build to the verified
+digest. `just container` verifies the live base unconditionally, so a variant's
+`registry` file must stay `projectbluefin` — other registries are refused.
 
 ## Testing
 
