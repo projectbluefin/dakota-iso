@@ -147,17 +147,26 @@ fi
 #
 # In --target mode, variant-config.sh is the single authority for the variant.
 # In positional mode, detect composefs from the recipe.json baked into the live
-# container.
-# Run python3 directly (not via sh -c) to avoid nested double-quote parsing
-# failures: sh -c 'python3 -c "...open("...")"' breaks because the inner
-# double-quotes terminate the outer sh argument prematurely.
+# container.  The probe fails closed: grep exit 1 (no match) means the recipe
+# says false; any other non-zero status (recipe.json missing, podman unable to
+# run the image) aborts, so an infrastructure error cannot silently produce a
+# non-composefs ISO layout.
 COMPOSEFS_BACKEND=false
 if [[ -n "${TARGET}" ]]; then
     COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")
-elif podman run --rm --entrypoint="" "${IMAGE}" \
-       grep -qi '"composeFsBackend": *true' /etc/bootc-installer/recipe.json \
-       2>/dev/null; then
-    COMPOSEFS_BACKEND=true
+else
+    probe_rc=0
+    podman run --rm --entrypoint="" "${IMAGE}" \
+        grep -qi '"composeFsBackend": *true' /etc/bootc-installer/recipe.json \
+        || probe_rc=$?
+    case "${probe_rc}" in
+        0) COMPOSEFS_BACKEND=true ;;
+        1) COMPOSEFS_BACKEND=false ;;
+        *)
+            echo "ERROR: could not read composeFsBackend from /etc/bootc-installer/recipe.json in ${IMAGE} (exit ${probe_rc})" >&2
+            exit 1
+            ;;
+    esac
 fi
 echo ">>> [live-squashfs] composeFsBackend=${COMPOSEFS_BACKEND}"
 if [[ -n "${OCI_IMAGE}" ]]; then
