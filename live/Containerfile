@@ -7,11 +7,14 @@
 # TARGET selects the source image. Everything else — initramfs rebuild,
 # live-user setup, installer config, flatpaks — is identical for both variants.
 #
-# Three-stage build:
-#   1. ref          — source Dakota image (provides kernel modules)
-#   2. initramfs-builder — Debian: builds a dmsquash-live initramfs against
-#                          Dakota's kernel modules in its native glibc environment
-#   3. final        — Dakota: receives the rebuilt initramfs + live-env setup
+# Four-stage build:
+#   1. ref               — source image (provides kernel modules)
+#   2. initramfs-native  — builds the initramfs with the target's own dracut
+#                          when it has one; otherwise marks a Debian fallback
+#   3. initramfs-builder — Debian: cross-builds the dmsquash-live initramfs
+#                          against the target's kernel modules when stage 2
+#                          fell back, else passes the native initramfs through
+#   4. final             — receives the selected initramfs + live-env setup
 #
 # Dakota is GNOME OS / freedesktop-sdk based — no package manager, no dracut.
 # The initramfs is built in a separate Debian stage so no cross-distro binary
