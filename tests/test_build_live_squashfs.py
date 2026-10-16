@@ -80,7 +80,9 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
         path.chmod(0o755)
         return path
 
-    def _install_stubs(self, *, composefs=True):
+    def _install_stubs(self, *, composefs=True, probe_exit=None):
+        if probe_exit is None:
+            probe_exit = 0 if composefs else 1
         self._stub("podman", f"""
             echo "podman $*" >> "$STUB_CALLS"
             if [ "$1" = "build" ]; then
@@ -97,7 +99,7 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
                 # Check if this is the composeFsBackend detection call
                 for arg in "$@"; do
                     if [[ "$arg" == *"composeFsBackend"* ]]; then
-                        {"exit 0" if composefs else "exit 1"}
+                        exit {probe_exit}
                     fi
                 done
                 exit 0
@@ -165,8 +167,8 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
             exec /usr/bin/id "$@"
         """)
 
-    def run_script(self, *args, composefs=True, env_vars=None):
-        self._install_stubs(composefs=composefs)
+    def run_script(self, *args, composefs=True, probe_exit=None, env_vars=None):
+        self._install_stubs(composefs=composefs, probe_exit=probe_exit)
 
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
@@ -248,6 +250,24 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
                 commit_call,
                 f"buildah commit in non-composefs mode must not use --squash: {commit_call!r}",
             )
+
+    def test_positional_probe_fails_closed_on_error(self):
+        """A probe that errors (podman 125, grep 2) must abort, not fall back to non-composefs."""
+        for probe_exit in (2, 125, 127):
+            with self.subTest(probe_exit=probe_exit):
+                self.calls_log.write_text("")
+                res = self.run_script(
+                    "--oci-image", "ghcr.io/projectbluefin/dakota-nvidia:stable",
+                    "localhost/dakota-nvidia-live:latest",
+                    str(self.sandbox / "output" / "dakota.sfs"),
+                    str(self.sandbox / "output" / "dakota.tar"),
+                    probe_exit=probe_exit,
+                )
+                self.assertNotEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+                self.assertIn("could not read composeFsBackend", res.stderr)
+                self.assertNotIn("composeFsBackend=false", res.stdout)
+                calls = self.recorded_calls()
+                self.assertFalse([c for c in calls if c.startswith(("buildah", "mksquashfs"))], calls)
 
     def test_missing_positional_arguments_fails(self):
         """Positional mode requires image, output squashfs, and output boot tar."""
