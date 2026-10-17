@@ -440,6 +440,25 @@ updated by upstream). The real check is the fisherman binary at
 `var/lib/flatpak/app/org.bootcinstaller.Installer/.../files/bin/fisherman` — v3.x is a
 Go binary containing `[fisherman] version:` strings and LUKS/flatpak/composefs logic.
 
+### Flatpak remote descriptors are checked in (2026-10)
+
+`install-flatpaks.sh` registers Flathub (and any `remote:app-id` remote a variant
+list names, currently `tuna-os` for Utah's Ghostty) from `.flatpakrepo` files under
+`live/src/remotes/`, bind-mounted at `/src/remotes` by the Containerfile. A
+`.flatpakrepo` carries `Url=` and `GPGKey=` — the trust root every later download is
+verified against — and `/var/lib/flatpak` is copied onto installed systems via
+`flatpak_var_path`, so it must be a reviewed file, not something fetched over the network
+during the build. The build fails if a descriptor is missing.
+
+To add a remote: drop `live/src/remotes/<name>.flatpakrepo` in, add `[<name>]=1` to
+`KNOWN_REMOTES` in the script, and reference it as `<name>:<app-id>` in the variant's
+`flatpaks` list. `tests/test_install_flatpaks.py` pins the Flathub descriptor's SHA-256
+and fails if `flatpak remote-add` is ever handed an `https://` location again.
+
+A Flathub or TunaOS key/URL rotation therefore shows up as a diff to a file in this
+repository — refresh it from the upstream URL, review the diff, and update the pinned
+digest in the test.
+
 ### CI bluefin OCI store verification (2026-06)
 
 `build-iso-bluefin.yml` previously checked `var/lib/containers/storage/vfs-images` (VFS path).

@@ -54,8 +54,28 @@ if [ -d "${FLATPAK_CACHE}/repo/refs" ]; then
     echo "Cache seed complete"
 fi
 
-flatpak remote-add --system --if-not-exists flathub \
-    https://dl.flathub.org/repo/flathub.flatpakrepo
+# ── Flatpak remotes come from checked-in descriptors, never the network ──────
+# A .flatpakrepo file carries Url= and GPGKey=: it is the trust root every
+# later download from that remote is verified against, and /var/lib/flatpak is
+# copied onto installed systems (flatpak_var_path), so whatever lands here is
+# the permanent trust root for every future `flatpak update` on every machine
+# installed from the ISO. Fetching that file over the network at build time
+# would let anyone who can alter one response during the build redefine the
+# key. The descriptors are therefore reviewed files under live/src/remotes/
+# (bind-mounted at /src by the Containerfile), and a key or URL rotation
+# upstream shows up as a diff to this repository instead of flowing silently
+# into the next nightly ISO.
+REMOTES_DIR="/src/remotes"
+add_remote() {
+    local name="$1" file="${REMOTES_DIR}/$1.flatpakrepo"
+    if [[ ! -s "${file}" ]]; then
+        echo "Missing flatpak remote descriptor ${file} for remote '${name}'" >&2
+        exit 1
+    fi
+    flatpak remote-add --system --if-not-exists "${name}" "${file}"
+}
+
+add_remote flathub
 
 # bootc-installer bundle
 # INSTALLER_CHANNEL controls which release to pull from:
@@ -151,9 +171,10 @@ readarray -t ENTRIES < <(grep -v '^[[:space:]]*#' "${FLATPAKS_LIST}" | grep -v '
 # An entry is an app ID from Flathub, or "remote:app-id" for an app a variant
 # takes from another remote. Utah's terminal is Ghostty from the TunaOS OCI
 # remote -- Hummingbird packages no ptyxis or vte -- and without this form the
-# Utah ISO shipped no terminal at all.
-declare -A REMOTE_URLS=(
-    [tuna-os]="https://tunaos.org/flatpak/tuna-os.flatpakrepo"
+# Utah ISO shipped no terminal at all. Every remote named here needs a
+# checked-in descriptor at ${REMOTES_DIR}/<remote>.flatpakrepo (see add_remote).
+declare -A KNOWN_REMOTES=(
+    [tuna-os]=1
 )
 declare -A BY_REMOTE=()
 WANTED=()
@@ -161,7 +182,7 @@ for entry in "${ENTRIES[@]}"; do
     remote=flathub app="${entry}"
     if [[ "${entry}" == *:* ]]; then
         remote="${entry%%:*}" app="${entry#*:}"
-        [[ -n "${REMOTE_URLS[${remote}]:-}" ]] || { echo "Unknown flatpak remote '${remote}' in ${FLATPAKS_LIST}" >&2; exit 1; }
+        [[ -n "${KNOWN_REMOTES[${remote}]:-}" ]] || { echo "Unknown flatpak remote '${remote}' in ${FLATPAKS_LIST}" >&2; exit 1; }
     fi
     BY_REMOTE[${remote}]+="${app} "
     WANTED+=("${app}")
@@ -170,7 +191,7 @@ done
 # Install or update everything in the list (--or-update = skip if current)
 # --no-related skips locale packs and debug symbols (~3 GB uncompressed)
 for remote in "${!BY_REMOTE[@]}"; do
-    [[ "${remote}" == flathub ]] || flatpak remote-add --system --if-not-exists "${remote}" "${REMOTE_URLS[${remote}]}"
+    [[ "${remote}" == flathub ]] || add_remote "${remote}"
     read -ra apps <<< "${BY_REMOTE[${remote}]}"
     flatpak install --system --noninteractive --no-related --or-update "${remote}" "${apps[@]}"
 done
