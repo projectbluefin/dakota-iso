@@ -41,18 +41,32 @@ After the installed system boots (and, for LUKS, is unlocked),
 `scripts/verify-post-install.sh <ssh_port> <encryption_type>` SSHes in as
 `root` and checks:
 
-1. `efibootmgr -v` shows `BootCurrent` + a `Boot####` entry (fisherman #2 —
-   requires the `/sys/firmware/efi/efivars` bind-mount in fisherman's
-   `podman run` invocation).
+1. `efibootmgr -v` shows `BootCurrent` pointing at an installer-written NVRAM
+   entry — an `HD()` device path with a `\EFI\<vendor>\*.efi` loader. OVMF's
+   auto-enumerated device entries (`PciRoot(...)`, UiApp, EFI shell) and the
+   removable-media fallback `\EFI\BOOT\BOOTX64.EFI` do **not** count
+   (fisherman #2 — requires the `/sys/firmware/efi/efivars` bind-mount in
+   fisherman's `podman run` invocation).
 2. `flatpak list --system --app` does **not** include `org.bootcinstaller`
    (fisherman #1 — `CopyFlatpaks` must not carry the live-ISO-only installer
    app onto the installed target).
-3. LUKS only: `/proc/cmdline` contains a parseable `rd.luks.uuid=` or
-   `rd.luks.name=` entry (projectbluefin/common#385).
+3. LUKS only: `/proc/cmdline` contains a well-formed (8-4-4-4-12 hex) UUID in
+   `rd.luks.uuid=[luks-]<uuid>` or `rd.luks.name=<uuid>=<name>`
+   (projectbluefin/common#385).
 
 The same script backs `plain-verify-qemu` (encryption type `none`, skips
 assertion 3) and the new `luks-verify-qemu` recipe (encryption type
 `luks-passphrase`).
+
+> **Non-blocking by default (observability-only).** Until fisherman #1/#2 and
+> common#385 land, `plain-verify-qemu` and `luks-verify-qemu` exit **0** when
+> `verify-post-install.sh` fails — including when the installed system's SSH
+> is unreachable — printing a `⚠️ ... NON-BLOCKING` line (and a GitHub
+> `::warning::` annotation in Actions). Set `STRICT_POST_BOOT=1` to make any
+> failure fail the recipe. CI (`test-luks-install.yml`,
+> `test-plain-install.yml`) does **not** set it, so a green CI run does not
+> prove these invariants — check the log for `✅ All post-boot assertions
+> passed`.
 
 ### Key paths
 

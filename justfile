@@ -979,12 +979,15 @@ luks-unlock-qemu target:
 luks-verify-qemu target:
     #!/usr/bin/bash
     set -euo pipefail
-    # Post-boot assertions (projectbluefin/dakota#651). Soft-fail by default
-    # until upstream dependencies (fisherman #1, #2, common#385) land.
+    # Post-boot assertions (projectbluefin/dakota#651). OBSERVABILITY-ONLY by
+    # default: any failure (including SSH unreachable) exits 0 with a warning
+    # until upstream dependencies (fisherman #1, #2, common#385) land. CI does
+    # not set STRICT_POST_BOOT, so a green run does NOT prove the invariants.
     POST_BOOT_RC=0
     bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase" || POST_BOOT_RC=$?
     if [[ "$POST_BOOT_RC" -ne 0 && "${STRICT_POST_BOOT:-0}" != "1" ]]; then
-        echo "⚠️ Post-boot assertions failed (known upstream dependency gap). Set STRICT_POST_BOOT=1 to fail hard." >&2
+        echo "⚠️ Post-boot assertions FAILED but are NON-BLOCKING (observability-only until fisherman #1/#2 and common#385 land). Set STRICT_POST_BOOT=1 to fail hard." >&2
+        [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::warning title=Post-boot assertions failed (non-blocking)::verify-post-install.sh exited ${POST_BOOT_RC}; see log. Set STRICT_POST_BOOT=1 to gate."
         exit 0
     fi
     exit "$POST_BOOT_RC"
@@ -1384,11 +1387,13 @@ plain-verify-qemu target:
             bash "live/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
             # Post-boot assertions (projectbluefin/dakota#651): UEFI entry +
             # Flatpak exclusion, over SSH into the now-booted installed system.
+            # Observability-only unless STRICT_POST_BOOT=1 (CI does not set it).
             POST_BOOT_RC=0
             bash "scripts/verify-post-install.sh" "{{plain-qemu-ssh-port-installed}}" "none" || POST_BOOT_RC=$?
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
             if [[ "$POST_BOOT_RC" -ne 0 && "${STRICT_POST_BOOT:-0}" != "1" ]]; then
-                echo "⚠️ Post-boot assertions failed (known upstream dependency gap). Set STRICT_POST_BOOT=1 to fail hard." >&2
+                echo "⚠️ Post-boot assertions FAILED but are NON-BLOCKING (observability-only until fisherman #1/#2 and common#385 land). Set STRICT_POST_BOOT=1 to fail hard." >&2
+                [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::warning title=Post-boot assertions failed (non-blocking)::verify-post-install.sh exited ${POST_BOOT_RC}; see log. Set STRICT_POST_BOOT=1 to gate."
                 exit 0
             fi
             exit "$POST_BOOT_RC"

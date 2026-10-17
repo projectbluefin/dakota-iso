@@ -65,10 +65,15 @@ class TestVerifyPostInstallScript(unittest.TestCase):
         good_cmdlines = [
             "root=/dev/mapper/luks-root rd.luks.uuid=1b4e28ba-2fa1-11d2-883f-b9a761bde3fb ro",
             "rd.luks.name=1b4e28ba-2fa1-11d2-883f-b9a761bde3fb=root ro quiet",
+            "ro rd.luks.uuid=luks-1B4E28BA-2FA1-11D2-883F-B9A761BDE3FB",
         ]
         bad_cmdlines = [
             "root=/dev/vda2 ro quiet splash",
             "console=ttyS0 rd.luks=1",  # no uuid/name key, must not match
+            "rd.luks.uuid=x ro",  # not a UUID
+            "rd.luks.uuid=1b4e28ba-2fa1-11d2-883f ro",  # truncated UUID
+            "rd.luks.uuid=1b4e28ba-2fa1-11d2-883f-b9a761bde3fbXX ro",  # trailing junk
+            "rd.luks.name=root=luks-root ro",  # name form without UUID
         ]
 
         for cmdline in good_cmdlines:
@@ -96,10 +101,51 @@ class TestVerifyPostInstallScript(unittest.TestCase):
         self.assertIn('FLATPAK_RC', text, "flatpak exclusion check must track exit code")
         self.assertIn('org.bootcinstaller', text)
 
-    def test_efibootmgr_assertion_requires_both_bootcurrent_and_boot_entry(self):
-        text = VERIFY_SCRIPT.read_text()
-        self.assertIn("BootCurrent", text)
-        self.assertIn(r"Boot[0-9A-Fa-f]{4}", text)
+    def _check_uefi(self, efibootmgr_out: str) -> int:
+        return subprocess.run(
+            ["bash", "-c", 'source "$0" && check_uefi_boot_entry "$1"',
+             str(VERIFY_SCRIPT), efibootmgr_out],
+            capture_output=True, text=True,
+        ).returncode
+
+    def test_uefi_check_accepts_installer_written_entry(self):
+        for loader in (r"File(\EFI\fedora\shimx64.efi)", r"\EFI\fedora\shimx64.efi"):
+            out = (
+                "BootCurrent: 0004\n"
+                "BootOrder: 0004,0001,0000\n"
+                "Boot0000* UiApp\tFvVol(7cb8bdc9-f8eb-4f34-aaea-3ee4af6516a1)/FvFile(462caa21-7614-4503-836e-8ab6f4662331)\n"
+                "Boot0001* UEFI Misc Device\tPciRoot(0x0)/Pci(0x4,0x0){auto_created_boot_option}\n"
+                f"Boot0004* Fedora\tHD(1,GPT,0b1c7a3e-1111-2222-3333-444455556666,0x800,0x12c000)/{loader}\n"
+            )
+            self.assertEqual(self._check_uefi(out), 0, f"should accept: {loader}")
+
+    def test_uefi_check_rejects_ovmf_auto_entries_and_fallback(self):
+        """The fisherman #2 regression (no NVRAM entry written) must fail even
+        though OVMF always lists BootCurrent + auto-enumerated Boot#### lines."""
+        bad = {
+            "ovmf auto-enumerated disk": (
+                "BootCurrent: 0001\n"
+                "Boot0000* UiApp\tFvVol(7cb8bdc9-f8eb-4f34-aaea-3ee4af6516a1)/FvFile(462caa21-7614-4503-836e-8ab6f4662331)\n"
+                "Boot0001* UEFI Misc Device\tPciRoot(0x0)/Pci(0x4,0x0){auto_created_boot_option}\n"
+            ),
+            "removable-media fallback": (
+                "BootCurrent: 0002\n"
+                "Boot0002* UEFI\tHD(1,GPT,0b1c7a3e-1111-2222-3333-444455556666,0x800,0x12c000)/File(\\EFI\\BOOT\\BOOTX64.EFI)\n"
+            ),
+            "uiapp": (
+                "BootCurrent: 0000\n"
+                "Boot0000* UiApp\tFvVol(7cb8bdc9-f8eb-4f34-aaea-3ee4af6516a1)/FvFile(462caa21-7614-4503-836e-8ab6f4662331)\n"
+            ),
+            "bootcurrent points at missing entry": (
+                "BootCurrent: 0009\n"
+                "Boot0004* Fedora\tHD(1,GPT,0b1c7a3e-1111-2222-3333-444455556666,0x800,0x12c000)/File(\\EFI\\fedora\\shimx64.efi)\n"
+            ),
+            "no bootcurrent": (
+                "Boot0004* Fedora\tHD(1,GPT,0b1c7a3e-1111-2222-3333-444455556666,0x800,0x12c000)/File(\\EFI\\fedora\\shimx64.efi)\n"
+            ),
+        }
+        for name, out in bad.items():
+            self.assertNotEqual(self._check_uefi(out), 0, f"should reject: {name}")
 
 
 class TestFishermanInstallDebugSSH(unittest.TestCase):
@@ -134,11 +180,11 @@ class TestFishermanInstallDebugSSH(unittest.TestCase):
         end = guarded_slice.find("\n    else\n")
         guarded_slice = guarded_slice[:end] if end != -1 else guarded_slice
 
-        for marker in ("openssl passwd", "PermitRootLogin", "enable sshd.service"):
+        for marker in ("openssl passwd", "PermitRootLogin", 'enable ${SSH_UNIT}', "multi-user.target.wants"):
             self.assertIn(marker, guarded_slice, f"{marker!r} not found inside debug guard")
 
         before_guard = text[:guard_start]
-        for marker in ("PermitRootLogin", "enable sshd.service"):
+        for marker in ("PermitRootLogin", "system-preset", "multi-user.target.wants"):
             self.assertNotIn(
                 marker, before_guard,
                 f"{marker!r} appears (in code) before the ENABLE_DEBUG_SSH guard — must not leak unconditionally",

@@ -8,18 +8,60 @@
 # --enable-debug-ssh path — root:root, mirroring the live ISO's DEBUG=1
 # convention) to the freshly-installed, rebooted system and checks:
 #
-#   1. efibootmgr -v shows a BootCurrent + Boot#### entry written by the
-#      installer (fisherman #2: /sys/firmware/efi/efivars bind-mount).
+#   1. efibootmgr -v shows BootCurrent pointing at a Boot#### entry that the
+#      installer wrote to NVRAM (fisherman #2: /sys/firmware/efi/efivars
+#      bind-mount) — i.e. an HD() device path with a vendor loader under
+#      \EFI\<vendor>\, not an OVMF auto-enumerated device entry and not the
+#      removable-media fallback \EFI\BOOT\BOOTX64.EFI.
 #   2. flatpak list --system --app excludes the installer's own Flatpak
 #      (fisherman #1: CopyFlatpaks must not carry over live-ISO-only apps).
-#   3. (LUKS installs only) /proc/cmdline contains a parseable LUKS UUID via
-#      rd.luks.uuid= or rd.luks.name= (projectbluefin/common#385).
+#   3. (LUKS installs only) /proc/cmdline contains a well-formed LUKS UUID
+#      (8-4-4-4-12 hex) via rd.luks.uuid=[luks-]<uuid> or
+#      rd.luks.name=<uuid>=<name> (projectbluefin/common#385).
 #
 # Usage: verify-post-install.sh <ssh_port> <encryption_type: none|luks-passphrase>
 #
 # Exit code: 0 if all applicable assertions pass, 1 if any fails.
 
 set -uo pipefail
+
+# check_uefi_boot_entry <efibootmgr -v output>
+# Succeeds only if BootCurrent names an entry whose device path is an HD()
+# partition with a vendor loader under \EFI\<vendor>\.  OVMF auto-creates
+# Boot#### entries for every attached disk (PciRoot(...) with no file path),
+# UiApp and the EFI shell, and a disk booted via the removable-media fallback
+# loader \EFI\BOOT\BOOTX64.EFI has no installer-written entry at all — none of
+# those may satisfy this check.
+check_uefi_boot_entry() {
+    local out="$1" current entry
+    current=$(printf '%s\n' "$out" | sed -n 's/^BootCurrent:[[:space:]]*\([0-9A-Fa-f]\{4\}\).*/\1/p' | head -1)
+    if [[ -z "$current" ]]; then
+        echo "   BootCurrent not reported"
+        return 1
+    fi
+    entry=$(printf '%s\n' "$out" | grep -iE "^Boot${current}[* ]" | head -1)
+    if [[ -z "$entry" ]]; then
+        echo "   BootCurrent=${current} has no matching Boot${current} entry"
+        return 1
+    fi
+    if ! printf '%s\n' "$entry" | grep -qE 'HD\('; then
+        echo "   Boot${current} is not an HD() partition entry (OVMF auto-enumerated?): ${entry}"
+        return 1
+    fi
+    if ! printf '%s\n' "$entry" | grep -qiE '\\EFI\\[^\\]+\\[^\\]+\.efi'; then
+        echo "   Boot${current} has no \\EFI\\<vendor>\\*.efi loader path: ${entry}"
+        return 1
+    fi
+    if printf '%s\n' "$entry" | grep -qiE '\\EFI\\BOOT\\'; then
+        echo "   Boot${current} is the removable-media fallback loader, not an installer-written entry: ${entry}"
+        return 1
+    fi
+    echo "   BootCurrent=${current} -> ${entry}"
+    return 0
+}
+
+# Allow tests to source this file for the helper functions only.
+(return 0 2>/dev/null) && return 0
 
 if [[ $# -lt 2 ]]; then
     echo "Usage: $0 <ssh_port> <encryption_type: none|luks-passphrase>" >&2
@@ -55,10 +97,10 @@ TOTAL=2
 echo "=== Assertion 1/${TOTAL}: UEFI boot entry (fisherman #2) ==="
 EFIBOOTMGR_OUT=$($SSH 'efibootmgr -v' 2>&1) || true
 echo "$EFIBOOTMGR_OUT"
-if echo "$EFIBOOTMGR_OUT" | grep -q "BootCurrent" && echo "$EFIBOOTMGR_OUT" | grep -qE "^Boot[0-9A-Fa-f]{4}"; then
-    echo "✅ UEFI boot entry present (BootCurrent + Boot#### entries found)"
+if check_uefi_boot_entry "$EFIBOOTMGR_OUT"; then
+    echo "✅ Booted via installer-written UEFI NVRAM entry"
 else
-    echo "❌ No UEFI boot entry found — expected 'BootCurrent' and 'Boot####' lines from efibootmgr -v"
+    echo "❌ BootCurrent does not reference an installer-written UEFI entry (HD() + \\EFI\\<vendor>\\*.efi)"
     FAIL=1
 fi
 
@@ -79,10 +121,10 @@ if [[ "$ENCRYPTION_TYPE" == "luks-passphrase" ]]; then
     echo "=== Assertion 3/${TOTAL}: LUKS cmdline UUID parseable (common#385) ==="
     CMDLINE=$($SSH 'cat /proc/cmdline' 2>&1) || true
     echo "$CMDLINE"
-    if echo "$CMDLINE" | grep -qE 'rd\.luks\.(uuid|name)=[A-Za-z0-9-]+'; then
-        echo "✅ /proc/cmdline contains a parseable rd.luks.uuid=/rd.luks.name= UUID"
+    if echo "$CMDLINE" | grep -qE 'rd\.luks\.(uuid=(luks-)?[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}([[:space:]]|$)|name=[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}=)'; then
+        echo "✅ /proc/cmdline contains a well-formed rd.luks.uuid=/rd.luks.name= UUID"
     else
-        echo "❌ /proc/cmdline missing a parseable rd.luks.uuid=/rd.luks.name= entry"
+        echo "❌ /proc/cmdline missing a well-formed (8-4-4-4-12) rd.luks.uuid=/rd.luks.name= UUID"
         FAIL=1
     fi
 fi

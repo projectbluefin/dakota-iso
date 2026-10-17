@@ -161,7 +161,10 @@ EOF
         # 3. Enable debug SSH on the installed system (test-only, opt-in).
         # Mirrors live/src/configure-live.sh's DEBUG=1 convention: known
         # root:root password + PermitRootLogin/PasswordAuthentication yes +
-        # a system-preset forcing sshd on.  This lets the E2E suite SSH into
+        # a system-preset plus a multi-user.target.wants symlink forcing sshd
+        # on (presets are only applied by PID1 on first boot, so the symlink
+        # is what guarantees sshd starts if /etc/machine-id is already
+        # populated).  This lets the E2E suite SSH into
         # the *installed and booted* system to run post-boot assertions that
         # can't be checked from the live environment (efibootmgr state after
         # reboot, /proc/cmdline, flatpak list) — see projectbluefin/dakota#651.
@@ -180,8 +183,17 @@ PermitEmptyPasswords no
 PasswordAuthentication yes
 PermitRootLogin yes
 SSHEOF
+            # Debian-based images ship ssh.service (sshd.service is only an
+            # alias); pick whichever unit the deployment actually has.
+            SSH_UNIT="sshd.service"
+            DEPLOY_ROOT="$(dirname "$DEPLOY_ETC")"
+            [[ ! -f "$DEPLOY_ROOT/usr/lib/systemd/system/sshd.service" && -f "$DEPLOY_ROOT/usr/lib/systemd/system/ssh.service" ]] \
+                && SSH_UNIT="ssh.service"
             mkdir -p "$DEPLOY_ETC/systemd/system-preset"
-            echo "enable sshd.service" > "$DEPLOY_ETC/systemd/system-preset/90-e2e-debug.preset"
+            echo "enable ${SSH_UNIT}" > "$DEPLOY_ETC/systemd/system-preset/90-e2e-debug.preset"
+            mkdir -p "$DEPLOY_ETC/systemd/system/multi-user.target.wants"
+            ln -sf "/usr/lib/systemd/system/${SSH_UNIT}" \
+                "$DEPLOY_ETC/systemd/system/multi-user.target.wants/${SSH_UNIT}"
             mkdir -p "$DEPLOY_ETC/firewalld/zones"
             cat <<'FWEOF' > "$DEPLOY_ETC/firewalld/zones/public.xml"
 <?xml version="1.0" encoding="utf-8"?>
@@ -190,7 +202,7 @@ SSHEOF
   <service name="ssh"/>
 </zone>
 FWEOF
-            echo "==> debug SSH override written (sshd preset + PermitRootLogin + firewalld ssh zone)"
+            echo "==> debug SSH override written (${SSH_UNIT} preset + wants symlink + PermitRootLogin + firewalld ssh zone)"
         fi
     else
         echo "WARNING: deployment etc/ not found under $MNT/ostree — post-install patches not applied"
