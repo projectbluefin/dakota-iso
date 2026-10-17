@@ -108,9 +108,11 @@ justfile reads `<target>/payload_ref` and passes the target name as `TARGET`. In
 configs are patched at build time to reference the correct image.
 
 Every `ghcr.io/projectbluefin/*` image the build consumes (the live base and the
-`payload_ref`) must carry a keyless cosign signature from projectbluefin CI;
+`payload_ref`) must carry a keyless cosign signature from the CI of the repository that owns it
+(`utah*` → projectbluefin/utah, `dakota*` → projectbluefin/dakota, `bluefin*` →
+projectbluefin/bluefin, `bluefin-lts*` → projectbluefin/bluefin-lts);
 `scripts/verify-image-signature.sh` verifies it and pins the build to the verified
-digest. `just container` verifies the live base unconditionally, so a variant's
+digest. An image with no entry in its `signing_repository()` map is refused. `just container` verifies the live base unconditionally, so a variant's
 `registry` file must stay `projectbluefin` — other registries are refused.
 
 ## Testing
