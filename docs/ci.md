@@ -55,7 +55,7 @@ gh workflow run build-iso.yml --ref main
 2. **Install deps** — `apt-get install podman buildah skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
 4. **Install cosign** — `sigstore/cosign-installer` (SHA-pinned)
-5. **Verify payload signature** — `scripts/verify-image-signature.sh ghcr.io/projectbluefin/dakota-nvidia:stable` checks the keyless cosign signature (identity `^https://github\.com/projectbluefin/`) and prints the digest-pinned ref; the job fails if verification fails
+5. **Verify payload signature** — `scripts/verify-image-signature.sh ghcr.io/projectbluefin/dakota-nvidia:stable` checks the keyless cosign signature — a projectbluefin workflow identity, run from the repository that owns the image (`--certificate-github-workflow-repository projectbluefin/dakota` here) — and prints the digest-pinned ref; the job fails if verification fails
 6. **Pull payload image** — removes any local `dakota-nvidia:stable` tag, pulls the verified digest, and re-tags it `dakota-nvidia:stable` for the later steps
 7. **Build live container** — `podman build --pull=always --no-cache live/ --build-arg TARGET=dakota-nvidia --build-arg BASE_DIGEST=@sha256:…` → `localhost/dakota-nvidia-live:latest`; `BASE_DIGEST` pins both `FROM` lines in `live/Containerfile` to the verified digest
 8. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `<target>.rootfs.sfs` + `<target>-boot.tar` (~4.5 GB dakota, ~6 GB bluefin/lts-hwe)
