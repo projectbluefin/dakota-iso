@@ -115,6 +115,32 @@ Two things this centralises:
 has no default (callers hard-error when it is missing) and `live_title` is
 free text that must not be whitespace-stripped.
 
+### Config keys
+
+Each key lives in exactly one place. A file anywhere else is not read.
+
+| Key | Location | Read by | Required | Default when absent |
+|---|---|---|---|---|
+| `payload_ref` | `<variant>/` | `justfile`, `scripts/*.sh` | yes (hard error) | — |
+| `live_target` | `<variant>/` | `variant_live_target` | no | variant name |
+| `live_title` | `<variant>/` | `scripts/iso-sd-boot.sh` | no | — |
+| `registry` | `<variant>/` | `variant_registry` | no | `projectbluefin` |
+| `tag` | `<variant>/` | `variant_tag` | no | `stable` |
+| `composefs` | `live/src/<bootloader-variant>/` | `variant_composefs`, `configure-live.sh` | no | `true` |
+| `bootloader` | `live/src/<bootloader-variant>/` | `variant_bootloader`, `configure-live.sh` | no | `systemd` |
+| `base_imgref` | `live/src/<bootloader-variant>/` | `configure-live.sh` | no | `ghcr.io/projectbluefin/dakota:stable` |
+| `nvidia_imgref` | `live/src/<bootloader-variant>/` | `configure-live.sh` | no | `ghcr.io/projectbluefin/dakota-nvidia:stable` |
+| `images.json` | `live/src/<bootloader-variant>/` | `configure-live.sh` | no | `live/src/etc/bootc-installer/images.json` |
+| `recipe.json` | `live/src/<bootloader-variant>/` | `configure-live.sh` | no | `live/src/etc/bootc-installer/recipe.json` |
+| `flatpaks` | `live/src/<bootloader-variant>/` | `install-flatpaks.sh` | no | `live/src/flatpaks` |
+| `configure-live.d.sh` | `live/src/<bootloader-variant>/` | `configure-live.sh` | no | no hook |
+
+`dakota` has no `live/src/dakota/` directory: every `live/src` default above is
+the Dakota value. `tests/test_live_build_invariants.py` fails if a namespace-A
+key (`payload_ref`, `live_target`, `live_title`, `registry`, `tag`) or the
+unread `flatpak_var_path` reappears under `live/src/`. The installer reads
+`flatpak_var_path` from `images.json`.
+
 ## Adding a custom build target
 
 For local testing, create a directory with `payload_ref` and optionally `live_target`:

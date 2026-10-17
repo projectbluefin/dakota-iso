@@ -59,10 +59,15 @@ LIVE_SRC_VARIANT_FILES = [
     "nvidia_imgref",
     "bootloader",
     "composefs",
-    "flatpak_var_path",
-    "registry",
     "images.json",
 ]
+
+# Keys owned by the top-level <variant>/ directory. Nothing reads them from
+# live/src/<variant>/, so a copy there is an unreconciled duplicate.
+NAMESPACE_A_ONLY_FILES = ["payload_ref", "live_target", "live_title", "registry", "tag"]
+
+# Scalar files nothing reads. flatpak_var_path is taken from images.json.
+UNREAD_LIVE_SRC_FILES = ["flatpak_var_path"]
 
 
 def strip_yaml_comments(text: str) -> str:
@@ -1028,6 +1033,19 @@ class TestVariantConfig(unittest.TestCase):
                     f"Expected at: {path}\n"
                     "This file tells configure-live.sh how to build the live "
                     f"environment for the {variant} variant.",
+                )
+
+    def test_live_src_holds_no_namespace_a_or_unread_keys(self):
+        """live/src/<variant>/ holds only keys configure-live.sh reads."""
+        live_src = REPO / "live" / "src"
+        for variant_dir in sorted(p for p in live_src.iterdir() if p.is_dir()):
+            for filename in NAMESPACE_A_ONLY_FILES + UNREAD_LIVE_SRC_FILES:
+                path = variant_dir / filename
+                self.assertFalse(
+                    path.exists(),
+                    f"{path.relative_to(REPO)} is never read: namespace-A keys "
+                    "come from <variant>/ via scripts/variant-config.sh, and "
+                    "flatpak_var_path comes from images.json. Delete this copy.",
                 )
 
     def test_dakota_variant_uses_gnomeos_composefs(self):
