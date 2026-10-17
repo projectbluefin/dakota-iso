@@ -55,7 +55,9 @@ ROOTED_PATHS = (
     "/tmp/tuna-installer.flatpak",
     "/tmp/installer-local-repo",
     "/src/${VARIANT}",
+    "/src/remotes",
 )
+REMOTES_DIR = REPO / "live" / "src" / "remotes"
 _ROOTED_RE = re.compile(
     r"(?<![\w$}/.:-])(" + "|".join(re.escape(p) for p in ROOTED_PATHS) + r")"
 )
@@ -97,6 +99,21 @@ class InstallFlatpaksHarness(unittest.TestCase):
             (self.bindir / tool).symlink_to(real)
         self._install_stubs()
         self.write_list("org.gnome.Calculator\n")
+        self.seed_remotes()
+
+    def seed_remotes(self, *names):
+        """Copy the checked-in remote descriptors into the sandbox's /src/remotes."""
+        target = self.root / "src/remotes"
+        target.mkdir(parents=True, exist_ok=True)
+        for src in REMOTES_DIR.glob("*.flatpakrepo"):
+            if names and src.stem not in names:
+                continue
+            shutil.copy(src, target / src.name)
+
+    def remote_adds(self):
+        """remote-add calls for published remotes (the installer's temporary
+        file:// import repo is not a trust root and is deleted again)."""
+        return [c for c in self.flatpak_calls() if c.startswith("remote-add ") and " installer-local " not in c]
 
     def _stub(self, name, body):
         path = self.bindir / name
@@ -283,7 +300,7 @@ class TestListParsing(InstallFlatpaksHarness):
         self.assert_ok(self.run_script())
         calls = self.flatpak_calls()
         self.assertIn(
-            "remote-add --system --if-not-exists tuna-os https://tunaos.org/flatpak/tuna-os.flatpakrepo", calls
+            f"remote-add --system --if-not-exists tuna-os {self.root}/src/remotes/tuna-os.flatpakrepo", calls
         )
         self.assertCountEqual(
             self.reconcile_installs(),
@@ -307,6 +324,89 @@ class TestListParsing(InstallFlatpaksHarness):
         result = self.run_script(STUB_FAIL_MATCH="--or-update flathub")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / "var/cache/flatpak-dl/repo").exists(), "cache saved after a failed install")
+
+
+class TestRemoteDescriptors(InstallFlatpaksHarness):
+    """Remotes are added from checked-in .flatpakrepo files, never fetched.
+
+    The descriptor carries the remote's URL and GPG key -- the trust root every
+    later download is verified against, and the one /var/lib/flatpak state the
+    installer copies onto every installed system -- so it must be a reviewed
+    file in this repository, not whatever the network returned during the build.
+    """
+
+    def test_flathub_is_added_from_the_checked_in_descriptor(self):
+        self.assert_ok(self.run_script())
+        self.assertEqual(
+            self.remote_adds(),
+            [f"remote-add --system --if-not-exists flathub {self.root}/src/remotes/flathub.flatpakrepo"],
+        )
+
+    def test_remote_add_is_never_given_a_network_location(self):
+        self.write_list("org.gnome.Calculator\ntuna-os:com.mitchellh.ghostty\n")
+        self.assert_ok(self.run_script())
+        adds = self.remote_adds()
+        self.assertEqual(len(adds), 2, adds)
+        for call in adds:
+            self.assertNotRegex(call, r"\b(https?|oci\+https?)://", f"remote descriptor fetched over the network: {call}")
+            self.assertTrue(Path(call.split()[-1]).is_file(), f"remote-add location is not a checked-in file: {call}")
+
+    def test_missing_flathub_descriptor_fails_the_build_before_any_install(self):
+        (self.root / "src/remotes/flathub.flatpakrepo").unlink()
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing flatpak remote descriptor", result.stderr)
+        self.assertIn("flathub", result.stderr)
+        self.assertFalse(any(c.startswith("install") for c in self.flatpak_calls()))
+
+    def test_empty_descriptor_is_treated_as_missing(self):
+        (self.root / "src/remotes/flathub.flatpakrepo").write_text("")
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing flatpak remote descriptor", result.stderr)
+
+    def test_missing_variant_remote_descriptor_fails_the_build(self):
+        (self.root / "src/remotes/tuna-os.flatpakrepo").unlink()
+        self.write_list("org.gnome.Calculator\ntuna-os:com.mitchellh.ghostty\n")
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("tuna-os", result.stderr)
+        self.assertEqual([c for c in self.reconcile_installs() if " tuna-os " in c], [])
+
+
+class TestCheckedInDescriptors(unittest.TestCase):
+    """The descriptors in live/src/remotes/ are the trust roots the ISO ships."""
+
+    FLATHUB_SHA256 = "3371dd250e61d9e1633630073fefda153cd4426f72f4afa0c3373ae2e8fea03a"
+
+    def test_every_remote_the_script_knows_has_a_descriptor(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        names = {"flathub"} | set(re.findall(r"^\s*\[([A-Za-z0-9._-]+)\]=1\s*$", text, re.M))
+        for name in sorted(names):
+            with self.subTest(remote=name):
+                self.assertTrue((REMOTES_DIR / f"{name}.flatpakrepo").is_file(), f"no descriptor for remote {name}")
+
+    def test_script_never_fetches_a_flatpakrepo_over_the_network(self):
+        for line_no, line in enumerate(SCRIPT.read_text(encoding="utf-8").splitlines(), start=1):
+            code = line.split("#", 1)[0]
+            self.assertNotRegex(code, r"https?://\S*\.flatpakrepo", f"line {line_no} fetches a trust root: {line.strip()!r}")
+
+    def test_flathub_descriptor_is_the_pinned_one(self):
+        import hashlib
+
+        data = (REMOTES_DIR / "flathub.flatpakrepo").read_bytes()
+        self.assertEqual(hashlib.sha256(data).hexdigest(), self.FLATHUB_SHA256)
+        self.assertIn(b"Url=https://dl.flathub.org/repo/", data)
+        self.assertIn(b"GPGKey=", data)
+
+    def test_descriptors_point_at_their_upstream_over_tls(self):
+        for path in sorted(REMOTES_DIR.glob("*.flatpakrepo")):
+            with self.subTest(descriptor=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertTrue(text.startswith("[Flatpak Repo]\n"), path.name)
+                url = re.search(r"^Url=(\S+)$", text, re.M)
+                self.assertIsNotNone(url, f"{path.name} has no Url=")
+                self.assertRegex(url.group(1), r"^(oci\+)?https://")
 
 
 class TestVariantOverride(InstallFlatpaksHarness):
