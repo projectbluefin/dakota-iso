@@ -551,10 +551,16 @@ sh -c 'python3 -c "import json; print(json.load(open("/etc/bootc-installer/recip
 ```
 Inside the container, `sh` sees the inner `"` after `open(` as closing the outer double-quoted string. python3 gets a malformed `-c` argument, exits with an error (suppressed by `2>/dev/null`), output is empty, `grep -qi true` fails, `COMPOSEFS_BACKEND` stays `false` for ALL variants.
 
-**Fix:** Run python3 directly as the container entrypoint; avoid `sh -c '...'` wrapping:
+**Fix:** Avoid `sh -c '...'` wrapping and python3 entirely. The current probe in `scripts/build-live-squashfs.sh` runs `grep` directly as the container entrypoint and fails closed:
 ```bash
+probe_rc=0
 podman run --rm --entrypoint="" "${IMAGE}" \
-    python3 -c 'import json; d=json.load(open("/etc/bootc-installer/recipe.json")); print(d.get("composeFsBackend", False))' \
-    2>/dev/null | grep -qi true
+    grep -qi '"composeFsBackend": *true' /etc/bootc-installer/recipe.json \
+    || probe_rc=$?
+case "${probe_rc}" in
+    0) COMPOSEFS_BACKEND=true ;;
+    1) COMPOSEFS_BACKEND=false ;;
+    *) echo "ERROR: could not read composeFsBackend ..." >&2; exit 1 ;;
+esac
 ```
-Single-quoting the python3 `-c` argument prevents bash from expanding it, and avoids any sh-layer quoting entirely.
+Do not suppress stderr or pipe into `grep -q`: that collapses "recipe says false" and "probe could not run" into the same result. Only grep exit 1 means false; any other status (recipe.json missing, podman failure) aborts the build. In `--target` mode the value comes from `variant_composefs` in `scripts/variant-config.sh` instead.
