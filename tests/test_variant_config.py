@@ -283,10 +283,6 @@ class TestSingleSourceOfTruth(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
 
 
@@ -369,3 +365,7 @@ class TestHostAndLiveComposefsAgree(unittest.TestCase):
                 else:
                     fx.live_src("v", composefs=raw)
                 self.assertEqual(self.assert_agree(tmp, "v"), expected)
+
+
+if __name__ == "__main__":
+    unittest.main()
