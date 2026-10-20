@@ -29,6 +29,28 @@ INSTALLER_CHANNEL="${INSTALLER_CHANNEL:-stable}"
 COMPRESSION="${COMPRESSION:-fast}"
 
 PAYLOAD_IMAGE=$(cat "${TARGET}/payload_ref" | tr -d '[:space:]')
+if [[ -z "${PAYLOAD_IMAGE}" ]]; then
+    echo "ERROR: ${TARGET}/payload_ref is empty — expected an image reference" >&2
+    exit 1
+fi
+
+# The payload ships verbatim to installed systems.  Like `just container` does
+# for the live base and `_payload_ref_flag` for image-builder, verify the
+# project's keyless cosign signature and pull exactly the verified digest, so
+# the offline store below is built from an image project CI produced — not
+# from whatever happens to sit under a mutable tag in the local podman store.
+# Non-project refs (e.g. localhost/... for custom builds) are left to the
+# caller: they must already be present locally (--pull-never).
+PAYLOAD_SOURCE="${PAYLOAD_IMAGE}"
+case "${PAYLOAD_IMAGE}" in
+    ghcr.io/projectbluefin/*)
+        PAYLOAD_SOURCE=$("${SCRIPT_DIR}/verify-image-signature.sh" "${PAYLOAD_IMAGE}")
+        if [[ -z "${PAYLOAD_SOURCE}" ]]; then
+            echo "ERROR: signature verification returned no pinned reference for ${PAYLOAD_IMAGE}" >&2
+            exit 1
+        fi
+        ;;
+esac
 
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_DIR=$(realpath "${OUTPUT_DIR}")
@@ -87,7 +109,14 @@ printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${OUTPUT_DIR}/.bootc-roo
 COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")
 echo "=== Building offline OCI store (composefs=${COMPOSEFS_BACKEND}) for ${PAYLOAD_IMAGE} ==="
 
-INJECT_CTR=$(_ns "buildah from --pull-never '${PAYLOAD_IMAGE}'")
+# Pull after the prune above: a digest-only pull carries no tag, so
+# `podman image prune` would discard it as dangling if it ran later.
+if [[ "${PAYLOAD_SOURCE}" != "${PAYLOAD_IMAGE}" ]]; then
+    echo "=== Pulling verified payload ${PAYLOAD_SOURCE} ==="
+    podman pull "${PAYLOAD_SOURCE}"
+fi
+
+INJECT_CTR=$(_ns "buildah from --pull-never '${PAYLOAD_SOURCE}'")
 _ns "buildah copy '${INJECT_CTR}' '${OUTPUT_DIR}/.bootc-root-mount.toml' /tmp/.bootc-root-mount.toml"
 _ns "buildah run '${INJECT_CTR}' -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'"
 
@@ -117,7 +146,7 @@ else
     _ns "buildah rm '${INJECT_CTR}'"
 fi
 
-podman rmi "${PAYLOAD_IMAGE}" || true
+podman rmi "${PAYLOAD_SOURCE}" || true
 
 # ── Squashfs assembly (runs in user namespace for rootless UID mapping) ───────
 #

@@ -31,6 +31,10 @@ Covered behaviour
    128K; release: level 15, 1M).
 7. Final delegation to live/src/build-iso.sh passes --title, boot-files tar, rootfs squashfs,
    and output ISO path.
+8. A ghcr.io/projectbluefin payload_ref is cosign-verified through
+   scripts/verify-image-signature.sh, pulled by the verified digest and handed to
+   `buildah from --pull-never` as that digest; a failed verification aborts before any
+   container tooling runs; non-project refs skip verification and stay --pull-never.
 """
 
 import os
@@ -83,6 +87,22 @@ class IsoSdBootHarness(unittest.TestCase):
         self.script_under_test.chmod(0o755)
         shutil.copy2(REPO / "scripts" / "variant-config.sh", self.sandbox / "scripts" / "variant-config.sh")
         (self.sandbox / "scripts" / "variant-config.sh").chmod(0o755)
+
+        # Stub the cosign gate. The real script resolves the tag to a verified digest and
+        # prints "<repo>@<digest>"; the stub mirrors that contract so the tests can assert
+        # the digest-pinned ref is what reaches podman pull / buildah from. Setting
+        # VERIFY_FAIL=1 makes it exit non-zero like a failed `cosign verify`.
+        self.verify_stub = self.sandbox / "scripts" / "verify-image-signature.sh"
+        self.verify_stub.write_text(
+            "#!/usr/bin/bash\n"
+            'echo "verify-image-signature $*" >> "$STUB_CALLS"\n'
+            'if [ "${VERIFY_FAIL:-0}" = "1" ]; then\n'
+            '  echo "ERROR: cosign verify failed for $1" >&2\n'
+            "  exit 1\n"
+            "fi\n"
+            'echo "${1%%[:@]*}@' + self.PINNED_DIGEST + '"\n'
+        )
+        self.verify_stub.chmod(0o755)
 
         # Create target directories
         self.setup_target("dakota", payload_ref="ghcr.io/projectbluefin/dakota:stable\n",
@@ -231,7 +251,10 @@ class IsoSdBootHarness(unittest.TestCase):
     # Variables the script reads from the environment. Cleared before every run so an
     # ambient caller environment (e.g. DEBUG=1 INSTALLER_CHANNEL=dev) cannot leak into
     # the script under test and change the behaviour being asserted.
-    SCRIPT_ENV_VARS = ("TARGET", "OUTPUT_DIR", "WORKDIR", "DEBUG", "INSTALLER_CHANNEL", "COMPRESSION")
+    SCRIPT_ENV_VARS = ("TARGET", "OUTPUT_DIR", "WORKDIR", "DEBUG", "INSTALLER_CHANNEL", "COMPRESSION",
+                       "VERIFY_FAIL")
+
+    PINNED_DIGEST = "sha256:" + "ab" * 32
 
     def run_script(self, env_vars=None):
         self._install_stubs()
@@ -486,3 +509,75 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIsoSdBootPayloadVerification(IsoSdBootHarness):
+    """The offline payload must be cosign-verified and consumed by its verified digest."""
+
+    def _call_index(self, calls, prefix):
+        matches = [i for i, c in enumerate(calls) if c.startswith(prefix)]
+        self.assertEqual(len(matches), 1, f"expected exactly one call starting with {prefix!r}, got {calls!r}")
+        return matches[0]
+
+    def test_project_payload_is_verified_pulled_and_consumed_by_digest(self):
+        """ghcr.io/projectbluefin payload: verify → pull pinned digest → buildah from pinned digest."""
+        res = self.run_script(env_vars={"TARGET": "dakota", "OUTPUT_DIR": str(self.sandbox / "output")})
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+
+        calls = self.recorded_calls()
+        pinned = f"ghcr.io/projectbluefin/dakota@{self.PINNED_DIGEST}"
+
+        self.assertIn("verify-image-signature ghcr.io/projectbluefin/dakota:stable", calls)
+        self.assertIn(f"podman pull {pinned}", calls)
+        self.assertIn(f"buildah from --pull-never {pinned}", calls)
+        self.assertNotIn("buildah from --pull-never ghcr.io/projectbluefin/dakota:stable", calls,
+                         "buildah must not consume the unverified mutable tag")
+
+        # The pull must come after the intermediate `podman image prune`: a digest-only
+        # pull has no tag, so a prune running later would discard it as dangling.
+        self.assertLess(self._call_index(calls, "podman image prune"),
+                        self._call_index(calls, "podman pull "))
+        self.assertLess(self._call_index(calls, "podman pull "),
+                        self._call_index(calls, f"buildah from --pull-never {pinned}"))
+
+        # The embedded store still names the image by its payload_ref tag, which is what
+        # the installer recipe inside the ISO looks up.
+        embed = self.embed_run_calls()
+        self.assertEqual(len(embed), 1)
+        self.assertIn("containers-storage:ghcr.io/projectbluefin/dakota:stable", embed[0])
+
+    def test_failed_verification_aborts_before_any_container_tooling(self):
+        """A failed cosign verify stops the build before just/podman/buildah run."""
+        res = self.run_script(env_vars={
+            "TARGET": "dakota",
+            "OUTPUT_DIR": str(self.sandbox / "output"),
+            "VERIFY_FAIL": "1",
+        })
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("cosign verify failed", res.stderr)
+
+        calls = self.recorded_calls()
+        self.assertEqual(calls, ["verify-image-signature ghcr.io/projectbluefin/dakota:stable"],
+                         "nothing but the verification gate may run when it fails")
+        self.assertEqual(self.delegate_invocations(), [])
+
+    def test_empty_payload_ref_is_refused(self):
+        """An empty payload_ref fails loudly instead of handing '' to the verifier or buildah."""
+        (self.sandbox / "dakota" / "payload_ref").write_text("\n")
+        res = self.run_script(env_vars={"TARGET": "dakota", "OUTPUT_DIR": str(self.sandbox / "output")})
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("payload_ref is empty", res.stderr)
+        self.assertEqual(self.recorded_calls(), [])
+
+    def test_non_project_payload_skips_verification_and_stays_pull_never(self):
+        """A localhost/custom payload is not cosign-verified and is never network-pulled."""
+        self.setup_target("custom", payload_ref="localhost/my-variant:dev\n",
+                          live_target="dakota-nvidia\n", live_title="Custom Live\n",
+                          composefs="true\n")
+        res = self.run_script(env_vars={"TARGET": "custom", "OUTPUT_DIR": str(self.sandbox / "output")})
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+
+        calls = self.recorded_calls()
+        self.assertFalse([c for c in calls if c.startswith("verify-image-signature ")])
+        self.assertFalse([c for c in calls if c.startswith("podman pull ")])
+        self.assertIn("buildah from --pull-never localhost/my-variant:dev", calls)
