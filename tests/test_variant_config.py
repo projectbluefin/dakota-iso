@@ -283,5 +283,89 @@ class TestSingleSourceOfTruth(unittest.TestCase):
             )
 
 
+CONFIGURE_LIVE = REPO / "live" / "src" / "configure-live.sh"
+
+
+def configure_live_composefs_backend(root, target):
+    """composeFsBackend that configure-live.sh would write for TARGET.
+
+    Runs the script's own VARIANT derivation, read_variant_config and patch
+    expression (extracted verbatim) against root/live/src instead of the
+    in-container /tmp/src bind mount.
+    """
+    import re
+
+    text = CONFIGURE_LIVE.read_text()
+    variant = re.search(r"^VARIANT=\$\(.*\)$", text, re.M)
+    reader = re.search(r"^read_variant_config\(\) \{\n.*?^\}$", text, re.M | re.S)
+    composefs = re.search(r"^COMPOSEFS=\$\(read_variant_config composefs .*\)$", text, re.M)
+    patch = re.search(r'^recipe\["composeFsBackend"\] = (\$\(.*\))$', text, re.M)
+    for name, match in (("VARIANT=", variant), ("read_variant_config()", reader),
+                        ("COMPOSEFS=", composefs), ('recipe["composeFsBackend"]', patch)):
+        if not match:
+            raise AssertionError(f"configure-live.sh no longer contains {name}; update this test")
+    script = "\n".join([
+        "set -euo pipefail",
+        f"TARGET={target!r}",
+        variant.group(0),
+        f'VARIANT_DIR="{root}/live/src/${{VARIANT}}"',
+        reader.group(0),
+        composefs.group(0),
+        f"echo {patch.group(1)}",
+    ])
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise AssertionError(f"configure-live.sh excerpt failed: {proc.stderr}")
+    return {"True": "true", "False": "false"}[proc.stdout.strip()]
+
+
+class TestHostAndLiveComposefsAgree(unittest.TestCase):
+    """The host reader and configure-live.sh resolve composefs identically (#147)."""
+
+    def assert_agree(self, root, variant):
+        host = run_reader(root, f"variant_composefs_json {variant}")
+        target = run_reader(root, f"variant_live_target {variant}")
+        live = configure_live_composefs_backend(root, target)
+        self.assertEqual(
+            host, live,
+            f"{variant}: host variant_composefs says {host}, configure-live.sh "
+            f"would write composeFsBackend={live} for TARGET={target}",
+        )
+        return host
+
+    def test_every_repo_variant_agrees(self):
+        variants = sorted(p.parent.name for p in REPO.glob("*/payload_ref"))
+        self.assertTrue(variants, "no <variant>/payload_ref found")
+        for variant in variants:
+            with self.subTest(variant=variant):
+                self.assert_agree(REPO, variant)
+
+    def test_every_live_src_composefs_file_agrees(self):
+        names = sorted(p.parent.name for p in (REPO / "live" / "src").glob("*/composefs"))
+        self.assertTrue(names, "no live/src/<name>/composefs found")
+        for name in names:
+            with self.subTest(name=name):
+                self.assert_agree(REPO, name)
+
+    def test_agree_on_untidy_and_missing_values(self):
+        import tempfile
+
+        cases = {
+            "true\r\n": "true",
+            " false \n": "false",
+            "false\r\n": "false",
+            "\n": "true",
+            None: "true",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as tmp:
+                fx = VariantFixture(tmp).variant("v", live_target="v-nvidia")
+                if raw is None:
+                    fx.variant("v")
+                else:
+                    fx.live_src("v", composefs=raw)
+                self.assertEqual(self.assert_agree(tmp, "v"), expected)
+
+
 if __name__ == "__main__":
     unittest.main()
