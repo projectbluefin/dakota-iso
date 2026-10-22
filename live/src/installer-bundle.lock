@@ -1,0 +1,7 @@
+# bootc-installer release baked into every live ISO (tuna-os/bootc-installer).
+# install-flatpaks.sh downloads releases/download/<tag>/<file> and refuses a
+# bundle whose SHA-256 differs from the value listed here.
+# Refresh with: scripts/bump-installer-bundle.sh
+tag=v2026.10.19-9f582fe0
+org.bootcinstaller.Installer.flatpak=04252eaf80ee5675aa37bdb482847c77310efbee058dc63ba161a1d5991f9823
+org.bootcinstaller.Installer.Devel.flatpak=9309efe06423ed7de4007caacf3c80796f244487b2265061c5ccad488c9c9cbf

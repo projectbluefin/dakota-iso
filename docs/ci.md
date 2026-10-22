@@ -80,8 +80,9 @@ open /var/tmp/oci-cache/index.json: no such file or directory
 ```
 Production CI must stay on `installer_channel=stable` until the regression is fixed.
 
-The stable channel resolves to `releases/latest/download` (the most recent non-prerelease tag).
-As of 2026-06-14 this is **v2.7.4**.
+Both channels download from the release tag pinned in `live/src/installer-bundle.lock`
+(`releases/download/<tag>/`), verified against the SHA-256 recorded there. Run
+`scripts/bump-installer-bundle.sh` to move the pin to the current upstream release.
 
 ### Disk layout in CI
 

@@ -425,12 +425,19 @@ operation, and both paths must squash.
 This mirrors `scripts/build-live-squashfs.sh` exactly.
 `live/src/<target>/composefs` is the single source of truth — both scripts read it.
 
+### Installer bundle pin (2026-10)
+
+`install-flatpaks.sh` no longer follows the moving `releases/latest/download/` redirect.
+`live/src/installer-bundle.lock` names the exact `tuna-os/bootc-installer` release tag and
+the SHA-256 of both bundles; the script downloads `releases/download/<tag>/<file>` and
+fails the build (deleting the file) when the digest differs. To move to a new upstream
+release run `scripts/bump-installer-bundle.sh [<tag>]` and commit the rewritten lock.
+
 ### Installer layer cache busting (2026-06)
 
 The `COPY src/flatpaks` + `RUN install-flatpaks.sh` stage in the Containerfile is cached
 by podman's layer cache. If neither file changes between builds, the old installer Flatpak
-stays in the image indefinitely — even though `install-flatpaks.sh` calls curl to download
-`releases/latest/download/`.
+stays in the image indefinitely.
 
 **Fix:** `ARG CACHE_BUST=0` before the flatpak stage; justfile passes
 `--build-arg CACHE_BUST=$(date +%Y%m%d)` to invalidate the layer once per calendar day.

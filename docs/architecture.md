@@ -296,7 +296,8 @@ sudo just debug=1 installer_channel=${{ matrix.installer_channel }} \
   output_dir=/var/iso-build iso-sd-boot dakota
 ```
 
-**Dev channel:** no rolling tag, no fallback repo. Both channels take
-`tuna-os/bootc-installer`'s `/releases/latest/download/` redirect and differ only in
-filename (`org.bootcinstaller.Installer.flatpak` vs `...Installer.Devel.flatpak`) — see
-`TestInstallerChannelURLs` in `tests/test_live_build_invariants.py`.
+**Dev channel:** no rolling tag, no fallback repo. Both channels download from the
+`tuna-os/bootc-installer` release tag pinned in `live/src/installer-bundle.lock` and differ
+only in filename (`org.bootcinstaller.Installer.flatpak` vs `...Installer.Devel.flatpak`);
+the bundle's SHA-256 must match the lock — see `TestInstallerChannelURLs` in
+`tests/test_live_build_invariants.py`. Bump with `scripts/bump-installer-bundle.sh`.

@@ -1627,9 +1627,14 @@ class TestInstallerChannelURLs(unittest.TestCase):
     The failure mode is silent and dangerous — `install-flatpaks.sh` falls back
     to the upstream `tuna-os` bundle on a 404, so the live ISO ships a different
     project's installer instead of failing the build.
+
+    The bundle the build ships is also pinned: `installer-bundle.lock` names
+    the exact release tag and the SHA-256 of both bundles, and the script
+    refuses anything else (projectbluefin/dakota-iso#192).
     """
 
     INSTALL_FLATPAKS = REPO / "live" / "src" / "install-flatpaks.sh"
+    INSTALLER_LOCK = REPO / "live" / "src" / "installer-bundle.lock"
     INSTALLER_REPO_PATH = "${INSTALLER_REPO}"
     DEAD_TAGS = ("latest-dev", "latest-stable", "dev-rolling")
 
@@ -1649,14 +1654,14 @@ class TestInstallerChannelURLs(unittest.TestCase):
                     "tuna-os bundle.",
                 )
 
-    def test_both_channels_use_the_versioned_release_redirect(self):
+    def test_both_channels_download_from_the_locked_release_tag(self):
         """Only a release created together with its assets survives immutability.
 
         A published release accepts no new assets, and deleting one to start
         over permanently burns the tag name, so no rolling tag can be kept
-        current. Versioned releases carry both bundles and are created with
-        them, so both channels take the /releases/latest/ redirect and differ
-        only in filename.
+        current. Both channels therefore download from the exact versioned
+        release pinned in installer-bundle.lock and differ only in filename;
+        the moving /releases/latest/ redirect is never consulted at build time.
         """
         text = self.INSTALL_FLATPAKS.read_text(encoding="utf-8")
         primary = [
@@ -1665,7 +1670,44 @@ class TestInstallerChannelURLs(unittest.TestCase):
         self.assertTrue(primary, "no PRIMARY_URL assignments found")
         for line in primary:
             self.assertIn(
-                f"/{self.INSTALLER_REPO_PATH}/releases/latest/download/",
+                f"/{self.INSTALLER_REPO_PATH}/releases/download/${{INSTALLER_TAG}}/",
                 line,
-                f"{line} must use the versioned-release redirect",
+                f"{line} must download from the release tag pinned in installer-bundle.lock",
             )
+            self.assertNotIn("/releases/latest/", line, f"{line} floats on the latest redirect")
+
+    def test_download_is_checked_against_the_lock_digest(self):
+        text = self.INSTALL_FLATPAKS.read_text(encoding="utf-8")
+        self.assertIn("installer-bundle.lock", text)
+        self.assertRegex(
+            text,
+            r'"\$\{INSTALLER_SHA256\}  /tmp/tuna-installer\.flatpak" \| sha256sum --check',
+            "the downloaded bundle must be verified against INSTALLER_SHA256 from the lock",
+        )
+
+    def test_lock_pins_an_exact_tag_and_both_bundle_digests(self):
+        """The lock is the single reviewed source of the installer's identity."""
+        entries = {}
+        for line_no, line in enumerate(self.INSTALLER_LOCK.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            self.assertIn("=", stripped, f"installer-bundle.lock:{line_no} is not key=value")
+            key, value = stripped.split("=", 1)
+            self.assertNotIn(key, entries, f"installer-bundle.lock:{line_no} repeats {key}")
+            entries[key] = value
+        tag = entries.get("tag", "")
+        self.assertRegex(tag, r"^v?[0-9][\w.+-]*$", "tag= must be an exact versioned release tag")
+        self.assertNotIn(tag, self.DEAD_TAGS + ("latest",))
+        for bundle in (
+            "org.bootcinstaller.Installer.flatpak",
+            "org.bootcinstaller.Installer.Devel.flatpak",
+        ):
+            self.assertRegex(
+                entries.get(bundle, ""),
+                r"^[0-9a-f]{64}$",
+                f"installer-bundle.lock must carry the SHA-256 of {bundle}",
+            )
+        self.assertEqual(
+            set(entries), {"tag", "org.bootcinstaller.Installer.flatpak", "org.bootcinstaller.Installer.Devel.flatpak"}
+        )

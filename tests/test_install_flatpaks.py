@@ -30,6 +30,7 @@ shims. ``PATH`` holds only those shims plus the coreutils the script needs,
 so the no-rsync branches run on any host.
 """
 
+import hashlib
 import os
 import re
 import shutil
@@ -64,6 +65,11 @@ HOST_TOOLS = ("mkdir", "cp", "rm", "mv", "ln", "find", "head", "sed", "grep", "c
 
 STABLE_ID = "org.bootcinstaller.Installer"
 DEVEL_ID = "org.bootcinstaller.Installer.Devel"
+INSTALLER_TAG = "v2026.01.01-0123abcd"
+# The curl stub writes "bundle\n" for the stable channel and "devel-bundle\n"
+# for the Devel one; the lock written by setUp carries those digests.
+STABLE_SHA256 = hashlib.sha256(b"bundle\n").hexdigest()
+DEVEL_SHA256 = hashlib.sha256(b"devel-bundle\n").hexdigest()
 
 
 def _sandboxed_script_text():
@@ -88,6 +94,8 @@ class InstallFlatpaksHarness(unittest.TestCase):
 
         self.script = self.sandbox / "install-flatpaks.sh"
         self.script.write_text(_sandboxed_script_text())
+        self.lock = self.sandbox / "installer-bundle.lock"
+        self.write_lock(STABLE_SHA256, DEVEL_SHA256)
 
         self.bindir = self.sandbox / "bin"
         self.bindir.mkdir()
@@ -116,6 +124,8 @@ class InstallFlatpaksHarness(unittest.TestCase):
             echo 0123456789abcdef0123456789abcdef >"$SANDBOX_ROOT/etc/machine-id"
         """)
         self._stub("dbus-uuidgen", "echo fallback-uuid\n")
+        # The script verifies the download with the real sha256sum.
+        (self.bindir / "sha256sum").symlink_to(shutil.which("sha256sum"))
         self._stub("curl", """
             out=
             url=
@@ -129,7 +139,10 @@ class InstallFlatpaksHarness(unittest.TestCase):
             done
             echo "curl $url" >>"$STUB_CALLS"
             [[ -n "${STUB_CURL_FAIL:-}" ]] && exit 22
-            echo bundle >"$out"
+            case "$url" in
+                *.Devel.flatpak) echo devel-bundle >"$out" ;;
+                *) echo bundle >"$out" ;;
+            esac
         """)
         # flatpak: records every call. Installing the installer from the
         # local repo lays out a deployment without the `active` symlink, the
@@ -166,6 +179,14 @@ class InstallFlatpaksHarness(unittest.TestCase):
         target = self.root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body)
+
+    def write_lock(self, stable_sha, devel_sha, tag=INSTALLER_TAG):
+        self.lock.write_text(
+            "# test lock\n"
+            f"tag={tag}\n"
+            f"{STABLE_ID}.flatpak={stable_sha}\n"
+            f"{DEVEL_ID}.flatpak={devel_sha}\n"
+        )
 
     def run_script(self, **env):
         full_env = {
@@ -214,7 +235,7 @@ class TestInstallerChannel(InstallFlatpaksHarness):
         self.assert_ok(self.run_script())
         self.assertEqual(
             self.curl_urls(),
-            [f"https://github.com/tuna-os/bootc-installer/releases/latest/download/{STABLE_ID}.flatpak"],
+            [f"https://github.com/tuna-os/bootc-installer/releases/download/{INSTALLER_TAG}/{STABLE_ID}.flatpak"],
         )
         calls = self.flatpak_calls()
         self.assertIn(f"install --system --noninteractive installer-local {STABLE_ID}", calls)
@@ -227,7 +248,7 @@ class TestInstallerChannel(InstallFlatpaksHarness):
         self.assert_ok(self.run_script(INSTALLER_CHANNEL="dev"))
         self.assertEqual(
             self.curl_urls(),
-            [f"https://github.com/tuna-os/bootc-installer/releases/latest/download/{DEVEL_ID}.flatpak"],
+            [f"https://github.com/tuna-os/bootc-installer/releases/download/{INSTALLER_TAG}/{DEVEL_ID}.flatpak"],
         )
         calls = self.flatpak_calls()
         self.assertIn(f"install --system --noninteractive installer-local {DEVEL_ID}", calls)
@@ -238,6 +259,33 @@ class TestInstallerChannel(InstallFlatpaksHarness):
         result = self.run_script(STUB_CURL_FAIL="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any("installer-local" in c for c in self.flatpak_calls()))
+
+    def test_bundle_with_wrong_checksum_is_discarded_and_fails_the_build(self):
+        """A bundle whose bytes differ from the lock must never be imported."""
+        self.write_lock("0" * 64, DEVEL_SHA256)
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match the SHA-256", result.stderr)
+        self.assertFalse(any("installer-local" in c for c in self.flatpak_calls()))
+        self.assertFalse((self.root / "tmp/tuna-installer.flatpak").exists(), "rejected bundle left behind")
+
+    def test_dev_channel_checks_the_devel_digest(self):
+        self.write_lock(STABLE_SHA256, "0" * 64)
+        self.assert_ok(self.run_script())
+        result = self.run_script(INSTALLER_CHANNEL="dev")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match the SHA-256", result.stderr)
+
+    def test_incomplete_lock_fails_before_downloading(self):
+        for body in ("", f"tag={INSTALLER_TAG}\n", f"{STABLE_ID}.flatpak={STABLE_SHA256}\n",
+                     f"tag={INSTALLER_TAG}\n{STABLE_ID}.flatpak=not-a-digest\n"):
+            with self.subTest(lock=body):
+                self.calls.write_text("")
+                self.lock.write_text(body)
+                result = self.run_script()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("must pin tag=", result.stderr)
+                self.assertEqual(self.curl_urls(), [])
 
     def test_installer_falls_back_to_update_when_install_fails(self):
         self.assert_ok(self.run_script(STUB_FAIL_MATCH=f"install --system --noninteractive installer-local {STABLE_ID}"))

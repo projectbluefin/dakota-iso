@@ -222,12 +222,15 @@ clone step targets.
 
 `live/src/install-flatpaks.sh` fetches the installer Flatpak from a
 `tuna-os/bootc-installer` **release asset**, not from a branch. Both channels
-use the same versioned-release redirect and differ only in filename:
+use the release tag pinned in `live/src/installer-bundle.lock` and differ only in
+filename; the downloaded bundle must match the SHA-256 in the lock:
 
 | channel | URL |
 |---|---|
-| stable | `releases/latest/download/org.bootcinstaller.Installer.flatpak` |
-| dev | `releases/latest/download/org.bootcinstaller.Installer.Devel.flatpak` |
+| stable | `releases/download/<tag>/org.bootcinstaller.Installer.flatpak` |
+| dev | `releases/download/<tag>/org.bootcinstaller.Installer.Devel.flatpak` |
+
+`scripts/bump-installer-bundle.sh [<tag>]` rewrites the lock for a new release.
 
 The dev channel used to track a rolling tag (`latest-dev`). That model is dead under
 GitHub's immutable-release ruleset, which enforces two things at once:

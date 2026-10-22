@@ -173,6 +173,9 @@ RUN kernel=$(ls /usr/lib/modules | sort -V | tail -1) && \
 # Passed as --build-arg CACHE_BUST=$(date +%Y%m%d) in the justfile.
 ARG CACHE_BUST=0
 COPY src/flatpaks /tmp/flatpaks-list
+# install-flatpaks.sh reads the lock from the /src bind mount below; COPY it as
+# well so a pin bump invalidates this layer the way a flatpaks change does.
+COPY src/installer-bundle.lock /tmp/installer-bundle.lock
 RUN --mount=type=bind,source=src,target=/src \
     --mount=type=cache,target=/var/cache/flatpak-dl,id=dakota-flatpak-${TARGET} \
     /src/install-flatpaks.sh

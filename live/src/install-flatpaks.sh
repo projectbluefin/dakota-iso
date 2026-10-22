@@ -58,9 +58,9 @@ flatpak remote-add --system --if-not-exists flathub \
     https://dl.flathub.org/repo/flathub.flatpakrepo
 
 # bootc-installer bundle
-# INSTALLER_CHANNEL controls which release to pull from:
-#   stable (default) → GitHub "latest" release (non-pre-release)
-#   dev              → Devel-branded bundle from the same latest versioned release
+# INSTALLER_CHANNEL controls which bundle to pull from the pinned release:
+#   stable (default) → org.bootcinstaller.Installer.flatpak
+#   dev              → Devel-branded bundle from the same versioned release
 # Source: tuna-os/bootc-installer — the sole upstream for bootc-installer and
 # its fisherman backend. projectbluefin/bootc-installer and
 # projectbluefin/fisherman are retired; there is no fallback repo (the old
@@ -73,20 +73,37 @@ flatpak remote-add --system --if-not-exists flathub \
 # 2026-08-01 (see TestInstallerChannelURLs in
 # tests/test_live_build_invariants.py, which enforces this repo-wide).
 # tuna-os/bootc-installer's auto-release job cuts a fresh date+sha tag on
-# every push to `dev` and attaches both the stable and Devel bundles to it,
-# so /releases/latest/download/ always resolves to a release that carries
-# both — no rolling tag needed for either channel.
+# every push to `dev` and attaches both the stable and Devel bundles to it.
+#
+# The release tag and the SHA-256 of both bundles are pinned in
+# installer-bundle.lock next to this script. The installer runs as root on
+# every machine that boots the ISO, so the build refuses a bundle whose bytes
+# differ from the reviewed lock instead of trusting whatever the moving
+# /releases/latest/ redirect serves. scripts/bump-installer-bundle.sh
+# rewrites the lock for a new upstream release.
 INSTALLER_REPO="tuna-os/bootc-installer"
 FLATPAK_FILENAME="org.bootcinstaller.Installer.flatpak"
 if [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]]; then
     FLATPAK_FILENAME="org.bootcinstaller.Installer.Devel.flatpak"
 fi
-# Use GitHub's /releases/latest/download/ redirect — always resolves to the
-# current latest stable release without needing to know the version tag.
-PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/latest/download/${FLATPAK_FILENAME}"
+INSTALLER_LOCK_DIR="${BASH_SOURCE[0]%/*}"
+[[ "${INSTALLER_LOCK_DIR}" == "${BASH_SOURCE[0]}" ]] && INSTALLER_LOCK_DIR="."
+INSTALLER_LOCK="${INSTALLER_LOCK_DIR}/installer-bundle.lock"
+INSTALLER_TAG=$(sed -n 's/^tag=//p' "${INSTALLER_LOCK}" | head -1)
+INSTALLER_SHA256=$(sed -n "s/^${FLATPAK_FILENAME}=//p" "${INSTALLER_LOCK}" | head -1)
+if [[ -z "${INSTALLER_TAG}" || ! "${INSTALLER_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: ${INSTALLER_LOCK} must pin tag= and ${FLATPAK_FILENAME}=<sha256>" >&2
+    exit 1
+fi
+PRIMARY_URL="https://github.com/${INSTALLER_REPO}/releases/download/${INSTALLER_TAG}/${FLATPAK_FILENAME}"
 curl --retry 3 --fail --location \
     "${PRIMARY_URL}" \
     -o /tmp/tuna-installer.flatpak
+if ! echo "${INSTALLER_SHA256}  /tmp/tuna-installer.flatpak" | sha256sum --check --quiet --strict -; then
+    rm -f /tmp/tuna-installer.flatpak
+    echo "ERROR: ${FLATPAK_FILENAME} from ${INSTALLER_TAG} does not match the SHA-256 in ${INSTALLER_LOCK}" >&2
+    exit 1
+fi
 INSTALLER_APP_ID="org.bootcinstaller.Installer"
 [[ "${INSTALLER_CHANNEL:-stable}" == "dev" ]] && INSTALLER_APP_ID="org.bootcinstaller.Installer.Devel"
 
