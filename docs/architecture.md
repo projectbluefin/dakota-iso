@@ -13,13 +13,17 @@ CI (build-iso.yml) — same entry point:
   └─ sudo just ... iso-sd-boot dakota → container build + VFS store + squashfs + ISO
 ```
 
-### Container: `<target>-installer` (`live/Containerfile` — 3 stages)
+### Container: `<target>-installer` (`live/Containerfile` — 4 stages)
 
 | Stage | Base | Purpose |
 |---|---|---|
-| `dakota-ref` | Dakota image | Provides kernel modules |
-| `initramfs-builder` | Debian | Builds dmsquash-live initramfs against Dakota's kernel modules |
-| final | Dakota | Receives rebuilt initramfs + live-env setup + Flatpaks |
+| `ref` | Target image | Provides kernel modules |
+| `initramfs-native` | `ref` | Builds the dmsquash-live initramfs with the target's own dracut when it has one (Fedora/RPM images); otherwise records a fallback to the Debian stage |
+| `initramfs-builder` | Debian | Cross-builds the dmsquash-live initramfs against the target's kernel modules when the native stage fell back; otherwise passes the native initramfs through |
+| final | Target image | Receives the selected initramfs + live-env setup + Flatpaks |
+
+`tests/test_containerfile_stage_inventory.py` keeps this table in step with
+the `FROM ... AS <name>` lines in `live/Containerfile`.
 
 **Why Debian for initramfs?**
 Dakota is GNOME OS / freedesktop-sdk based — no package manager, no dracut.
@@ -165,7 +169,7 @@ Unit tests live in `tests/` and run via `pytest tests/ -v` (gated on every PR by
 
 | File | Tests | Coverage |
 |---|---|---|
-| `tests/test_luks_unlock.py` | 52 | `luks-unlock.py`: virsh/QEMU screenshot, serial parsing, passphrase injection |
+| `tests/test_luks_unlock.py` | 67 | `luks-unlock.py`: virsh/QEMU screenshot, serial parsing, passphrase injection, unlock/boot verdicts |
 | `tests/test_multi_arch_iso.py` | 4 | `build-iso.sh`: `--arch` flag arg parsing; single-arch + multi-arch ISO integration (skipped if tools absent) |
 | `tests/test_iso_sd_boot.py` | 8 | `iso-sd-boot.sh`: arg/env option plumbing into `just` container invocation, composefs true/false modes, OCI payload embed path + storage driver, compression tiers |
 

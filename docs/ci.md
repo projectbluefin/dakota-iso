@@ -55,7 +55,7 @@ gh workflow run build-iso.yml --ref main
 2. **Install deps** — `apt-get install podman buildah skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
 4. **Install cosign** — `sigstore/cosign-installer` (SHA-pinned)
-5. **Verify payload signature** — `scripts/verify-image-signature.sh ghcr.io/projectbluefin/dakota-nvidia:stable` checks the keyless cosign signature (identity `^https://github\.com/projectbluefin/`) and prints the digest-pinned ref; the job fails if verification fails
+5. **Verify payload signature** — `scripts/verify-image-signature.sh ghcr.io/projectbluefin/dakota-nvidia:stable` checks the keyless cosign signature — a projectbluefin workflow identity, run from the repository that owns the image (`--certificate-github-workflow-repository projectbluefin/dakota` here) — and prints the digest-pinned ref; the job fails if verification fails
 6. **Pull payload image** — removes any local `dakota-nvidia:stable` tag, pulls the verified digest, and re-tags it `dakota-nvidia:stable` for the later steps
 7. **Build live container** — `podman build --pull=always --no-cache live/ --build-arg TARGET=dakota-nvidia --build-arg BASE_DIGEST=@sha256:…` → `localhost/dakota-nvidia-live:latest`; `BASE_DIGEST` pins both `FROM` lines in `live/Containerfile` to the verified digest
 8. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `<target>.rootfs.sfs` + `<target>-boot.tar` (~4.5 GB dakota, ~6 GB bluefin/lts-hwe)
@@ -256,7 +256,7 @@ Runs `pytest tests/ -v` against Python 3.11.
 | File | Tests | What it checks |
 |---|---|---|
 | `tests/test_live_build_invariants.py` | 32 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, publish workflows, E2E workflow wiring, and variant config files. Also pins the DEBUG-only SSH guard and publish gating/concurrency. |
-| `tests/test_luks_unlock.py` | 52 | `live/src/luks-unlock.py` routing, passphrase injection key sequences, and screenshot parsing. |
+| `tests/test_luks_unlock.py` | 67 | `live/src/luks-unlock.py` routing, passphrase injection key sequences, screenshot parsing, and the `qemu`/`libvirt` unlock state machines (when to type, success vs. emergency-shell exit codes). |
 | `tests/test_multi_arch_iso.py` | 2 | `live/src/build-iso.sh --arch` flag: single-arch backwards compat and two-arch assembly. **Skipped when `xorriso`/`mtools` are absent.** CI installs these tools so the tests run; they are skipped only in local environments lacking them — and the skip message names the exact apt packages to install. |
 
 Run locally with:

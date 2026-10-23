@@ -667,5 +667,179 @@ class TestQemuSendPassphraseEdgeCases(unittest.TestCase):
         self.assertNotEqual(sent_minus[0], sent_under[0])
 
 
+
+# ── run_qemu / run_libvirt state machines ─────────────────────────────────────
+#
+# These two loops decide the outcome of a LUKS boot: when the passphrase is
+# typed, and whether the result is success (0), "never prompted" (1) or an
+# emergency shell (2).  The LUKS E2E lane relies on those exit codes, so the
+# classification is pinned here without a VM: the clock is simulated and every
+# VM probe is replaced by a scripted sequence.
+
+
+class _FakeClock:
+    """Stands in for the time module; sleep() advances time() instantly."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def _script(*values):
+    """Side effect that yields values in order, then repeats the last one."""
+    remaining = list(values)
+
+    def _next(*_args, **_kwargs):
+        return remaining.pop(0) if len(remaining) > 1 else remaining[0]
+
+    return _next
+
+
+class _RunModeTestBase(unittest.TestCase):
+    def setUp(self):
+        self.clock = _FakeClock()
+        for target, value in (
+            ("time", self.clock),
+            ("qemu_send_passphrase", MagicMock()),
+            ("virsh_send_passphrase", MagicMock()),
+        ):
+            patcher = patch.object(luks_unlock, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        copy_patcher = patch("shutil.copy2")
+        self.copy2 = copy_patcher.start()
+        self.addCleanup(copy_patcher.stop)
+
+    def exit_code(self, func, *args):
+        with self.assertRaises(SystemExit) as ctx:
+            func(*args)
+        return ctx.exception.code
+
+
+class TestRunQemu(_RunModeTestBase):
+    """run_qemu(monitor_sock, passphrase, serial_log) — the LUKS E2E unlock driver."""
+
+    def run_qemu(self, serial, screens):
+        with patch.object(luks_unlock, "qemu_check_serial", side_effect=_script(*serial)), \
+             patch.object(luks_unlock, "qemu_screendump", side_effect=_script(*screens)):
+            return self.exit_code(luks_unlock.run_qemu, "/mon.sock", "pw", "/serial.log")
+
+    def test_serial_prompt_then_gdm_sends_passphrase_and_succeeds(self):
+        code = self.run_qemu(["plymouth", "", "gdm"], [(1.0, "p")])
+        self.assertEqual(code, 0)
+        luks_unlock.qemu_send_passphrase.assert_called_once_with("/mon.sock", "pw")
+        self.assertIn(luks_unlock.PLYMOUTH_WAIT, self.clock.sleeps)
+        self.assertIn(30, self.clock.sleeps, "GDM path must wait for gnome-initial-setup")
+        self.copy2.assert_any_call("/tmp/luks-unlock-snap.ppm", "/tmp/luks-screenshot-plymouth.ppm")
+        self.copy2.assert_called_with("/tmp/luks-unlock-snap.ppm", "/tmp/luks-screenshot-final.ppm")
+
+    def test_serial_gnome_initial_setup_succeeds_without_gdm_grace_wait(self):
+        code = self.run_qemu(["plymouth", "gnome-initial-setup"], [(1.0, "p")])
+        self.assertEqual(code, 0)
+        self.assertNotIn(30, self.clock.sleeps)
+
+    def test_emergency_shell_after_passphrase_exits_2(self):
+        code = self.run_qemu(["plymouth", "emergency"], [(1.0, "p")])
+        self.assertEqual(code, 2)
+        luks_unlock.qemu_send_passphrase.assert_called_once()
+
+    def test_prompt_never_detected_exits_1_without_typing(self):
+        code = self.run_qemu([""], [(-1.0, "")])
+        self.assertEqual(code, 1)
+        luks_unlock.qemu_send_passphrase.assert_not_called()
+        self.assertGreaterEqual(self.clock.now, luks_unlock.PROMPT_DEADLINE)
+
+    def test_static_dark_screen_is_not_mistaken_for_prompt(self):
+        """Identical frames only count once the VM has rendered something."""
+        code = self.run_qemu([""], [(0.2, "dark")])
+        self.assertEqual(code, 1)
+        luks_unlock.qemu_send_passphrase.assert_not_called()
+
+    def test_framebuffer_fallback_types_after_two_identical_polls(self):
+        # Changing frames (OVMF) then a static prompt; GDM confirmed on serial.
+        serial = [""] * 5 + ["gdm"]
+        screens = [(0.0, "z"), (1.0, "a"), (1.0, "b"), (1.0, "p"), (1.0, "p"), (1.0, "p")]
+        dump = MagicMock(side_effect=_script(*screens))
+        typed_after = []
+        luks_unlock.qemu_send_passphrase.side_effect = lambda *a: typed_after.append(dump.call_count)
+        with patch.object(luks_unlock, "qemu_check_serial", side_effect=_script(*serial)), \
+             patch.object(luks_unlock, "qemu_screendump", dump):
+            with self.assertRaises(SystemExit) as ctx:
+                luks_unlock.run_qemu("/mon.sock", "pw", "/serial.log")
+        self.assertEqual(ctx.exception.code, 0)
+        # Typed on the third identical "p" frame (sixth screendump), not before.
+        self.assertEqual(typed_after, [6])
+
+    def test_framebuffer_fallback_bright_stable_screen_is_success(self):
+        serial = [""]
+        screens = [(1.0, "p"), (1.0, "p"), (1.0, "p"), (2.5, "gdm"), (2.5, "gdm")]
+        self.assertEqual(self.run_qemu(serial, screens), 0)
+        self.copy2.assert_called_with("/tmp/luks-unlock-snap.ppm", "/tmp/luks-screenshot-final.ppm")
+
+    def test_framebuffer_fallback_dark_stable_screen_is_emergency(self):
+        serial = [""]
+        screens = [(1.0, "p"), (1.0, "p"), (1.0, "p"), (1.0, "tty"), (1.0, "tty")]
+        self.assertEqual(self.run_qemu(serial, screens), 2)
+
+    def test_brightness_at_threshold_is_not_success(self):
+        """GNOME_THRESHOLD is exclusive: brightness == 1.8 is still a dark screen."""
+        serial = [""]
+        screens = [(1.0, "p"), (1.0, "p"), (1.0, "p"), (1.8, "x"), (1.8, "x")]
+        self.assertEqual(self.run_qemu(serial, screens), 2)
+
+    def test_unchanged_prompt_after_passphrase_times_out_with_2(self):
+        """Passphrase rejected: the prompt frame never changes, so no verdict until timeout."""
+        serial = [""]
+        screens = [(1.0, "p")]
+        self.assertEqual(self.run_qemu(serial, screens), 2)
+        luks_unlock.qemu_send_passphrase.assert_called_once()
+        self.assertGreaterEqual(
+            self.clock.now, luks_unlock.BOOT_DEADLINE,
+            "an unchanged prompt must not be reported as a boot result before the deadline",
+        )
+
+    def test_diagnostic_copy_failure_does_not_change_verdict(self):
+        self.copy2.side_effect = OSError("read-only")
+        self.assertEqual(self.run_qemu(["plymouth", "gnome-initial-setup"], [(1.0, "p")]), 0)
+
+
+class TestRunLibvirt(_RunModeTestBase):
+    """run_libvirt(vm, passphrase, mac) — the `just luks-unlock` local driver."""
+
+    def run_libvirt(self, sizes, ips):
+        with patch.object(luks_unlock, "virsh_screenshot_size", side_effect=_script(*sizes)), \
+             patch.object(luks_unlock, "virsh_dhcp_ip", side_effect=_script(*ips)):
+            return self.exit_code(luks_unlock.run_libvirt, "vm1", "pw", "52:54:00:00:00:01")
+
+    def test_blank_after_content_types_passphrase_then_lease_succeeds(self):
+        code = self.run_libvirt([0, 50000, 50000, 2000], ["", "", "192.168.122.5"])
+        self.assertEqual(code, 0)
+        luks_unlock.virsh_send_passphrase.assert_called_once_with("vm1", "pw")
+        self.assertIn(luks_unlock.PLYMOUTH_WAIT, self.clock.sleeps)
+
+    def test_blank_before_any_content_does_not_type(self):
+        """A small screenshot at power-on is not Plymouth; wait for content first."""
+        code = self.run_libvirt([0], [""])
+        self.assertEqual(code, 1)
+        luks_unlock.virsh_send_passphrase.assert_not_called()
+
+    def test_size_boundary_4096_counts_as_blank(self):
+        code = self.run_libvirt([4097, 4096], ["10.0.0.2"])
+        self.assertEqual(code, 0)
+        luks_unlock.virsh_send_passphrase.assert_called_once()
+
+    def test_no_dhcp_lease_after_passphrase_exits_2(self):
+        code = self.run_libvirt([50000, 1000], [""])
+        self.assertEqual(code, 2)
+        self.assertGreaterEqual(self.clock.now, luks_unlock.BOOT_DEADLINE)
+
+
 if __name__ == "__main__":
     unittest.main()
