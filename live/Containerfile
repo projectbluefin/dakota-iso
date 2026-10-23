@@ -40,6 +40,9 @@ FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG}${BASE_DIGEST} AS ref
 # where dracut's shutdown module cannot find poweroff/reboot/halt symlinks
 # in a container build context, or Fedora-based images missing /root).
 FROM ref AS initramfs-native
+# The dakota-isofile module boots the ISO when it is a file on a USB partition
+# (Ventoy / GRUB loopback); loopback.cfg passes rd.dakota.isofile= for it.
+COPY src/dracut/95dakota-isofile /usr/lib/dracut/modules.d/95dakota-isofile
 RUN set -e; \
     kernel=$(ls /usr/lib/modules | sort -V | tail -1); \
     if command -v dracut >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1 || command -v rpm >/dev/null 2>&1; then \
@@ -50,7 +53,7 @@ RUN set -e; \
         dracut --list-modules 2>/dev/null | grep -q dmsquash-live || { echo 'dmsquash-live module not found — falling back to Debian cross-build'; echo debian > /tmp/dracut-status; touch /tmp/initramfs.img; exit 0; }; \
         echo "Building initramfs natively for kernel ${kernel}"; \
         if dracut -v --force --reproducible --no-hostonly \
-                --add "dmsquash-live" \
+                --add "dmsquash-live dakota-isofile" \
                 --filesystems "iso9660 squashfs" \
                 --add-drivers "squashfs overlay loop iso9660 isofs sr_mod cdrom" \
                 --force-drivers "isofs" \
@@ -84,6 +87,7 @@ RUN apt-get update && \
 COPY --from=ref /usr/lib/modules /usr/lib/modules
 COPY --from=initramfs-native /tmp/dracut-status /tmp/
 COPY --from=initramfs-native /tmp/initramfs.img /tmp/native-initramfs/
+COPY src/dracut/95dakota-isofile /usr/lib/dracut/modules.d/95dakota-isofile
 
 # "--omit shutdown" applies to every ISO, not only test builds: the dracut
 # shutdown module re-execs into the initramfs at poweroff/reboot, and on the
@@ -95,7 +99,7 @@ RUN set -ex; \
         kernel=$(ls /usr/lib/modules | sort -V | tail -1); \
         echo "Cross-building initramfs (Debian dracut) for kernel ${kernel}"; \
         DRACUT_NO_XATTR=1 dracut -v --force --zstd --reproducible --no-hostonly \
-            --add "dmsquash-live" \
+            --add "dmsquash-live dakota-isofile" \
             --omit "shutdown" \
             --filesystems "iso9660 squashfs" \
             --add-drivers "squashfs overlay loop iso9660 isofs sr_mod cdrom" \

@@ -18,8 +18,8 @@ CI (build-iso.yml) — same entry point:
 | Stage | Base | Purpose |
 |---|---|---|
 | `ref` | Target image | Provides kernel modules |
-| `initramfs-native` | `ref` | Builds the dmsquash-live initramfs with the target's own dracut when it has one (Fedora/RPM images); otherwise records a fallback to the Debian stage |
-| `initramfs-builder` | Debian | Cross-builds the dmsquash-live initramfs against the target's kernel modules when the native stage fell back; otherwise passes the native initramfs through |
+| `initramfs-native` | `ref` | Builds the dmsquash-live + dakota-isofile (Ventoy/file-backed boot) initramfs with the target's own dracut when it has one (Fedora/RPM images); otherwise records a fallback to the Debian stage |
+| `initramfs-builder` | Debian | Cross-builds the dmsquash-live + dakota-isofile initramfs against the target's kernel modules when the native stage fell back; otherwise passes the native initramfs through |
 | final | Target image | Receives the selected initramfs + live-env setup + Flatpaks |
 
 `tests/test_containerfile_stage_inventory.py` keeps this table in step with
