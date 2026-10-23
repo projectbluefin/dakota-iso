@@ -286,6 +286,49 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
             "for the live boot to work.",
         )
 
+    def test_every_initramfs_build_adds_dakota_isofile(self):
+        """Both dracut calls must build in the Ventoy/file-backed boot module.
+
+        loopback.cfg passes rd.dakota.isofile= on the kernel command line; only
+        the 95dakota-isofile module reads it. A Containerfile rewrite once
+        dropped the module silently, leaving file-backed ISO boot broken.
+        """
+        add_lines = [
+            line for line in self.content.splitlines()
+            if '--add "' in line
+        ]
+        self.assertGreaterEqual(
+            len(add_lines), 2,
+            "Native and Debian initramfs builds must both declare --add modules.",
+        )
+        for line in add_lines:
+            self.assertIn("dakota-isofile", line)
+
+    def test_dakota_isofile_module_copied_into_each_dracut_stage(self):
+        """Each stage that runs dracut must have the module in modules.d."""
+        copy = (
+            "COPY src/dracut/95dakota-isofile "
+            "/usr/lib/dracut/modules.d/95dakota-isofile"
+        )
+        self.assertTrue(
+            (REPO / "live" / "src" / "dracut" / "95dakota-isofile"
+             / "module-setup.sh").is_file()
+        )
+        native = self.content.split("AS initramfs-native", 1)[1].split(
+            "FROM debian:", 1
+        )[0]
+        debian = self.content.split("AS initramfs-builder", 1)[1].split(
+            "\nFROM ", 1
+        )[0]
+        for name, stage in (("initramfs-native", native),
+                            ("initramfs-builder", debian)):
+            self.assertIn("dracut -v", stage)
+            self.assertIn(copy, stage, f"{name} must COPY the dakota-isofile module")
+            self.assertLess(
+                stage.index(copy), stage.index("dracut -v"),
+                f"{name} must COPY the module before running dracut",
+            )
+
     def test_debian_stage_does_not_add_virtio_modules(self):
         """Debian cross-build must NOT add virtio modules (breaks GnomeOS boot).
 
