@@ -654,6 +654,7 @@ luks-boot target:
 #   just luks-install-qemu dakota     # SSH fisherman install (uses luks-install internals)
 #   just luks-boot-qemu-installed dakota  # reboot QEMU into installed disk
 #   just luks-unlock-qemu dakota      # send passphrase via QEMU monitor
+#   just luks-verify-qemu dakota      # SSH post-boot assertions (UEFI, Flatpak, LUKS cmdline)
 
 # QEMU memory (MiB) for the live install phase.
 # 4096 is intentionally tight: the overlay tmpfs is only ~2 GiB, which

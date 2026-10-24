@@ -177,8 +177,19 @@ EOF
             else
                 echo "WARNING: could not set root password (openssl missing or no $DEPLOY_ETC/shadow) — debug SSH may not be reachable"
             fi
+            # sshd keeps the FIRST value per keyword and reads sshd_config.d
+            # drop-ins in name order, so use 00- to sort before any image
+            # drop-in (e.g. 50-*.conf with PasswordAuthentication no), and
+            # append to an existing sshd_config too — mirrors live/src/configure-live.sh.
             mkdir -p "$DEPLOY_ETC/ssh/sshd_config.d"
-            cat <<'SSHEOF' > "$DEPLOY_ETC/ssh/sshd_config.d/90-e2e-debug.conf"
+            if [[ -f "$DEPLOY_ETC/ssh/sshd_config" ]]; then
+                cat <<'SSHEOF' >> "$DEPLOY_ETC/ssh/sshd_config"
+PermitEmptyPasswords no
+PasswordAuthentication yes
+PermitRootLogin yes
+SSHEOF
+            fi
+            cat <<'SSHEOF' > "$DEPLOY_ETC/ssh/sshd_config.d/00-e2e-debug.conf"
 PermitEmptyPasswords no
 PasswordAuthentication yes
 PermitRootLogin yes
