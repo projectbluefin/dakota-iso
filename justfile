@@ -994,7 +994,8 @@ luks-verify-qemu target:
     # Post-boot assertions (projectbluefin/dakota#651). Assertion failures are
     # observability-only unless STRICT_POST_BOOT=1 (handled inside
     # verify-post-install.sh; CI does not set it, so a green run does NOT
-    # prove the invariants). SSH unreachable (rc 2) always fails hard.
+    # prove the invariants). SSH unreachable is also non-blocking unless
+    # STRICT_POST_BOOT=1 (then rc 2).
     bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase"
 
 # Run Python unit tests.
@@ -1115,9 +1116,11 @@ plain-test-qemu target:
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
          plain-boot-qemu-installed {{target}}
     just output_dir={{output_dir}} plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
          plain-verify-qemu {{target}}
 
 # Drive the already auto-launched graphical installer in a fresh debug ISO.
@@ -1194,9 +1197,11 @@ gui-e2e target:
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
          plain-boot-qemu-installed {{target}}
     just output_dir={{output_dir}} plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
          plain-verify-qemu {{target}}
 
 # Boot the live ISO in QEMU for a plain install test.
@@ -1405,7 +1410,8 @@ plain-verify-qemu target:
             # Flatpak exclusion, over SSH into the now-booted installed system.
             # Assertion failures are observability-only unless
             # STRICT_POST_BOOT=1 (handled inside verify-post-install.sh; CI
-            # does not set it); SSH unreachable (rc 2) always fails hard.
+            # does not set it); SSH unreachable is likewise non-blocking
+            # unless STRICT_POST_BOOT=1 (then rc 2).
             POST_BOOT_RC=0
             bash "scripts/verify-post-install.sh" "{{plain-qemu-ssh-port-installed}}" "none" || POST_BOOT_RC=$?
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true

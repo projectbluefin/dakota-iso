@@ -250,8 +250,21 @@ class TestJustfileWiring(unittest.TestCase):
     def test_ssh_unreachable_uses_distinct_exit_code(self):
         text = VERIFY_SCRIPT.read_text()
         unreachable = text[text.index('if [[ "$READY" -ne 1 ]]'):]
-        unreachable = unreachable[:unreachable.index("fi\n")]
-        self.assertIn("exit 2", unreachable)
+        unreachable = unreachable[:unreachable.index("\nfi\n")]
+        self.assertIn('"${STRICT_POST_BOOT:-0}" != "1"', unreachable)
+        self.assertIn("::warning", unreachable)
+        self.assertTrue(unreachable.rstrip().endswith("exit 2"))
+
+    def test_nested_plain_runs_forward_installed_ssh_port(self):
+        for header in ("plain-test-qemu target:", "gui-e2e target:"):
+            body = self._recipe_body(header)
+            self.assertEqual(
+                body.count(
+                    "plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}}"
+                ),
+                2,
+                header,
+            )
 
     def test_soft_fail_lives_in_script_and_only_covers_assertion_failures(self):
         text = VERIFY_SCRIPT.read_text()

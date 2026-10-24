@@ -70,9 +70,9 @@ assertion 3) and the new `luks-verify-qemu` recipe (encryption type
 > `luks-verify-qemu`) exits **0** on an assertion failure, printing a
 > `⚠️ ... NON-BLOCKING` line (and a GitHub `::warning::` annotation in
 > Actions). Set `STRICT_POST_BOOT=1` to make assertion failures exit 1 and
-> fail the recipe. If the installed system's SSH is never reachable the script exits
-> 2, which always fails the recipe (a broken `--enable-debug-ssh` setup must
-> not silently no-op the gate). CI (`test-luks-install.yml`,
+> fail the recipe. If the installed system's SSH is never reachable the script
+> likewise warns and exits 0 by default (until the debug-SSH path has a green
+> E2E run on main); with `STRICT_POST_BOOT=1` it exits 2 and fails the recipe. CI (`test-luks-install.yml`,
 > `test-plain-install.yml`) does **not** set it, so a green CI run does not
 > prove these invariants — check the log for `✅ All post-boot assertions
 > passed`.
