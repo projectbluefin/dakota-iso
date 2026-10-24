@@ -21,7 +21,9 @@
 #
 # Usage: verify-post-install.sh <ssh_port> <encryption_type: none|luks-passphrase>
 #
-# Exit code: 0 if all applicable assertions pass, 1 if any fails.
+# Exit code: 0 if all applicable assertions pass, 1 if any fails, 2 if the
+# installed system was never reachable over SSH (setup failure, not an
+# assertion result — callers must not soft-fail it).
 
 set -uo pipefail
 
@@ -87,7 +89,7 @@ done
 if [[ "$READY" -ne 1 ]]; then
     echo "❌ Post-boot assertions SKIPPED: could not reach installed system over SSH after 5 minutes" >&2
     echo "   (debug SSH may not have been enabled, or sshd/network wasn't up in time)" >&2
-    exit 1
+    exit 2
 fi
 
 FAIL=0

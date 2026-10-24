@@ -240,5 +240,39 @@ class TestJustfileWiring(unittest.TestCase):
         self.assertIn("verify-post-install.sh", verify_body)
 
 
+    def _recipe_body(self, header):
+        text = JUSTFILE.read_text()
+        rest = text[text.index(header) + len(header):]
+        # Recipe body ends at the next non-indented line (comment or recipe).
+        m = re.search(r"\n(?=[^\s])", rest)
+        return rest if m is None else rest[:m.start()]
+
+    def test_ssh_unreachable_uses_distinct_exit_code(self):
+        text = VERIFY_SCRIPT.read_text()
+        unreachable = text[text.index('if [[ "$READY" -ne 1 ]]'):]
+        unreachable = unreachable[:unreachable.index("fi\n")]
+        self.assertIn("exit 2", unreachable)
+
+    def test_verify_recipes_soft_fail_only_assertion_failures(self):
+        for header in ("luks-verify-qemu target:", "plain-verify-qemu target:"):
+            body = self._recipe_body(header)
+            self.assertIn('"$POST_BOOT_RC" -eq 1 &&', body, header)
+            self.assertNotIn('"$POST_BOOT_RC" -ne 0 &&', body, header)
+
+    def test_installed_boot_reuses_live_nvram(self):
+        for header, prefix in (
+            ("luks-boot-qemu-installed target:", "dakota-qemu"),
+            ("plain-boot-qemu-installed target:", "dakota-plain-qemu"),
+        ):
+            body = self._recipe_body(header)
+            self.assertIn(
+                f"cp /var/tmp/{prefix}-live-vars.fd \"$OVMF_VARS\"", body, header
+            )
+
+    def test_installed_ssh_hostfwd_bound_to_loopback(self):
+        text = JUSTFILE.read_text()
+        for var in ("luks-qemu-ssh-port-installed", "plain-qemu-ssh-port-installed"):
+            self.assertIn(f"hostfwd=tcp:127.0.0.1:{{{{{var}}}}}-:22", text)
+
 if __name__ == "__main__":
     unittest.main()

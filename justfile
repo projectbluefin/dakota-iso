@@ -886,7 +886,7 @@ luks-boot-qemu-installed target:
         if [[ -x "$candidate" ]]; then QEMU="$candidate"; break; fi
     done
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
-    OVMF_CODE=""; OVMF_VARS=""
+    OVMF_CODE=""; OVMF_VARS=""; OVMF_VARS_TEMPLATE=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
               /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
@@ -899,7 +899,7 @@ luks-boot-qemu-installed target:
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd; do
-        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-qemu-installed-vars.fd; OVMF_VARS=/var/tmp/dakota-qemu-installed-vars.fd; break; fi
+        [[ -f "$f" ]] && { OVMF_VARS_TEMPLATE="$f"; break; }
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
 
@@ -917,6 +917,17 @@ luks-boot-qemu-installed target:
         echo "Waiting for live QEMU to exit (attempt $i)..."
         sleep 2
     done
+    # Carry over the live VM's NVRAM so Boot#### entries written by the
+    # installer (efibootmgr) survive into the installed boot; fall back to
+    # the pristine template if the live vars file is missing.
+    OVMF_VARS=/var/tmp/dakota-qemu-installed-vars.fd
+    if [[ -f /var/tmp/dakota-qemu-live-vars.fd ]]; then
+        cp /var/tmp/dakota-qemu-live-vars.fd "$OVMF_VARS"
+    elif [[ -n "$OVMF_VARS_TEMPLATE" ]]; then
+        cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+    else
+        OVMF_VARS=""
+    fi
     # KVM access: try direct, then sudo, then fall back to TCG
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
@@ -940,7 +951,7 @@ luks-boot-qemu-installed target:
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
         -device virtio-blk-pci,drive=disk \
-        -netdev "user,id=net0,hostfwd=tcp::{{luks-qemu-ssh-port-installed}}-:22" \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:{{luks-qemu-ssh-port-installed}}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -monitor "unix:{{luks-qemu-monitor-installed}},server,nowait" \
         -serial "file:{{luks-qemu-serial-installed}}" \
@@ -980,12 +991,13 @@ luks-verify-qemu target:
     #!/usr/bin/bash
     set -euo pipefail
     # Post-boot assertions (projectbluefin/dakota#651). OBSERVABILITY-ONLY by
-    # default: any failure (including SSH unreachable) exits 0 with a warning
-    # until upstream dependencies (fisherman #1, #2, common#385) land. CI does
-    # not set STRICT_POST_BOOT, so a green run does NOT prove the invariants.
+    # default: assertion failures (rc 1) exit 0 with a warning until upstream
+    # dependencies (fisherman #1, #2, common#385) land. SSH unreachable (rc 2)
+    # always fails hard. CI does not set STRICT_POST_BOOT, so a green run does
+    # NOT prove the invariants.
     POST_BOOT_RC=0
     bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase" || POST_BOOT_RC=$?
-    if [[ "$POST_BOOT_RC" -ne 0 && "${STRICT_POST_BOOT:-0}" != "1" ]]; then
+    if [[ "$POST_BOOT_RC" -eq 1 && "${STRICT_POST_BOOT:-0}" != "1" ]]; then
         echo "⚠️ Post-boot assertions FAILED but are NON-BLOCKING (observability-only until fisherman #1/#2 and common#385 land). Set STRICT_POST_BOOT=1 to fail hard." >&2
         [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::warning title=Post-boot assertions failed (non-blocking)::verify-post-install.sh exited ${POST_BOOT_RC}; see log. Set STRICT_POST_BOOT=1 to gate."
         exit 0
@@ -1312,7 +1324,7 @@ plain-boot-qemu-installed target:
         if [[ -x "$candidate" ]]; then QEMU="$candidate"; break; fi
     done
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
-    OVMF_CODE=""; OVMF_VARS=""
+    OVMF_CODE=""; OVMF_VARS=""; OVMF_VARS_TEMPLATE=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
               /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
@@ -1325,7 +1337,7 @@ plain-boot-qemu-installed target:
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd; do
-        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-plain-qemu-installed-vars.fd; OVMF_VARS=/var/tmp/dakota-plain-qemu-installed-vars.fd; break; fi
+        [[ -f "$f" ]] && { OVMF_VARS_TEMPLATE="$f"; break; }
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
     rm -f "{{plain-qemu-monitor-installed}}" "{{plain-qemu-serial-installed}}"
@@ -1334,6 +1346,17 @@ plain-boot-qemu-installed target:
         [[ -S "{{plain-qemu-monitor-live}}" ]] || break
         sleep 2
     done
+    # Carry over the live VM's NVRAM so Boot#### entries written by the
+    # installer (efibootmgr) survive into the installed boot; fall back to
+    # the pristine template if the live vars file is missing.
+    OVMF_VARS=/var/tmp/dakota-plain-qemu-installed-vars.fd
+    if [[ -f /var/tmp/dakota-plain-qemu-live-vars.fd ]]; then
+        cp /var/tmp/dakota-plain-qemu-live-vars.fd "$OVMF_VARS"
+    elif [[ -n "$OVMF_VARS_TEMPLATE" ]]; then
+        cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+    else
+        OVMF_VARS=""
+    fi
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
     if ! test -r /dev/kvm 2>/dev/null; then
@@ -1352,7 +1375,7 @@ plain-boot-qemu-installed target:
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=disk,file={{plain-qemu-disk}},format=raw,cache=unsafe" \
         -device virtio-blk-pci,drive=disk \
-        -netdev "user,id=net0,hostfwd=tcp::{{plain-qemu-ssh-port-installed}}-:22" \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:{{plain-qemu-ssh-port-installed}}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -monitor "unix:{{plain-qemu-monitor-installed}},server,nowait" \
         -serial "file:{{plain-qemu-serial-installed}}" \
@@ -1387,11 +1410,13 @@ plain-verify-qemu target:
             bash "live/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
             # Post-boot assertions (projectbluefin/dakota#651): UEFI entry +
             # Flatpak exclusion, over SSH into the now-booted installed system.
-            # Observability-only unless STRICT_POST_BOOT=1 (CI does not set it).
+            # Assertion failures (rc 1) are observability-only unless
+            # STRICT_POST_BOOT=1 (CI does not set it); SSH unreachable (rc 2)
+            # always fails hard.
             POST_BOOT_RC=0
             bash "scripts/verify-post-install.sh" "{{plain-qemu-ssh-port-installed}}" "none" || POST_BOOT_RC=$?
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
-            if [[ "$POST_BOOT_RC" -ne 0 && "${STRICT_POST_BOOT:-0}" != "1" ]]; then
+            if [[ "$POST_BOOT_RC" -eq 1 && "${STRICT_POST_BOOT:-0}" != "1" ]]; then
                 echo "⚠️ Post-boot assertions FAILED but are NON-BLOCKING (observability-only until fisherman #1/#2 and common#385 land). Set STRICT_POST_BOOT=1 to fail hard." >&2
                 [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::warning title=Post-boot assertions failed (non-blocking)::verify-post-install.sh exited ${POST_BOOT_RC}; see log. Set STRICT_POST_BOOT=1 to gate."
                 exit 0

@@ -54,16 +54,25 @@ After the installed system boots (and, for LUKS, is unlocked),
    `rd.luks.uuid=[luks-]<uuid>` or `rd.luks.name=<uuid>=<name>`
    (projectbluefin/common#385).
 
+`luks-boot-qemu-installed`/`plain-boot-qemu-installed` seed the installed
+VM's OVMF NVRAM from the live VM's vars file
+(`/var/tmp/dakota[-plain]-qemu-live-vars.fd`) so Boot#### entries the
+installer wrote survive the reboot; they fall back to the pristine
+`OVMF_VARS` template only if the live vars file is missing. The installed
+VM's SSH port is forwarded on `127.0.0.1` only.
+
 The same script backs `plain-verify-qemu` (encryption type `none`, skips
 assertion 3) and the new `luks-verify-qemu` recipe (encryption type
 `luks-passphrase`).
 
 > **Non-blocking by default (observability-only).** Until fisherman #1/#2 and
 > common#385 land, `plain-verify-qemu` and `luks-verify-qemu` exit **0** when
-> `verify-post-install.sh` fails — including when the installed system's SSH
-> is unreachable — printing a `⚠️ ... NON-BLOCKING` line (and a GitHub
-> `::warning::` annotation in Actions). Set `STRICT_POST_BOOT=1` to make any
-> failure fail the recipe. CI (`test-luks-install.yml`,
+> `verify-post-install.sh` reports an assertion failure (exit 1), printing a
+> `⚠️ ... NON-BLOCKING` line (and a GitHub `::warning::` annotation in
+> Actions). Set `STRICT_POST_BOOT=1` to make assertion failures fail the
+> recipe. If the installed system's SSH is never reachable the script exits
+> 2, which always fails the recipe (a broken `--enable-debug-ssh` setup must
+> not silently no-op the gate). CI (`test-luks-install.yml`,
 > `test-plain-install.yml`) does **not** set it, so a green CI run does not
 > prove these invariants — check the log for `✅ All post-boot assertions
 > passed`.
