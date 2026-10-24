@@ -743,7 +743,7 @@ luks-test-qemu target installer_channel="dev":
           "{{luks-qemu-serial-installed}}"
     just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-live {{target}}
     just luks-qemu-ssh-port={{luks-qemu-ssh-port}} luks-install-qemu {{target}}
-    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-installed {{target}}
+    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-qemu-ssh-port-installed={{luks-qemu-ssh-port-installed}} luks-boot-qemu-installed {{target}}
     just luks-qemu-monitor-installed={{luks-qemu-monitor-installed}} \
          luks-qemu-serial-installed={{luks-qemu-serial-installed}} \
          luks-unlock-qemu {{target}}
