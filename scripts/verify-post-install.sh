@@ -23,7 +23,13 @@
 #
 # Exit code: 0 if all applicable assertions pass, 1 if any fails, 2 if the
 # installed system was never reachable over SSH (setup failure, not an
-# assertion result — callers must not soft-fail it).
+# assertion result — always fails hard).
+#
+# Assertion failures are OBSERVABILITY-ONLY by default: they print a warning
+# (plus a ::warning:: annotation under GitHub Actions) and exit 0 until the
+# upstream dependencies (fisherman #1, #2, common#385) land. Set
+# STRICT_POST_BOOT=1 to make them exit 1. CI does not set it, so a green run
+# does NOT prove the invariants.
 
 set -uo pipefail
 
@@ -134,7 +140,12 @@ fi
 if [[ "$FAIL" -eq 0 ]]; then
     echo "✅ All post-boot assertions passed"
     exit 0
-else
-    echo "❌ One or more post-boot assertions failed" >&2
-    exit 1
 fi
+
+echo "❌ One or more post-boot assertions failed" >&2
+if [[ "${STRICT_POST_BOOT:-0}" != "1" ]]; then
+    echo "⚠️ Post-boot assertions FAILED but are NON-BLOCKING (observability-only until fisherman #1/#2 and common#385 land). Set STRICT_POST_BOOT=1 to fail hard." >&2
+    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::warning title=Post-boot assertions failed (non-blocking)::verify-post-install.sh assertions failed; see log. Set STRICT_POST_BOOT=1 to gate."
+    exit 0
+fi
+exit 1

@@ -991,19 +991,11 @@ luks-unlock-qemu target:
 luks-verify-qemu target:
     #!/usr/bin/bash
     set -euo pipefail
-    # Post-boot assertions (projectbluefin/dakota#651). OBSERVABILITY-ONLY by
-    # default: assertion failures (rc 1) exit 0 with a warning until upstream
-    # dependencies (fisherman #1, #2, common#385) land. SSH unreachable (rc 2)
-    # always fails hard. CI does not set STRICT_POST_BOOT, so a green run does
-    # NOT prove the invariants.
-    POST_BOOT_RC=0
-    bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase" || POST_BOOT_RC=$?
-    if [[ "$POST_BOOT_RC" -eq 1 && "${STRICT_POST_BOOT:-0}" != "1" ]]; then
-        echo "⚠️ Post-boot assertions FAILED but are NON-BLOCKING (observability-only until fisherman #1/#2 and common#385 land). Set STRICT_POST_BOOT=1 to fail hard." >&2
-        [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::warning title=Post-boot assertions failed (non-blocking)::verify-post-install.sh exited ${POST_BOOT_RC}; see log. Set STRICT_POST_BOOT=1 to gate."
-        exit 0
-    fi
-    exit "$POST_BOOT_RC"
+    # Post-boot assertions (projectbluefin/dakota#651). Assertion failures are
+    # observability-only unless STRICT_POST_BOOT=1 (handled inside
+    # verify-post-install.sh; CI does not set it, so a green run does NOT
+    # prove the invariants). SSH unreachable (rc 2) always fails hard.
+    bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase"
 
 # Run Python unit tests.
 # Note: pytest passing means source-file invariants and mocked logic are OK.
@@ -1411,17 +1403,12 @@ plain-verify-qemu target:
             bash "live/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
             # Post-boot assertions (projectbluefin/dakota#651): UEFI entry +
             # Flatpak exclusion, over SSH into the now-booted installed system.
-            # Assertion failures (rc 1) are observability-only unless
-            # STRICT_POST_BOOT=1 (CI does not set it); SSH unreachable (rc 2)
-            # always fails hard.
+            # Assertion failures are observability-only unless
+            # STRICT_POST_BOOT=1 (handled inside verify-post-install.sh; CI
+            # does not set it); SSH unreachable (rc 2) always fails hard.
             POST_BOOT_RC=0
             bash "scripts/verify-post-install.sh" "{{plain-qemu-ssh-port-installed}}" "none" || POST_BOOT_RC=$?
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
-            if [[ "$POST_BOOT_RC" -eq 1 && "${STRICT_POST_BOOT:-0}" != "1" ]]; then
-                echo "⚠️ Post-boot assertions FAILED but are NON-BLOCKING (observability-only until fisherman #1/#2 and common#385 land). Set STRICT_POST_BOOT=1 to fail hard." >&2
-                [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::warning title=Post-boot assertions failed (non-blocking)::verify-post-install.sh exited ${POST_BOOT_RC}; see log. Set STRICT_POST_BOOT=1 to gate."
-                exit 0
-            fi
             exit "$POST_BOOT_RC"
         fi
         # Detect emergency shell / kernel panic — fast-fail

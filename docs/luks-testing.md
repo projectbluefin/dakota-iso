@@ -66,11 +66,11 @@ assertion 3) and the new `luks-verify-qemu` recipe (encryption type
 `luks-passphrase`).
 
 > **Non-blocking by default (observability-only).** Until fisherman #1/#2 and
-> common#385 land, `plain-verify-qemu` and `luks-verify-qemu` exit **0** when
-> `verify-post-install.sh` reports an assertion failure (exit 1), printing a
+> common#385 land, `verify-post-install.sh` (and so `plain-verify-qemu` /
+> `luks-verify-qemu`) exits **0** on an assertion failure, printing a
 > `⚠️ ... NON-BLOCKING` line (and a GitHub `::warning::` annotation in
-> Actions). Set `STRICT_POST_BOOT=1` to make assertion failures fail the
-> recipe. If the installed system's SSH is never reachable the script exits
+> Actions). Set `STRICT_POST_BOOT=1` to make assertion failures exit 1 and
+> fail the recipe. If the installed system's SSH is never reachable the script exits
 > 2, which always fails the recipe (a broken `--enable-debug-ssh` setup must
 > not silently no-op the gate). CI (`test-luks-install.yml`,
 > `test-plain-install.yml`) does **not** set it, so a green CI run does not

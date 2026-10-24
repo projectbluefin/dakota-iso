@@ -253,11 +253,16 @@ class TestJustfileWiring(unittest.TestCase):
         unreachable = unreachable[:unreachable.index("fi\n")]
         self.assertIn("exit 2", unreachable)
 
-    def test_verify_recipes_soft_fail_only_assertion_failures(self):
+    def test_soft_fail_lives_in_script_and_only_covers_assertion_failures(self):
+        text = VERIFY_SCRIPT.read_text()
+        tail = text[text.rindex('if [[ "$FAIL" -eq 0 ]]'):]
+        self.assertIn('"${STRICT_POST_BOOT:-0}" != "1"', tail)
+        self.assertIn("NON-BLOCKING", tail)
+        self.assertTrue(tail.rstrip().endswith("exit 1"))
         for header in ("luks-verify-qemu target:", "plain-verify-qemu target:"):
             body = self._recipe_body(header)
-            self.assertIn('"$POST_BOOT_RC" -eq 1 &&', body, header)
-            self.assertNotIn('"$POST_BOOT_RC" -ne 0 &&', body, header)
+            self.assertNotIn("STRICT_POST_BOOT:-0", body, header)
+            self.assertNotIn("exit 0", body, header)
 
     def test_installed_boot_reuses_live_nvram(self):
         for header, prefix in (
