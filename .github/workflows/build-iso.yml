@@ -23,6 +23,7 @@ jobs:
     permissions:
       contents: write
       packages: read
+      id-token: write  # keyless cosign signing of the ISO checksum
 
     steps:
       - name: Checkout
@@ -344,6 +345,21 @@ jobs:
             { echo "ERROR: live environment did not reach ready state"
               sudo tail -50 /tmp/serial.log; exit 1; }
 
+      # Sign the published checksum with keyless cosign (GitHub OIDC), so the
+      # ISO can be checked against something an R2 write cannot forge (#220).
+      # It runs under the same conditions as the upload, before it: if signing
+      # fails, nothing is published or rotated.
+      - name: Sign ISO checksum (keyless cosign)
+        if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success' && steps.boot_verify.outcome == 'success' }}
+        env:
+          CHECKSUM: ${{ steps.checksum.outputs.latest_path }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --output-signature "${CHECKSUM}.sig" \
+            --output-certificate "${CHECKSUM}.pem" \
+            "$CHECKSUM"
+
       - name: Upload ISO to Cloudflare R2
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success' && steps.boot_verify.outcome == 'success' }}
         env:
@@ -390,6 +406,10 @@ jobs:
             "$ISO" "R2:testing/${LATEST_NAME}"
           rclone copyto --log-level INFO --s3-no-check-bucket \
             "${{ steps.checksum.outputs.latest_path }}" "R2:testing/${LATEST_NAME}-CHECKSUM"
+          for ext in sig pem; do
+            rclone copyto --log-level INFO --s3-no-check-bucket \
+              "${{ steps.checksum.outputs.latest_path }}.${ext}" "R2:testing/${LATEST_NAME}-CHECKSUM.${ext}"
+          done
 
       - name: Publish latest URLs summary
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success' && steps.boot_verify.outcome == 'success' }}
