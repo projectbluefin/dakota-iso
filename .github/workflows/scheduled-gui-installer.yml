@@ -1,9 +1,8 @@
 name: Scheduled GUI Installer E2E
 
 on:
-  schedule:
-    # Run weekly after the LUKS and plain installer E2E workflows.
-    - cron: '0 4 * * 3'
+  # Schedule paused: the AT-SPI driver cannot drive the current bootc-installer
+  # (see #119); re-enable once upstream exposes actionable accessible controls.
   workflow_dispatch:
 
 permissions:
