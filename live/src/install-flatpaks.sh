@@ -29,7 +29,7 @@ export TMPDIR="${FLATPAK_CACHE}/tmp"
 CREATED_VAR_TMP=0
 if [[ ! -d /var/tmp ]]; then
     CREATED_VAR_TMP=1
-    install -d -m 1777 /var/tmp
+    mkdir -m 1777 /var/tmp
 fi
 mkdir -p /run/dbus
 # An OCI flatpak remote (tuna-os, for Utah's Ghostty) makes flatpak spawn a
