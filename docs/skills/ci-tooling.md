@@ -10,8 +10,8 @@ tags:
   - github-actions
   - r2
 description: Workflow definitions, runner environment, caching, and release automation for dakota-iso.
-version: "1.5"
-last_updated: "2026-10-05"
+version: "1.6"
+last_updated: "2026-10-25"
 metadata:
   type: reference
 ---
@@ -290,6 +290,11 @@ authoritative checksum, and refresh the row by hand after a publish:
 curl -sL https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM
 curl -sIL https://projectbluefin.dev/dakota-live-latest.iso | grep -i content-length
 ```
+
+Since #270 the `latest` checksum is also signed (`-CHECKSUM.sig` / `-CHECKSUM.pem`,
+keyless cosign from the publish workflow). When quoting a checksum anywhere, verify the
+signature first — the full procedure is in
+[docs/ci.md → Verifying a downloaded ISO](../ci.md#verifying-a-downloaded-iso).
 
 Note the same protected-branch rule is why every PR needs `gh pr merge --admin`: the
 required contexts `LUKS E2E (dev)` / `LUKS E2E (stable)` no longer match any job name

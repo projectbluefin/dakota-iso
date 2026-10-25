@@ -63,7 +63,8 @@ gh workflow run build-iso.yml --ref main
 10. **Generate checksum** — latest variant
 11. **Plain-install E2E gates** — live boot, ENOSPC export gate, full install, installed-boot verification
 12. **Boot verification** — QEMU UEFI smoke boot on the production ISO
-13. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, and production boot smoke all succeed
+13. **Sign checksum** — `cosign sign-blob` (keyless, GitHub OIDC; the job has `id-token: write`) writes `<CHECKSUM>.sig` and `<CHECKSUM>.pem` next to the checksum; runs under the upload's exact conditions and before it, so a signing failure publishes nothing
+14. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, production boot smoke, and signing all succeed
 
 > ⚠️ **Do not add `--store` back or re-add the offline store squashfs step.**
 > The OCI image is already embedded in the live squashfs via VFS containers-storage.
@@ -112,11 +113,47 @@ new ISO  → latest
 ```
 
 Objects published per build:
-- `dakota-live-latest.iso` + `-CHECKSUM` (always overwritten)
-- `dakota-live-backup-{1,2,3}.iso` + `-CHECKSUM` (rotated; slots beyond 3 are pruned)
+- `dakota-live-latest.iso` + `-CHECKSUM` + `-CHECKSUM.sig` + `-CHECKSUM.pem` (always overwritten)
+- `dakota-live-backup-{1,2,3}.iso` + `-CHECKSUM` (rotated; slots beyond 3 are pruned; the
+  rotation moves only the ISO and checksum, so backup checksums carry no signature)
 
 All are updated only after ENOSPC gate, full install, installed-boot verification,
 and production ISO smoke boot all pass.
+
+### Verifying a downloaded ISO
+
+The checksum and the ISO are uploaded by the same job with the same credentials, so
+the checksum on its own only guards against a corrupted download — anyone who can
+write the bucket can replace both consistently (#220). The checksum is therefore
+signed with keyless cosign; the signature binds it to a GitHub Actions run of this
+repository's publish workflow, which a bucket write cannot forge.
+
+```bash
+NAME=dakota-live-latest.iso   # or utah-live-latest.iso
+for f in "$NAME" "$NAME-CHECKSUM" "$NAME-CHECKSUM.sig" "$NAME-CHECKSUM.pem"; do
+  curl -fsSLO "https://projectbluefin.dev/$f"
+done
+
+# 1. The checksum was produced by build-iso.yml / build-iso-utah.yml on main.
+cosign verify-blob "$NAME-CHECKSUM" \
+  --signature "$NAME-CHECKSUM.sig" \
+  --certificate "$NAME-CHECKSUM.pem" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp \
+    '^https://github\.com/projectbluefin/dakota-iso/\.github/workflows/build-iso(-utah)?\.yml@refs/heads/main$'
+
+# 2. The ISO matches the verified checksum.
+sha256sum -c "$NAME-CHECKSUM"
+```
+
+Both commands must succeed. Pin the identity exactly as above: a regexp that only
+anchors on the organisation would accept a signature from any projectbluefin
+workflow (the mistake `scripts/verify-image-signature.sh` fixed in #259).
+
+Only the `latest` checksum is signed. Backup slots lose the signature in rotation, and
+`promote-release.yml` rewrites the checksum for the promoted filename, so named releases
+(`dakota-live-alpha6.iso` etc.) have no `.sig`/`.pem` yet — verify those by promoting
+only from a `latest` whose signature you have checked first.
 
 ### README table auto-refresh
 

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-11",
+  "generated_at": "2026-10-25",
   "schema_version": "1.0",
   "skills": [
     {
@@ -15,8 +15,8 @@
         "r2"
       ],
       "description": "Workflow definitions, runner environment, caching, and release automation for dakota-iso.",
-      "version": "1.5",
-      "last_updated": "2026-10-05",
+      "version": "1.6",
+      "last_updated": "2026-10-25",
       "doc_type": "reference"
     },
     {
