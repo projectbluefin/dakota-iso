@@ -277,7 +277,9 @@ class TestJustfileWiring(unittest.TestCase):
             self.assertNotIn("STRICT_POST_BOOT:-0", body, header)
             self.assertNotIn("exit 0", body, header)
 
-    def test_installed_boot_reuses_live_nvram(self):
+    def test_installed_boot_can_reuse_live_nvram(self):
+        # LUKS always carries the live NVRAM over; plain only behind
+        # PLAIN_CARRY_LIVE_NVRAM=1 (see the pristine-default test below).
         for header, prefix in (
             ("luks-boot-qemu-installed target:", "dakota-qemu"),
             ("plain-boot-qemu-installed target:", "dakota-plain-qemu"),
