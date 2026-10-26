@@ -19,7 +19,9 @@ PAYLOAD_ROOT_MOUNT_DEST="/usr/lib/bootc/install/00-defaults.toml"
 # payload_build <tag> <from-image> <inject:true|false> [podman build flags...]
 #   Builds <tag> as `FROM <from-image>`, with the bootc root-mount-spec copied
 #   to PAYLOAD_ROOT_MOUNT_DEST when <inject> is true. Extra flags go straight to
-#   `podman build` (--squash-all, --label, --annotation). Never pulls.
+#   `podman build` (--squash-all, --label, --annotation). Never pulls. Always
+#   writes OCI format: the Docker format (e.g. BUILDAH_FORMAT=docker) drops
+#   --annotation, and ostree.final-diffid must survive as an annotation.
 payload_build() {
     local tag="$1" from="$2" inject="$3"
     shift 3
@@ -30,7 +32,7 @@ payload_build() {
         printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${ctx}/bootc-root-mount.toml"
         printf 'COPY bootc-root-mount.toml %s\n' "${PAYLOAD_ROOT_MOUNT_DEST}" >> "${ctx}/Containerfile"
     fi
-    podman build --pull=never "$@" -f "${ctx}/Containerfile" -t "${tag}" "${ctx}" || rc=$?
+    podman build --pull=never --format oci "$@" -f "${ctx}/Containerfile" -t "${tag}" "${ctx}" || rc=$?
     rm -rf "${ctx}"
     return "${rc}"
 }

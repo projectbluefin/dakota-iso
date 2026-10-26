@@ -9,7 +9,7 @@ This repo produces ISOs for two different OCI store layouts:
 | Variant | `composefs` | OCI store path | squash before embed? |
 |---|---|---|---|
 | `dakota` | `true` | `/var/lib/containers/storage` (VFS) | **yes** — squash to 1 layer |
-| `bluefin`, `bluefin-lts-hwe` | `false` | `/var/lib/containers/oci-store` (OCI layout) | **yes** — squash to 1 layer |
+| `bluefin`, `bluefin-lts-hwe` | `false` | `/usr/lib/containers/storage` (overlay, additionalimagestore) | **no** — keep layers so ostree commit objects survive |
 
 Payload preparation lives in one place: `payload_to_oci_archive` in `scripts/payload-oci.sh`, called by both `scripts/iso-sd-boot.sh` and `scripts/build-live-squashfs.sh`. It uses `podman build` only (no buildah): composefs payloads are built with `--squash-all`; non-composefs payloads keep their layers so ostree commit objects survive.
 
@@ -181,8 +181,9 @@ The live environment runs the nvidia image. At install time, `bootc-installer`'s
 | `dakota` (composefs) | ~5.5 GB | ~4.5 GB |
 | `bluefin` / `bluefin-lts-hwe` (non-composefs) | ~7 GB | ~6 GB |
 
-If a bluefin ISO is **~12 GB**: the non-composefs OCI embedding is not squashing.
-See "Non-composefs OCI squash" lesson below.
+If a bluefin ISO is **~12 GB**: do not squash the non-composefs payload to shrink it —
+that path keeps its layers on purpose (squashing destroys the ostree commits). Check for
+the payload being embedded twice or a stale store in the squashfs staging tree.
 If a dakota ISO is **~8 GB**: double-embedded store — see `ci.md` lessons.
 
 ### CI uses `SUPERISO_COMPRESSION=release` (2026-06)

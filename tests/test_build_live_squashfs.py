@@ -230,6 +230,12 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         for build in builds:
             self.assertIn("--pull=never", build)
             self.assertIn(
+                "--format oci",
+                build,
+                "payload build must pin --format oci; Docker format drops --annotation "
+                "(ostree.final-diffid)",
+            )
+            self.assertIn(
                 "--squash-all",
                 build,
                 f"payload build in composefs mode is missing --squash-all: {build!r}. "

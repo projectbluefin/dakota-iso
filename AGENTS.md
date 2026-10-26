@@ -238,13 +238,13 @@ The `skill-drift.yml` CI check warns when a PR changes implementation files with
 | `dakota` (composefs) | ~5.5 GB | ~4.5 GB |
 | `bluefin` / `bluefin-lts-hwe` (non-composefs) | ~7 GB | ~6 GB |
 
-- If a **bluefin/lts-hwe** ISO is **~12 GB**: the non-composefs OCI embedding is NOT
-  squashing layers before writing to `oci-store`. bluefin-nvidia has ~120 OCI layers;
-  without `--squash`, all ~120 layer blobs land in the squashfs → ~8 GB OCI store → 12 GB ISO.
-  **Fix:** the payload must be built with `podman build --squash-all` before it is
-  written to the store — see `payload_to_oci_archive` in `scripts/payload-oci.sh`,
-  used by both `scripts/iso-sd-boot.sh` and `scripts/build-live-squashfs.sh`.
-  **This has been rediscovered multiple times — never remove `--squash` from this path.**
+- If a **bluefin/lts-hwe** ISO is **~12 GB**: do **not** "fix" it by squashing the
+  non-composefs payload. That path intentionally keeps every layer —
+  `payload_to_oci_archive` in `scripts/payload-oci.sh` is called with `squash=false`
+  for non-composefs variants, because squashing destroys the ostree commit objects
+  `bootc install` needs. Look instead for the payload being embedded twice or a stale
+  store left in the squashfs staging tree. Only the composefs (dakota) path squashes
+  (`podman build --squash-all`) — **never remove `--squash-all` from that path.**
 - If a **dakota** ISO is **~8 GB**: the VFS OCI store is being double-embedded.
   The live squashfs already contains the OCI baked in as VFS containers-storage.
   Do **not** build a separate `store.squashfs.img` or pass `--store` to `build-iso.sh`.
