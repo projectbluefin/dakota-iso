@@ -442,6 +442,11 @@ regardless of composefs setting. For bluefin/lts-hwe, the installer looked for
 fisherman: fatal: bootc install: pulling image: podman pull oci:/var/lib/containers/oci-store: exit status 125
 ```
 
+> **Superseded (2026-10):** the squash rules below are historical. Non-composefs payloads
+> now keep their layers (squashing destroys the ostree commits) and buildah is no longer
+> used. See the variant table at the top of this file and "podman build replaces buildah
+> for the payload squash". The composefs branching itself still applies.
+
 **Fix:** `iso-sd-boot` now reads `live/src/<target>/composefs` and branches **before** squash:
 - `composefs=true` → squash to 1 layer → VFS import via skopeo inside installer container
 - `composefs=false` → **squash to 1 layer** → `buildah commit --squash --format oci` →
@@ -506,6 +511,10 @@ Fixed to check `var/lib/containers/oci-store/index.json` instead.
 
 ### Non-composefs OCI must squash to 1 layer before embedding (2026-06-21)
 
+> **Superseded (2026-10):** historical. Non-composefs payloads are no longer squashed —
+> they keep their layers so ostree commit objects survive — and buildah is no longer used.
+> See the variant table at the top of this file.
+
 **What failed:** bluefin and bluefin-lts-hwe ISOs built at 12 GB instead of ~6 GB.
 
 **Why:** `buildah commit --format oci` without `--squash` in the non-composefs path embeds all ~120 OCI layers as individual blobs into `var/lib/containers/oci-store` inside the squashfs. Each layer is ~60–80 MB uncompressed; 120 layers → ~8 GB OCI store inside a ~6 GB rootfs → 12 GB squashfs → 12 GB ISO.
@@ -521,6 +530,10 @@ Squashing reduces the OCI store to a single ~4 GB layer → ~6 GB final ISO.
 **NEVER remove `--squash` from this path.** The dakota (composefs) path squashes for VFS import; the bluefin (non-composefs) path squashes before OCI layout copy. Both paths squash.
 
 ### VFS additionalimagestore requires squashing to prevent storage explosion (2026-06-23)
+
+> **Superseded (2026-10):** historical. The `buildah commit --squash` fix below no longer
+> applies; non-composefs payloads keep their layers and are prepared with `podman build`
+> by `scripts/payload-oci.sh`. See the variant table at the top of this file.
 
 **What failed:** Building `stable` and `lts` ISO targets failed in CI with `no space left on device` (ENOSPC) during the VFS import step of `Build debug ISO`.
 
