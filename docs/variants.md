@@ -12,12 +12,12 @@ are commented out and they are not promotable. Scripts and `live/src/<variant>/`
 |---|---|
 | `test-luks-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
 | `test-plain-install.yml` matrix | `variant: [dakota]`; `stable` / `lts` kept as a comment |
-| `build-iso-utah.yml` | **active**, daily schedule 04:00 UTC (`0 4 * * *`) + `workflow_dispatch`; matrix builds `utah` — `bluefin` / `bluefin-lts-hwe` entries retired as comments |
+| `build-iso-utah.yml` | **active**, monthly schedule on the 8th at 04:00 UTC (`0 4 8 * *`) + `workflow_dispatch`; matrix builds `utah` — `bluefin` / `bluefin-lts-hwe` entries retired as comments |
 | `build-iso.yml` (dakota) | active |
 | Required on `main` (ruleset `main — review policy`) | 1 approving review; status check `ShellCheck` |
 
 Retired bluefin builds stay off because their matrix entries are commented out, not because
-the workflow is disabled — `build-iso-utah.yml` is enabled and scheduled for daily Utah builds.
+the workflow is disabled — `build-iso-utah.yml` is enabled and scheduled for monthly Utah builds (8th, 04:00 UTC).
 
 ### Reviving a variant
 
@@ -36,7 +36,7 @@ The `stable` and `lts` legs were red at the time of the change — `sshpass` got
 | Variant | Live env image | Payload (offline store) | Bootloader | Composefs | Filesystem | State |
 |---|---|---|---|---|---|---|
 | `dakota` | `projectbluefin/dakota-nvidia:stable` | same | systemd-boot | yes | btrfs | active |
-| `utah` | `projectbluefin/utah:testing` | same | grub2 (live ESP systemd-boot, Secure Boot off) | no | btrfs | active (daily schedule 04:00 UTC) |
+| `utah` | `projectbluefin/utah:stable` | same | grub2 (live ESP systemd-boot, Secure Boot off) | no | btrfs | active (monthly schedule, 8th 04:00 UTC) |
 | `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs | retired |
 | `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs | retired |
 

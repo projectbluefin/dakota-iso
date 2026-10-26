@@ -9,7 +9,9 @@ concurrency:
 # The Bluefin/Bluefin-LTS matrix entries below are disabled.
 on:
   schedule:
-    - cron: '0 4 * * *'
+    # Monthly, on the 8th: Utah releases :stable on Mondays at 06:00 UTC, so by
+    # 04:00 on the 8th the month's first Monday release has always happened.
+    - cron: '0 4 8 * *'
   workflow_dispatch:
     inputs:
       variant:
@@ -55,10 +57,10 @@ jobs:
           # chain lives in its own ISO pipeline, so ISOs from this path boot with
           # Secure Boot disabled.
           - variant: utah
-            payload_image: ghcr.io/projectbluefin/utah:testing
+            payload_image: ghcr.io/projectbluefin/utah:stable
             live_target: utah
             registry: projectbluefin
-            tag: testing
+            tag: stable
             iso_name: utah-live
 
     steps:

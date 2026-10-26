@@ -11,7 +11,7 @@ embedded OCI store lets the installer deploy to non-NVIDIA hardware without a ne
 Home repo: [projectbluefin/dakota-iso](https://github.com/projectbluefin/dakota-iso)
 
 **Scope: dakota and utah.** Bluefin and Bluefin LTS HWE are retired (#228).
-`build-iso-utah.yml` builds and publishes Utah live ISOs daily (04:00 UTC) and via manual dispatch.
+`build-iso-utah.yml` builds and publishes Utah live ISOs from `utah:stable` monthly (04:00 UTC on the 8th) and via manual dispatch.
 The bluefin and bluefin-lts-hwe code, docs and size invariants are retained for revival,
 not for current CI. **Do not re-add bluefin or bluefin-lts-hwe to any workflow matrix.** Revival steps: [`docs/variants.md`](docs/variants.md).
 

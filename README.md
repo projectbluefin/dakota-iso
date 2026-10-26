@@ -16,7 +16,7 @@ inside the squashfs so the target OS can be installed on any hardware without a 
 | Variant | Base image | Bootloader | Composefs | State |
 |---------|-----------|------------|-----------|-------|
 | `dakota` | `ghcr.io/projectbluefin/dakota-nvidia:stable` | systemd-boot | yes | **active** — built, tested, and published daily |
-| `utah` | `ghcr.io/projectbluefin/utah:testing` | grub2 | no | **active** — built and published daily via `build-iso-utah.yml` |
+| `utah` | `ghcr.io/projectbluefin/utah:stable` | grub2 | no | **active** — built and published monthly (8th, 04:00 UTC) via `build-iso-utah.yml` |
 | `bluefin` | `ghcr.io/projectbluefin/bluefin-nvidia:stable` | grub2 | no | retired (#228) — matrix entry disabled |
 | `bluefin-lts-hwe` | `ghcr.io/projectbluefin/bluefin-lts-hwe-nvidia:stable` | grub2 | no | retired (#228) — matrix entry disabled |
 
@@ -25,8 +25,8 @@ variants are retired (#228) from CI builds and release promotion. Their offline 
 remain intact in `live/src/` — see [`docs/variants.md`](docs/variants.md) for revival steps.
 
 The Dakota ISO embeds the NVIDIA variant as the offline store; non-NVIDIA hardware
-auto-rebases on the first `bootc upgrade` after installation. Utah uses `ghcr.io/projectbluefin/utah:testing`
-directly for both live and payload.
+auto-rebases on the first `bootc upgrade` after installation. Utah uses `ghcr.io/projectbluefin/utah:stable`
+directly for both live and payload, so an installed system tracks `:stable`.
 
 ## How it works
 
