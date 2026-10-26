@@ -54,11 +54,13 @@ After the installed system boots (and, for LUKS, is unlocked),
    `rd.luks.uuid=[luks-]<uuid>` or `rd.luks.name=<uuid>=<name>`
    (projectbluefin/common#385).
 
-`luks-boot-qemu-installed`/`plain-boot-qemu-installed` seed the installed
-VM's OVMF NVRAM from the live VM's vars file
-(`/var/tmp/dakota[-plain]-qemu-live-vars.fd`) so Boot#### entries the
-installer wrote survive the reboot; they fall back to the pristine
-`OVMF_VARS` template only if the live vars file is missing. The installed
+`luks-boot-qemu-installed` seeds the installed VM's OVMF NVRAM from the live
+VM's vars file (`/var/tmp/dakota-qemu-live-vars.fd`) so Boot#### entries the
+installer wrote survive the reboot, falling back to the pristine `OVMF_VARS`
+template only if the live vars file is missing. `plain-boot-qemu-installed`
+boots from the pristine template by default (a carried-over NVRAM left no
+valid BootOrder entry for the disk and dropped OVMF to the EFI shell); set
+`PLAIN_CARRY_LIVE_NVRAM=1` to opt back into the carry-over. The installed
 VM's SSH port is forwarded on `127.0.0.1` only.
 
 The same script backs `plain-verify-qemu` (encryption type `none`, skips
