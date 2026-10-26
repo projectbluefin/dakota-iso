@@ -200,6 +200,10 @@ class IsoSdBootHarness(unittest.TestCase):
                 done
                 exit 0
             fi
+            if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+                echo "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+                exit 0
+            fi
             if [ "$1" = "image" ] && [ "$2" = "mount" ]; then
                 echo "{mount_dir}"
                 exit 0

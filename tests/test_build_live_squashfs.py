@@ -96,6 +96,10 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
                 done
                 exit 0
             fi
+            if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+                echo "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+                exit 0
+            fi
             if [ "$1" = "image" ] && [ "$2" = "mount" ]; then
                 echo "{self.mount_dir}"
                 exit 0
@@ -253,13 +257,14 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         self.assertIn(f"--label ostree.final-diffid={diffid}", builds[1])
         self.assertIn(f"--annotation ostree.final-diffid={diffid}", builds[1])
 
-        # Both passes land in the archive under the payload's own name.
+        # Only the relabelled image is pushed (each push gzips the squashed
+        # layer), under the payload's own name.
         pushes = [c for c in calls if c.startswith("podman push ")]
-        self.assertEqual(len(pushes), 2, calls)
-        for push in pushes:
-            self.assertTrue(
-                push.endswith(":ghcr.io/projectbluefin/dakota-nvidia:stable"), push)
-            self.assertIn("oci-archive:", push)
+        self.assertEqual(len(pushes), 1, calls)
+        self.assertIn("localhost/iso-payload-work:final-", pushes[0])
+        self.assertTrue(
+            pushes[0].endswith(":ghcr.io/projectbluefin/dakota-nvidia:stable"), pushes[0])
+        self.assertIn("oci-archive:", pushes[0])
 
         self.assertFalse([c for c in calls if c.startswith("buildah")],
                          "build-live-squashfs.sh must not need buildah")

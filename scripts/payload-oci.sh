@@ -67,10 +67,10 @@ payload_to_oci_archive() {
     fi
 
     payload_build "${base_tag}" "${from}" true --squash-all
-    payload_save "${base_tag}" "${archive}" "${ref}"
 
-    diffid="$(skopeo inspect --config "oci-archive:${archive}:${ref}" 2>/dev/null | \
-        python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)"
+    # Read the squashed layer's diff_id from local storage: pushing to the
+    # archive gzips the multi-GB layer, so push only the final image once.
+    diffid="$(podman image inspect --format '{{index .RootFS.Layers 0}}' "${base_tag}" 2>/dev/null || true)"
     if [[ -n "${diffid}" ]]; then
         echo ">>> [payload] updating ostree.final-diffid to ${diffid}"
         payload_build "${final_tag}" "${base_tag}" false --squash-all \
@@ -78,6 +78,8 @@ payload_to_oci_archive() {
             --annotation "ostree.final-diffid=${diffid}"
         payload_save "${final_tag}" "${archive}" "${ref}"
         podman rmi "${final_tag}" >/dev/null 2>&1 || true
+    else
+        payload_save "${base_tag}" "${archive}" "${ref}"
     fi
     podman rmi "${base_tag}" >/dev/null 2>&1 || true
 }
