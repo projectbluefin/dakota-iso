@@ -88,7 +88,7 @@ jobs:
         if: steps.should_build.outputs.build == 'true'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y podman buildah skopeo \
+          sudo apt-get install -y podman skopeo \
             mtools xorriso squashfs-tools dosfstools isomd5sum jq
 
       - name: Log in to GHCR

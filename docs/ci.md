@@ -52,7 +52,7 @@ gh workflow run build-iso.yml --ref main
 ### Pipeline steps
 
 1. **Free disk space** — `ublue-os/remove-unwanted-software` reclaims ~119 GB at `/var/iso-build`
-2. **Install deps** — `apt-get install podman buildah skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
+2. **Install deps** — `apt-get install podman skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
 4. **Install cosign** — `sigstore/cosign-installer` (SHA-pinned)
 5. **Verify payload signature** — `scripts/verify-image-signature.sh ghcr.io/projectbluefin/dakota-nvidia:stable` checks the keyless cosign signature — a projectbluefin workflow identity, run from the repository that owns the image (`--certificate-github-workflow-repository projectbluefin/dakota` here) — and prints the digest-pinned ref; the job fails if verification fails
