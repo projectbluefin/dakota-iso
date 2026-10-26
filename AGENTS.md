@@ -241,8 +241,9 @@ The `skill-drift.yml` CI check warns when a PR changes implementation files with
 - If a **bluefin/lts-hwe** ISO is **~12 GB**: the non-composefs OCI embedding is NOT
   squashing layers before writing to `oci-store`. bluefin-nvidia has ~120 OCI layers;
   without `--squash`, all ~120 layer blobs land in the squashfs → ~8 GB OCI store → 12 GB ISO.
-  **Fix:** `buildah commit --squash --format oci` (not `--format oci` alone) in both
-  `justfile` and `scripts/build-live-squashfs.sh` non-composefs paths.
+  **Fix:** the payload must be built with `podman build --squash-all` before it is
+  written to the store — see `payload_to_oci_archive` in `scripts/payload-oci.sh`,
+  used by both `scripts/iso-sd-boot.sh` and `scripts/build-live-squashfs.sh`.
   **This has been rediscovered multiple times — never remove `--squash` from this path.**
 - If a **dakota** ISO is **~8 GB**: the VFS OCI store is being double-embedded.
   The live squashfs already contains the OCI baked in as VFS containers-storage.

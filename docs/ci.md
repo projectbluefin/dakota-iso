@@ -371,7 +371,7 @@ baked the OCI into the squashfs.  CI diverged from this path and the gap was und
 because CI only validated boot, not install.
 
 **Fix:** `scripts/build-live-squashfs.sh` now accepts `--oci-image <ref>`.  When provided it:
-1. Squashes the payload to a single layer via `buildah commit --squash`
+1. Squashes the payload to a single layer via `podman build --squash-all`
 2. Runs `skopeo copy` inside the live container (for JSON tar-split compatibility)
 3. Copies the populated VFS staging dir into the squashfs root with `cp -a` before mksquashfs
 
@@ -601,15 +601,13 @@ error: Installing to filesystem: No filesystem uuid found in target root
 squashing the OCI payload. fisherman always formats root partitions with `-L root`, so
 `LABEL=root` is a stable, reliable mount spec that bypasses UUID detection entirely.
 
-**How injection works:**
+**How injection works** (`payload_build` in `scripts/payload-oci.sh`):
+```dockerfile
+FROM ${PAYLOAD_IMAGE}
+COPY bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml
 ```
-buildah from --pull-never ${PAYLOAD_IMAGE}
-echo "root-mount-spec = 'LABEL=root'" > .bootc-root-mount.toml
-buildah copy ${CTR} .bootc-root-mount.toml /tmp/.bootc-root-mount.toml
-buildah run  ${CTR} -- sh -c 'cat /tmp/.bootc-root-mount.toml >> /usr/lib/bootc/install/00-defaults.toml'
-buildah commit --squash ...
-```
-This is done in the `iso-sd-boot` recipe in `justfile` before buildah commit.
+built with `podman build --pull=never` (plus `--squash-all` for composefs payloads).
+Both `scripts/iso-sd-boot.sh` and `scripts/build-live-squashfs.sh` use it.
 
 ---
 

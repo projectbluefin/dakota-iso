@@ -104,8 +104,8 @@ at `/var/lib/containers/storage`. The installer finds it there for offline insta
 without a network pull. No separate `store.squashfs.img` is needed.
 
 `scripts/build-live-squashfs.sh --oci-image <ref>` populates the store (used by both
-`just iso-sd-boot` and CI). It squashes the image to a single layer via `buildah commit
---squash`, then runs `skopeo copy` **inside the installer container** so tar-split
+`just iso-sd-boot` and CI). It squashes the image to a single layer via `podman build
+--squash-all` (`scripts/payload-oci.sh`), then runs `skopeo copy` **inside the installer container** so tar-split
 metadata is written in JSON format (the live ISO expects JSON; build-host
 containers-storage emits binary tar-split). The VFS staging dir is then copied into the
 squashfs root via `cp -a` (not bind-mount — see CI lessons).

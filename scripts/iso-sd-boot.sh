@@ -16,6 +16,8 @@ set -euo pipefail
 # Single host-side reader for per-variant config (see scripts/variant-config.sh).
 # shellcheck source=scripts/variant-config.sh
 source "$(dirname "${BASH_SOURCE[0]}")/variant-config.sh"
+# shellcheck source=scripts/payload-oci.sh
+source "$(dirname "${BASH_SOURCE[0]}")/payload-oci.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -104,8 +106,6 @@ df -h "${OUTPUT_DIR}"
 [[ "${WORKDIR}" != "${OUTPUT_DIR}" ]] && df -h "${WORKDIR}"
 echo "Building squashfs and boot tar from localhost/${TARGET}-installer..."
 
-printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${OUTPUT_DIR}/.bootc-root-mount.toml"
-
 COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")
 echo "=== Building offline OCI store (composefs=${COMPOSEFS_BACKEND}) for ${PAYLOAD_IMAGE} ==="
 
@@ -116,34 +116,17 @@ if [[ "${PAYLOAD_SOURCE}" != "${PAYLOAD_IMAGE}" ]]; then
     podman pull "${PAYLOAD_SOURCE}"
 fi
 
-INJECT_CTR=$(_ns "buildah from --pull-never '${PAYLOAD_SOURCE}'")
-_ns "buildah copy '${INJECT_CTR}' '${OUTPUT_DIR}/.bootc-root-mount.toml' /tmp/.bootc-root-mount.toml"
-_ns "buildah run '${INJECT_CTR}' -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'"
-
 if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
     # The payload ships verbatim to installed systems — never bake a
     # storage.conf into it (installed podman would inherit VFS storage).
     # VFS config for reading the embedded store lives in the live env
     # (configure-live.sh) and the embed step below (CONTAINERS_STORAGE_CONF).
     echo "=== Squashing ${PAYLOAD_IMAGE} to single layer (avoids VFS explosion) ==="
-    _ns "buildah commit --squash '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
-    _ns "buildah rm '${INJECT_CTR}'"
-    ANNOT_CTR=$(_ns "buildah from --pull-never 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'")
-    SQUASHED_DIFFID=$(_ns "skopeo inspect --config 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}' 2>/dev/null" | \
-        python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)
-    if [[ -n "${SQUASHED_DIFFID}" ]]; then
-        echo "Updating ostree.final-diffid to ${SQUASHED_DIFFID} (composefs mode)"
-        _ns "buildah config --label 'ostree.final-diffid=${SQUASHED_DIFFID}' '${ANNOT_CTR}'"
-        _ns "buildah config --annotation 'ostree.final-diffid=${SQUASHED_DIFFID}' '${ANNOT_CTR}'"
-    fi
-    _ns "buildah commit --squash '${ANNOT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
-    _ns "buildah rm '${ANNOT_CTR}'"
+    payload_to_oci_archive "${PAYLOAD_SOURCE}" "${PAYLOAD_OCI}" "${PAYLOAD_IMAGE}" true
 else
     # Non-composefs (bootcDirect): no squash to preserve ostree commits.
-    # Save the injected container image as an oci-archive for overlay import.
     echo "=== Committing ${PAYLOAD_IMAGE} WITHOUT squash to preserve ostree commits ==="
-    _ns "buildah commit '${INJECT_CTR}' 'oci-archive:${PAYLOAD_OCI}:${PAYLOAD_IMAGE}'"
-    _ns "buildah rm '${INJECT_CTR}'"
+    payload_to_oci_archive "${PAYLOAD_SOURCE}" "${PAYLOAD_OCI}" "${PAYLOAD_IMAGE}" false
 fi
 
 podman rmi "${PAYLOAD_SOURCE}" || true

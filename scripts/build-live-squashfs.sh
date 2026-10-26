@@ -27,7 +27,7 @@
 #    the squashfs — the offline install store that fisherman reads at boot.
 #
 # The OCI image (positional mode + --oci-image) must already be present in
-# the local podman/buildah store.
+# the local podman store.
 # skopeo runs inside the live container so the VFS tar-split metadata is
 # written in the JSON format that the live ISO expects.
 #
@@ -37,6 +37,8 @@ set -euo pipefail
 # Single host-side reader for per-variant config (see scripts/variant-config.sh).
 # shellcheck source=scripts/variant-config.sh
 source "$(dirname "${BASH_SOURCE[0]}")/variant-config.sh"
+# shellcheck source=scripts/payload-oci.sh
+source "$(dirname "${BASH_SOURCE[0]}")/payload-oci.sh"
 
 OCI_IMAGE=""
 TARGET=""
@@ -180,28 +182,12 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         mkdir -p "${CS_STAGING}"
 
         # Chunkified images have many layers; squash to 1 to keep VFS store compact.
-        echo ">>> [live-squashfs] squashing ${OCI_IMAGE} to single layer ..."
-        SQUASH_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
-        printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
-        buildah copy "${SQUASH_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
-        buildah run  "${SQUASH_CTR}" -- sh -c 'cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
         # The payload ships verbatim to installed systems — never bake a
         # storage.conf into it (installed podman would inherit VFS storage).
         # VFS config for reading the embedded store lives in the live env
         # (configure-live.sh) and the import step below (CONTAINERS_STORAGE_CONF).
-        buildah commit --squash "${SQUASH_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
-        buildah rm "${SQUASH_CTR}"
-
-        SQUASHED_DIFFID="$(skopeo inspect --config "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}" 2>/dev/null | \
-            python3 -c 'import json,sys; c=json.load(sys.stdin); print(c["rootfs"]["diff_ids"][0])' 2>/dev/null || true)"
-        if [[ -n "${SQUASHED_DIFFID}" ]]; then
-            echo ">>> [live-squashfs] updating ostree.final-diffid to ${SQUASHED_DIFFID}"
-            ANNOT_CTR="$(buildah from --pull-never "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}")"
-            buildah config --label "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-            buildah config --annotation "ostree.final-diffid=${SQUASHED_DIFFID}" "${ANNOT_CTR}"
-            buildah commit --squash "${ANNOT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
-            buildah rm "${ANNOT_CTR}"
-        fi
+        echo ">>> [live-squashfs] squashing ${OCI_IMAGE} to single layer ..."
+        payload_to_oci_archive "${OCI_IMAGE}" "${OCI_ARCHIVE}" "${OCI_IMAGE}" true
 
         printf '[storage]\ndriver = "vfs"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
             > "${STORAGE_CONF}"
@@ -231,19 +217,13 @@ if [[ -n "${OCI_IMAGE}" ]]; then
         # containers-storage at /usr/lib/containers/storage (additionalimagestore).
         echo ">>> [live-squashfs] non-composefs (bootcDirect) — embedding OCI image ${OCI_IMAGE} into overlay store ..."
 
-        printf '[install]\nroot-mount-spec = "LABEL=root"\n' > "${WORK}/bootc-root-mount.toml"
-        INJECT_CTR="$(buildah from --pull-never "${OCI_IMAGE}")"
-        buildah copy "${INJECT_CTR}" "${WORK}/bootc-root-mount.toml" /tmp/.bootc-root-mount.toml
-        buildah run  "${INJECT_CTR}" -- sh -c 'mkdir -p /usr/lib/bootc/install && cp /tmp/.bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml && rm /tmp/.bootc-root-mount.toml'
-
         OCI_ARCHIVE="${WORK}/payload.oci.tar"
         CS_STAGING="${WORK}/overlay-storage"
         STORAGE_CONF="${WORK}/st.conf"
         mkdir -p "${CS_STAGING}"
 
         echo ">>> [live-squashfs] committing payload without squash to preserve ostree commits ..."
-        buildah commit "${INJECT_CTR}" "oci-archive:${OCI_ARCHIVE}:${OCI_IMAGE}"
-        buildah rm "${INJECT_CTR}"
+        payload_to_oci_archive "${OCI_IMAGE}" "${OCI_ARCHIVE}" "${OCI_IMAGE}" false
 
         printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
             > "${STORAGE_CONF}"

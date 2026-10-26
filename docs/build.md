@@ -11,7 +11,7 @@ This repo produces ISOs for two different OCI store layouts:
 | `dakota` | `true` | `/var/lib/containers/storage` (VFS) | **yes** — squash to 1 layer |
 | `bluefin`, `bluefin-lts-hwe` | `false` | `/var/lib/containers/oci-store` (OCI layout) | **yes** — squash to 1 layer |
 
-**Both paths squash.** `buildah commit --squash --format oci` for non-composefs; `buildah commit --squash` (VFS) for composefs. Never use `--format oci` without `--squash`.
+Payload preparation lives in one place: `payload_to_oci_archive` in `scripts/payload-oci.sh`, called by both `scripts/iso-sd-boot.sh` and `scripts/build-live-squashfs.sh`. It uses `podman build` only (no buildah): composefs payloads are built with `--squash-all`; non-composefs payloads keep their layers so ostree commit objects survive.
 
 Any change to `justfile` or `scripts/build-live-squashfs.sh` must be tested on **both** a composefs variant (`dakota`) and a non-composefs variant (`bluefin`). The code paths diverge and bugs in one are invisible when testing only the other.
 
@@ -115,9 +115,9 @@ standard CI runner or local disk.
 to get a single merged overlay view and runs `mksquashfs` directly on that mount.
 No per-layer VFS expansion — peak disk usage stays ~6 GB for the live squashfs.
 
-**Local builds** (via `just iso-sd-boot`) use `buildah commit --squash` to squash
-the image to one layer before VFS import. The squash uses `buildah from --pull-never`
-+ `buildah commit --squash` — NOT `podman create --entrypoint ... && podman commit`
+**Local builds** (via `just iso-sd-boot`) squash the payload to one layer before VFS
+import with `podman build --pull=never --squash-all` from a FROM-only Containerfile
+(`scripts/payload-oci.sh`) — NOT `podman create --entrypoint ... && podman commit`
 (the latter corrupts the Entrypoint config, breaking `bootc install`).
 
 ## Source layout: `live/src/`
@@ -209,8 +209,38 @@ or corrupt ISO that fails to boot. Always use `/var` or an explicit `output_dir`
 
 `podman create --entrypoint /bin/sh && podman commit` modifies the recorded Entrypoint
 in the image config. Dakota/bootc images have no Entrypoint by design; a fake one causes
-`bootc install` to fail with "cannot execute binary file". Always use
-`buildah commit --squash` to squash layers cleanly without touching config.
+`bootc install` to fail with "cannot execute binary file". At the time the fix was
+`buildah commit --squash`, which squashes layers without touching config. Superseded
+by `podman build` (next lesson).
+
+### podman build replaces buildah for the payload squash (2026-10)
+
+buildah cannot be installed on a bootc image-mode host (no Homebrew formula, no
+`rpm-ostree install`), so local ISO builds on Bluefin needed a hand-rolled shim. The
+payload is now prepared by `scripts/payload-oci.sh` with podman alone:
+
+```dockerfile
+FROM <payload>
+COPY bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml
+```
+
+built with `podman build --pull=never [--squash-all]` and written out with
+`podman push <tag> oci-archive:<file>:<payload-ref>`.
+
+**Why this is safe where `podman create && podman commit` is not:** a build *inherits*
+the base image config (Entrypoint, Cmd, Env, Labels) from `FROM`; it never runs a
+container with an overridden entrypoint, so nothing rewrites the config. COPY writes the
+file straight to its destination, so no `RUN` step is needed either.
+`tests/test_live_build_invariants.py` rejects `buildah`, `podman create` and
+`podman commit` in the payload scripts. To check a built payload by hand:
+
+```bash
+skopeo inspect --config oci-archive:<payload.oci.tar>:<ref> | jq '.rootfs.diff_ids | length, .config.Entrypoint'
+skopeo inspect --raw oci-archive:<payload.oci.tar>:<ref> | jq '.annotations["ostree.final-diffid"]'
+```
+
+Expect `1` diff_id and the same Entrypoint as the source image (`skopeo inspect --config
+docker://<payload>`).
 
 ### dakota/src/install-flatpaks.sh was dead code (removed 2026-09)
 
@@ -255,13 +285,14 @@ The `iso-sd-boot` recipe in the justfile injects `root-mount-spec = 'LABEL=root'
 building the squashfs. This is safe because fisherman always formats with `-L root`.
 
 If you see `No filesystem uuid found in target root` — check that:
-1. The `.bootc-root-mount.toml` was created in `output/`
-2. The `buildah copy` + `buildah run` steps ran (look for `Squashing` line in build log)
+1. The payload build ran (look for the `Squashing` line and a `COPY bootc-root-mount.toml`
+   step in the build log)
+2. `/usr/lib/bootc/install/00-defaults.toml` in the payload contains `root-mount-spec`
 3. The injected config has no duplicate `[install]` section headers
 
 ### ostree.final-diffid: composefs vs ostree-native images (2026-06)
 
-`buildah commit --squash` produces a **regular filesystem tar** (the merged OS files), not
+Squashing the payload (`podman build --squash-all`) produces a **regular filesystem tar** (the merged OS files), not
 an ostree commit blob.
 
 - **Composefs images** (Dakota): `ostree.final-diffid` must be updated to point to the

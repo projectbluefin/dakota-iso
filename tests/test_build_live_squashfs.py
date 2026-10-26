@@ -12,11 +12,11 @@ from a container image. It operates in two modes:
 
 Critical invariants:
 - When --oci-image is provided in composefs mode (composeFsBackend=true), the payload
-  must be squashed to a single layer with `buildah commit --squash`. Omitting --squash
+  must be squashed to a single layer with `podman build --squash-all`. Omitting the squash
   causes the ~120 layers of chunkified images to explode the VFS storage directory,
   ballooning ISO size from ~5 GB to ~12 GB (a recurring regression documented in AGENTS.md).
 - When --oci-image is provided in non-composefs mode (composeFsBackend=false), the payload
-  is committed without --squash to preserve ostree commit objects, and imported into
+  is built without squashing to preserve ostree commit objects, and imported into
   overlay containers-storage.
 - Flag and argument parsing validation: missing positional arguments or missing required
   flags (--output-dir in target mode) must fail early.
@@ -55,8 +55,9 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
         self.script_under_test = self.sandbox / "scripts" / "build-live-squashfs.sh"
         shutil.copy2(SCRIPT, self.script_under_test)
         self.script_under_test.chmod(0o755)
-        shutil.copy2(REPO / "scripts" / "variant-config.sh", self.sandbox / "scripts" / "variant-config.sh")
-        (self.sandbox / "scripts" / "variant-config.sh").chmod(0o755)
+        for helper in ("variant-config.sh", "payload-oci.sh"):
+            shutil.copy2(REPO / "scripts" / helper, self.sandbox / "scripts" / helper)
+            (self.sandbox / "scripts" / helper).chmod(0o755)
 
         # Stub the signature verifier: record the ref and echo a digest-pinned ref,
         # the contract build-live-squashfs.sh relies on in --target mode.
@@ -86,6 +87,13 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
         self._stub("podman", f"""
             echo "podman $*" >> "$STUB_CALLS"
             if [ "$1" = "build" ]; then
+                _prev=""
+                for _arg in "$@"; do
+                    if [ "$_prev" = "-f" ] && [ -f "$_arg" ]; then
+                        sed 's|^|containerfile |' "$_arg" >> "$STUB_CALLS"
+                    fi
+                    _prev="$_arg"
+                done
                 exit 0
             fi
             if [ "$1" = "image" ] && [ "$2" = "mount" ]; then
@@ -188,6 +196,11 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
             cwd=self.sandbox,
         )
 
+    def payload_builds(self):
+        """`podman build` calls that prepare the payload (not the live container)."""
+        return [c for c in self.recorded_calls()
+                if c.startswith("podman build") and "localhost/iso-payload-work:" in c]
+
     def recorded_calls(self):
         if not self.calls_log.exists():
             return []
@@ -199,7 +212,7 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
     """Execution tests verifying composefs --squash behavior and argument handling."""
 
     def test_composefs_mode_squashes_payload_commit(self):
-        """When --oci-image is given and composeFsBackend is true, buildah commit MUST use --squash."""
+        """When --oci-image is given and composeFsBackend is true, every payload build squashes."""
         out_sfs = self.sandbox / "output" / "dakota.sfs"
         out_tar = self.sandbox / "output" / "dakota.tar"
         res = self.run_script(
@@ -212,23 +225,41 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
 
         calls = self.recorded_calls()
-        buildah_commits = [c for c in calls if c.startswith("buildah commit")]
-        self.assertTrue(len(buildah_commits) >= 1, "buildah commit was not called")
-
-        for commit_call in buildah_commits:
+        builds = self.payload_builds()
+        self.assertEqual(len(builds), 2, f"expected inject+relabel payload builds: {calls!r}")
+        for build in builds:
+            self.assertIn("--pull=never", build)
             self.assertIn(
-                "--squash",
-                commit_call,
-                f"buildah commit in composefs mode is missing --squash: {commit_call!r}. "
-                "Omitting --squash inflates ISO sizes from ~5 GB to ~12 GB.",
+                "--squash-all",
+                build,
+                f"payload build in composefs mode is missing --squash-all: {build!r}. "
+                "Omitting the squash inflates ISO sizes from ~5 GB to ~12 GB.",
             )
 
-        # Check that ostree.final-diffid annotation is set
-        annot_calls = [c for c in calls if "ostree.final-diffid" in c]
-        self.assertTrue(len(annot_calls) >= 1, "ostree.final-diffid annotation not updated")
+        # The payload is built FROM the source image with only the bootc install
+        # config copied in, then relabelled with the squashed layer's diff_id.
+        self.assertIn("containerfile FROM ghcr.io/projectbluefin/dakota-nvidia:stable", calls)
+        self.assertIn(
+            "containerfile COPY bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml",
+            calls,
+        )
+        diffid = "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+        self.assertIn(f"--label ostree.final-diffid={diffid}", builds[1])
+        self.assertIn(f"--annotation ostree.final-diffid={diffid}", builds[1])
+
+        # Both passes land in the archive under the payload's own name.
+        pushes = [c for c in calls if c.startswith("podman push ")]
+        self.assertEqual(len(pushes), 2, calls)
+        for push in pushes:
+            self.assertTrue(
+                push.endswith(":ghcr.io/projectbluefin/dakota-nvidia:stable"), push)
+            self.assertIn("oci-archive:", push)
+
+        self.assertFalse([c for c in calls if c.startswith("buildah")],
+                         "build-live-squashfs.sh must not need buildah")
 
     def test_non_composefs_mode_commits_without_squash(self):
-        """When --oci-image is given and composeFsBackend is false, buildah commit must NOT squash."""
+        """When --oci-image is given and composeFsBackend is false, the payload is not squashed."""
         out_sfs = self.sandbox / "output" / "bluefin.sfs"
         out_tar = self.sandbox / "output" / "bluefin.tar"
         res = self.run_script(
@@ -241,15 +272,16 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
 
         calls = self.recorded_calls()
-        buildah_commits = [c for c in calls if c.startswith("buildah commit")]
-        self.assertTrue(len(buildah_commits) >= 1, "buildah commit was not called")
-
-        for commit_call in buildah_commits:
-            self.assertNotIn(
-                "--squash",
-                commit_call,
-                f"buildah commit in non-composefs mode must not use --squash: {commit_call!r}",
-            )
+        builds = self.payload_builds()
+        self.assertEqual(len(builds), 1, f"expected one payload build: {calls!r}")
+        self.assertNotIn("--squash", builds[0],
+                         f"payload build in non-composefs mode must not squash: {builds[0]!r}")
+        self.assertIn(
+            "containerfile COPY bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml",
+            calls,
+        )
+        self.assertFalse([c for c in calls if c.startswith("buildah")],
+                         "build-live-squashfs.sh must not need buildah")
 
     def test_positional_probe_fails_closed_on_error(self):
         """A probe that errors (podman 125, grep 2) must abort, not fall back to non-composefs."""
@@ -267,7 +299,8 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
                 self.assertIn("could not read composeFsBackend", res.stderr)
                 self.assertNotIn("composeFsBackend=false", res.stdout)
                 calls = self.recorded_calls()
-                self.assertFalse([c for c in calls if c.startswith(("buildah", "mksquashfs"))], calls)
+                self.assertFalse(self.payload_builds(), calls)
+                self.assertFalse([c for c in calls if c.startswith("mksquashfs")], calls)
 
     def test_missing_positional_arguments_fails(self):
         """Positional mode requires image, output squashfs, and output boot tar."""
@@ -312,14 +345,13 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
         self.assertIn("composeFsBackend=false", res.stdout)
 
-        calls = self.recorded_calls()
-        buildah_commits = [c for c in calls if c.startswith("buildah commit")]
-        self.assertTrue(len(buildah_commits) >= 1, "buildah commit was not called")
-        for commit_call in buildah_commits:
+        builds = self.payload_builds()
+        self.assertTrue(builds, "payload was not built")
+        for build in builds:
             self.assertNotIn(
                 "--squash",
-                commit_call,
-                f"composefs=false variant must not squash the payload: {commit_call!r}",
+                build,
+                f"composefs=false variant must not squash the payload: {build!r}",
             )
 
     def test_target_mode_composefs_true_squashes_payload(self):
@@ -329,12 +361,11 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
         self.assertIn("composeFsBackend=true", res.stdout)
 
-        calls = self.recorded_calls()
-        buildah_commits = [c for c in calls if c.startswith("buildah commit")]
-        self.assertTrue(len(buildah_commits) >= 1, "buildah commit was not called")
+        builds = self.payload_builds()
+        self.assertTrue(builds, "payload was not built")
         self.assertTrue(
-            any("--squash" in c for c in buildah_commits),
-            f"composefs=true variant must squash the payload: {buildah_commits!r}",
+            all("--squash-all" in c for c in builds),
+            f"composefs=true variant must squash the payload: {builds!r}",
         )
 
     def test_target_mode_composefs_defaults_to_true(self):
