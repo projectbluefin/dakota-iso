@@ -47,11 +47,6 @@ Runs on the host (not inside a container). Assembles the final ISO from the expo
 of a build container and allow the justfile to control output paths directly.
 xorriso available via brew at `/home/linuxbrew/.linuxbrew/bin/xorriso`.
 
-**Multi-arch support:** Pass `--arch <arch>:<boot-tar>:<squashfs>` (repeatable) to produce
-a single fat-ESP ISO with per-arch kernels, initramfs images, squashfs rootfs images, and both
-`BOOTX64.EFI` + `BOOTAA64.EFI`. Single-arch positional-arg invocation is unchanged.
-See `docs/multi-arch.md` for design rationale and size estimates.
-
 ## ISO layout
 
 ```
@@ -170,7 +165,7 @@ Unit tests live in `tests/` and run via `pytest tests/ -v` (gated on every PR by
 | File | Tests | Coverage |
 |---|---|---|
 | `tests/test_luks_unlock.py` | 67 | `luks-unlock.py`: virsh/QEMU screenshot, serial parsing, passphrase injection, unlock/boot verdicts |
-| `tests/test_multi_arch_iso.py` | 4 | `build-iso.sh`: `--arch` flag arg parsing; single-arch + multi-arch ISO integration (skipped if tools absent) |
+| `tests/test_build_iso_assembly.py` | 2 | `live/src/build-iso.sh`: real ISO assembly from a mock boot tar + squashfs; unknown flags rejected (skipped if tools absent) |
 | `tests/test_iso_sd_boot.py` | 8 | `iso-sd-boot.sh`: arg/env option plumbing into `just` container invocation, composefs true/false modes, OCI payload embed path + storage driver, compression tiers |
 
 Run locally:

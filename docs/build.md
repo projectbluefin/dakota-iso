@@ -126,7 +126,7 @@ import with `podman build --pull=never --squash-all` from a FROM-only Containerf
 
 | Path | Used by | Notes |
 |---|---|---|
-| `live/src/` | CI (`build-iso.yml`), `live/Containerfile` | Canonical for CI and multi-arch builds |
+| `live/src/` | CI (`build-iso.yml`), `live/Containerfile` | Canonical for CI builds |
 
 The live container (`live/Containerfile`) is used for **both** local and CI builds.
 `live/src/flatpaks` is the definitive list of bundled Flatpaks.

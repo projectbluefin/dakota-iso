@@ -296,7 +296,7 @@ browse [`tests/`](../tests/) — most modules open with a docstring saying what 
 `pytest tests/ --collect-only -q`.
 
 Some tests skip themselves when optional tooling is missing. For example,
-`tests/test_multi_arch_iso.py` needs `xorriso`/`mtools`; CI installs them so the tests
+`tests/test_build_iso_assembly.py` needs `xorriso`/`mtools`; CI installs them so the tests
 run, and the skip message names the apt packages to install locally.
 
 Run locally with:
@@ -655,13 +655,14 @@ fully installed.
 **Symptom:** Black screen on boot on all NVIDIA hardware. Live ISO appears to hang
 after BIOS handoff with no display output.
 
-**Root cause:** `nvidia-drm.modeset=1` was never set in any of the four boot entry
+**Root cause:** `nvidia-drm.modeset=1` was never set in any of the boot entry
 locations in `live/src/build-iso.sh`. Without KMS
 enabled, the NVIDIA proprietary driver cannot take over the framebuffer from the
 BIOS, leaving the screen dark even though the system is running fine.
 
-**Fix:** Added `nvidia-drm.modeset=1` to all 4 boot cmdline entries in both files
-(BLS entries, loopback GRUB entries, single-arch and multi-arch paths).
+**Fix:** Added `nvidia-drm.modeset=1` to every boot cmdline entry
+(BLS entries and loopback GRUB entries; at the time there were four, two of them
+in the since-removed multi-arch path).
 
 **Regression test:** `TestBootCmdline::test_live_build_iso_has_nvidia_drm_modeset`
 and `test_dakota_build_iso_has_nvidia_drm_modeset` in `tests/test_live_build_invariants.py`

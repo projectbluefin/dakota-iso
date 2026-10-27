@@ -1,37 +1,23 @@
 #!/usr/bin/bash
-# build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>
-# build-iso.sh --arch <arch>:<boot-tar>:<squashfs> [...] <output-iso>
+# build-iso.sh [--title <title>] <boot-files-tar> <squashfs-img> <output-iso>
 #
 # Creates a UEFI-bootable systemd-boot live ISO from pre-built components.
 #
-# Single-arch mode (backwards compatible):
-#   build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>
-#
-# Multi-arch mode:
-#   build-iso.sh --arch x86_64:<boot-tar>:<squashfs> \
-#                --arch aarch64:<boot-tar>:<squashfs> \
-#                <output-iso>
-#
-# When multiple --arch flags are provided, the ISO includes per-arch kernels,
-# initramfs images, squashfs rootfs images, and both EFI binaries in a single
-# "fat ESP" so UEFI firmware on either architecture finds its boot binary.
-#
 # Options:
-#   --arch <spec>     — arch:boot-tar:squashfs triplet (repeatable)
+#   --title <title>   — systemd-boot / loopback menu title (default: "Dakota Live")
 #
 # Boot architecture (no GRUB2, no shim):
 #   El Torito EFI entry → EFI/efi.img (FAT ESP image containing):
 #     EFI/BOOT/BOOTX64.EFI or BOOTAA64.EFI  systemd-boot EFI binary (arch-detected)
 #     loader/loader.conf        systemd-boot configuration
-#     loader/entries/*.conf     boot entries (one per arch in multi-arch mode)
-#     images/pxeboot/           kernel/initramfs (per-arch subdirs in multi-arch mode)
+#     loader/entries/dakota-live.conf  boot entry
+#     images/pxeboot/           kernel/initramfs
 #   ISO9660 root:
 #     EFI/BOOT/BOOTX64.EFI      EFI fallback path (same binary) for Proxmox OVMF / Ventoy
 #     EFI/efi.img               (also referenced by El Torito)
 #     images/pxeboot/*          kernel/initramfs copies for loopback ISO boot tools
 #     boot/grub/loopback.cfg    metadata for Ventoy/GRUB-style loopback boot
-#     LiveOS/squashfs.img       squashfs of the full Dakota live rootfs (single-arch)
-#     LiveOS/squashfs-<arch>.img  per-arch squashfs (multi-arch)
+#     LiveOS/squashfs.img       squashfs of the full Dakota live rootfs
 #
 # Live boot flow:
 #   UEFI firmware → El Torito → FAT ESP → systemd-boot → kernel+initramfs
@@ -41,30 +27,20 @@
 
 set -euo pipefail
 
-ARCH_SPECS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --arch)  ARCH_SPECS+=("${2:?--arch requires arch:boot-tar:squashfs}"); shift 2 ;;
         --title) LIVE_TITLE="${2:?--title requires a string}"; shift 2 ;;
+        --*)     echo "ERROR: unknown option: $1" >&2; exit 2 ;;
         *)       break ;;
     esac
 done
 
 LIVE_TITLE="${LIVE_TITLE:-Dakota Live}"
 LABEL="DAKOTA_LIVE"
-MULTI_ARCH=false
 
-if [[ ${#ARCH_SPECS[@]} -gt 0 ]]; then
-    # Multi-arch mode: remaining arg is output ISO
-    MULTI_ARCH=true
-    OUTPUT_ISO="${1:?Usage: build-iso.sh --arch <arch>:<boot-tar>:<squashfs> [...] <output-iso>}"
-    echo ">>> Multi-arch mode: ${#ARCH_SPECS[@]} architecture(s)"
-else
-    # Single-arch mode (backwards compatible)
-    BOOT_TAR="${1:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>}"
-    SQUASHFS_SRC="${2:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>}"
-    OUTPUT_ISO="${3:?Usage: build-iso.sh <boot-files-tar> <squashfs-img> <output-iso>}"
-fi
+BOOT_TAR="${1:?Usage: build-iso.sh [--title <title>] <boot-files-tar> <squashfs-img> <output-iso>}"
+SQUASHFS_SRC="${2:?Usage: build-iso.sh [--title <title>] <boot-files-tar> <squashfs-img> <output-iso>}"
+OUTPUT_ISO="${3:?Usage: build-iso.sh [--title <title>] <boot-files-tar> <squashfs-img> <output-iso>}"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/iso-build.XXXXXX")
 # shellcheck disable=SC2064  # WORK is set above; expanding now is intentional
@@ -79,232 +55,93 @@ mkdir -p \
     "${ESP_STAGING}/loader/entries" \
     "${ESP_STAGING}/images/pxeboot"
 
-# Map of arch → serial console device for kernel cmdline
-declare -A SERIAL_CONSOLE
-SERIAL_CONSOLE[x86_64]="ttyS0"
-SERIAL_CONSOLE[aarch64]="ttyAMA0"
+BOOT_DIR="${WORK}/boot-files"
+mkdir -p "${BOOT_DIR}"
+echo ">>> Extracting boot files..."
+tar -xf "${BOOT_TAR}" -C "${BOOT_DIR}" --no-same-owner
 
-# EFI binary filename per arch (UEFI spec well-known paths)
-declare -A EFI_BINARY_NAME
-EFI_BINARY_NAME[x86_64]="BOOTX64.EFI"
-EFI_BINARY_NAME[aarch64]="BOOTAA64.EFI"
+# shellcheck disable=SC2012  # kernel version dirs have no special chars; ls|sort -V is correct
+kernel=$(ls "${BOOT_DIR}/usr/lib/modules" | sort -V | tail -1)
+echo ">>> Kernel: ${kernel}"
 
-# systemd-boot source binary name per arch
-declare -A SYSTEMD_BOOT_SRC
-SYSTEMD_BOOT_SRC[x86_64]="systemd-bootx64.efi"
-SYSTEMD_BOOT_SRC[aarch64]="systemd-bootaa64.efi"
+VMLINUZ="${BOOT_DIR}/usr/lib/modules/${kernel}/vmlinuz"
+INITRD="${BOOT_DIR}/usr/lib/modules/${kernel}/initramfs.img"
 
-# ── Helper: process one architecture's boot files ───────────────────────────
-# Sets: VMLINUZ, INITRD, BOOT_EFI_SRC, BOOT_EFI_DEST for the given arch
-process_arch_boot_files() {
-    local arch="$1"
-    local boot_tar="$2"
-    local boot_dir="${WORK}/boot-files-${arch}"
-
-    mkdir -p "${boot_dir}"
-    echo ">>> [${arch}] Extracting boot files..."
-    tar -xf "${boot_tar}" -C "${boot_dir}" --no-same-owner
-
-    local kernel
-    # shellcheck disable=SC2012  # kernel version dirs have no special chars; ls|sort -V is correct
-    kernel=$(ls "${boot_dir}/usr/lib/modules" | sort -V | tail -1)
-    echo ">>> [${arch}] Kernel: ${kernel}"
-
-    VMLINUZ="${boot_dir}/usr/lib/modules/${kernel}/vmlinuz"
-    INITRD="${boot_dir}/usr/lib/modules/${kernel}/initramfs.img"
-
-    # Detect EFI binary
-    local efi_src_name="${SYSTEMD_BOOT_SRC[${arch}]}"
-    local efi_dest_name="${EFI_BINARY_NAME[${arch}]}"
-    BOOT_EFI_SRC="${boot_dir}/usr/lib/systemd/boot/efi/${efi_src_name}"
-    BOOT_EFI_DEST="EFI/BOOT/${efi_dest_name}"
-
-    if [[ ! -f "${BOOT_EFI_SRC}" ]]; then
-        # Fallback: try all candidates (handles cross-arch boot tar naming)
-        BOOT_EFI_SRC=""
-        for _candidate in \
-            "systemd-bootaa64.efi:EFI/BOOT/BOOTAA64.EFI" \
-            "systemd-bootx64.efi:EFI/BOOT/BOOTX64.EFI"; do
-            local _src="${boot_dir}/usr/lib/systemd/boot/efi/${_candidate%%:*}"
-            local _dest="${_candidate##*:}"
-            if [[ -f "${_src}" ]]; then
-                BOOT_EFI_SRC="${_src}"
-                BOOT_EFI_DEST="${_dest}"
-                break
-            fi
-        done
+BOOT_EFI_SRC=""
+BOOT_EFI_DEST=""
+for _candidate in \
+    "systemd-bootaa64.efi:EFI/BOOT/BOOTAA64.EFI" \
+    "systemd-bootx64.efi:EFI/BOOT/BOOTX64.EFI"; do
+    _src="${BOOT_DIR}/usr/lib/systemd/boot/efi/${_candidate%%:*}"
+    _dest="${_candidate##*:}"
+    if [[ -f "${_src}" ]]; then
+        BOOT_EFI_SRC="${_src}"
+        BOOT_EFI_DEST="${_dest}"
+        break
     fi
+done
+[[ -n "${BOOT_EFI_SRC}" ]] || { echo "ERROR: no systemd-boot EFI binary found in boot-files tar"; exit 1; }
 
-    [[ -n "${BOOT_EFI_SRC}" ]] || { echo "ERROR: [${arch}] no systemd-boot EFI binary found"; exit 1; }
-    for f in "${VMLINUZ}" "${INITRD}" "${BOOT_EFI_SRC}"; do
-        [[ -f "${f}" ]] || { echo "ERROR: [${arch}] missing ${f}"; exit 1; }
-    done
+for f in "${VMLINUZ}" "${INITRD}" "${BOOT_EFI_SRC}"; do
+    [[ -f "${f}" ]] || { echo "ERROR: missing ${f}"; exit 1; }
+done
+echo ">>> Kernel:   $(du -sh "${VMLINUZ}"  | cut -f1)"
+echo ">>> Initramfs: $(du -sh "${INITRD}"   | cut -f1)"
+echo ">>> EFI:      ${BOOT_EFI_SRC} → ${BOOT_EFI_DEST}"
 
-    echo ">>> [${arch}] Kernel:    $(du -sh "${VMLINUZ}" | cut -f1)"
-    echo ">>> [${arch}] Initramfs: $(du -sh "${INITRD}" | cut -f1)"
-    echo ">>> [${arch}] EFI:       ${BOOT_EFI_SRC} → ${BOOT_EFI_DEST}"
-}
+cp "${BOOT_EFI_SRC}" "${ESP_STAGING}/${BOOT_EFI_DEST}"
+cp "${VMLINUZ}" "${ESP_STAGING}/images/pxeboot/vmlinuz"
+cp "${INITRD}"  "${ESP_STAGING}/images/pxeboot/initrd.img"
 
-# Track total ESP size across architectures
-ESP_TOTAL_MB=36  # base headroom for loader config and FAT metadata
-
-if [[ "${MULTI_ARCH}" == "true" ]]; then
-    # ── Multi-arch mode ─────────────────────────────────────────────────────
-    FIRST_ARCH=""
-    for spec in "${ARCH_SPECS[@]}"; do
-        IFS=':' read -r arch boot_tar squashfs_src <<< "${spec}"
-        [[ -n "${arch}" && -n "${boot_tar}" && -n "${squashfs_src}" ]] || \
-            { echo "ERROR: --arch requires arch:boot-tar:squashfs (got: ${spec})"; exit 1; }
-
-        [[ -z "${FIRST_ARCH}" ]] && FIRST_ARCH="${arch}"
-
-        process_arch_boot_files "${arch}" "${boot_tar}"
-
-        # Per-arch kernel/initrd in ESP
-        mkdir -p "${ESP_STAGING}/images/pxeboot/${arch}"
-        cp "${VMLINUZ}" "${ESP_STAGING}/images/pxeboot/${arch}/vmlinuz"
-        cp "${INITRD}"  "${ESP_STAGING}/images/pxeboot/${arch}/initrd.img"
-
-        # EFI binary — both can coexist in EFI/BOOT/
-        cp "${BOOT_EFI_SRC}" "${ESP_STAGING}/${BOOT_EFI_DEST}"
-
-        # Per-arch BLS entry with rd.live.squashimg pointing to the correct squashfs
-        local_console="${SERIAL_CONSOLE[${arch}]:-ttyS0}"
-        cat > "${ESP_STAGING}/loader/entries/dakota-live-${arch}.conf" << EOF
-title   ${LIVE_TITLE} (${arch})
-linux   /images/pxeboot/${arch}/vmlinuz
-initrd  /images/pxeboot/${arch}/initrd.img
-options root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 rd.live.squashimg=squashfs-${arch}.img enforcing=0 nvidia-drm.modeset=1 console=${local_console},115200n8
-EOF
-
-        # Per-arch squashfs
-        echo ">>> [${arch}] Copying squashfs..."
-        cp "${squashfs_src}" "${ISO_ROOT}/LiveOS/squashfs-${arch}.img"
-        echo ">>> [${arch}] Squashfs: $(du -sh "${ISO_ROOT}/LiveOS/squashfs-${arch}.img" | cut -f1)"
-
-        # ISO-root fallback boot files (per-arch subdirs)
-        mkdir -p "${ISO_ROOT}/EFI/BOOT" "${ISO_ROOT}/images/pxeboot/${arch}"
-        cp "${BOOT_EFI_SRC}" "${ISO_ROOT}/${BOOT_EFI_DEST}"
-        cp "${VMLINUZ}" "${ISO_ROOT}/images/pxeboot/${arch}/vmlinuz"
-        cp "${INITRD}"  "${ISO_ROOT}/images/pxeboot/${arch}/initrd.img"
-
-        # Accumulate ESP size
-        initrd_mb=$(du -m "${INITRD}" | cut -f1)
-        vmlinuz_mb=$(du -m "${VMLINUZ}" | cut -f1)
-        ESP_TOTAL_MB=$(( ESP_TOTAL_MB + initrd_mb + vmlinuz_mb + 1 ))
-    done
-
-    # loader.conf defaults to the first architecture listed
-    cat > "${ESP_STAGING}/loader/loader.conf" << EOF
-timeout 5
-default dakota-live-${FIRST_ARCH}.conf
-EOF
-
-    # Loopback config for Ventoy — one entry per arch
-    mkdir -p "${ISO_ROOT}/boot/grub"
-    {
-        for spec in "${ARCH_SPECS[@]}"; do
-            IFS=':' read -r arch _bt _sf <<< "${spec}"
-            local_console="${SERIAL_CONSOLE[${arch}]:-ttyS0}"
-            cat << EOF
-menuentry "${LIVE_TITLE} (${arch})" {
-    linux /images/pxeboot/${arch}/vmlinuz root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 rd.live.squashimg=squashfs-${arch}.img enforcing=0 nvidia-drm.modeset=1 console=${local_console},115200n8 rd.dakota.isofile=\${iso_path}
-    initrd /images/pxeboot/${arch}/initrd.img
-}
-EOF
-        done
-    } > "${ISO_ROOT}/boot/grub/loopback.cfg"
-
-else
-    # ── Single-arch mode (backwards compatible) ─────────────────────────────
-    BOOT_DIR="${WORK}/boot-files"
-    mkdir -p "${BOOT_DIR}"
-    echo ">>> Extracting boot files..."
-    tar -xf "${BOOT_TAR}" -C "${BOOT_DIR}" --no-same-owner
-
-    # shellcheck disable=SC2012  # kernel version dirs have no special chars; ls|sort -V is correct
-    kernel=$(ls "${BOOT_DIR}/usr/lib/modules" | sort -V | tail -1)
-    echo ">>> Kernel: ${kernel}"
-
-    VMLINUZ="${BOOT_DIR}/usr/lib/modules/${kernel}/vmlinuz"
-    INITRD="${BOOT_DIR}/usr/lib/modules/${kernel}/initramfs.img"
-
-    BOOT_EFI_SRC=""
-    BOOT_EFI_DEST=""
-    for _candidate in \
-        "systemd-bootaa64.efi:EFI/BOOT/BOOTAA64.EFI" \
-        "systemd-bootx64.efi:EFI/BOOT/BOOTX64.EFI"; do
-        _src="${BOOT_DIR}/usr/lib/systemd/boot/efi/${_candidate%%:*}"
-        _dest="${_candidate##*:}"
-        if [[ -f "${_src}" ]]; then
-            BOOT_EFI_SRC="${_src}"
-            BOOT_EFI_DEST="${_dest}"
-            break
-        fi
-    done
-    [[ -n "${BOOT_EFI_SRC}" ]] || { echo "ERROR: no systemd-boot EFI binary found in boot-files tar"; exit 1; }
-
-    for f in "${VMLINUZ}" "${INITRD}" "${BOOT_EFI_SRC}"; do
-        [[ -f "${f}" ]] || { echo "ERROR: missing ${f}"; exit 1; }
-    done
-    echo ">>> Kernel:   $(du -sh "${VMLINUZ}"  | cut -f1)"
-    echo ">>> Initramfs: $(du -sh "${INITRD}"   | cut -f1)"
-    echo ">>> EFI:      ${BOOT_EFI_SRC} → ${BOOT_EFI_DEST}"
-
-    cp "${BOOT_EFI_SRC}" "${ESP_STAGING}/${BOOT_EFI_DEST}"
-    cp "${VMLINUZ}" "${ESP_STAGING}/images/pxeboot/vmlinuz"
-    cp "${INITRD}"  "${ESP_STAGING}/images/pxeboot/initrd.img"
-
-    cat > "${ESP_STAGING}/loader/loader.conf" << 'EOF'
+cat > "${ESP_STAGING}/loader/loader.conf" << 'EOF'
 timeout 5
 default dakota-live.conf
 EOF
 
-    # Kernel cmdline for dmsquash-live live boot:
-    #   root=live:LABEL=...         dmsquash-live: find the ISO by volume label (blkid-based;
-    #                                works on USB flash drives, optical drives, and QEMU virtio-scsi;
-    #                                CDLABEL= requires cdrom_id which fails with the Debian-built
-    #                                initramfs on GnomeOS kernels; /dev/sr0 only exists for optical
-    #                                drives, breaking USB flash drive boots silently with quiet)
-    #   rd.live.image               enable dmsquash-live mode
-    #   rd.live.overlay.overlayfs=1 use overlayfs (not device mapper) for the rw layer
-    #   enforcing=0                 disable SELinux enforcement (GNOME OS ships it)
-    #   console=ttyS0,115200n8      serial output on amd64 (16550/QEMU q35) — validation target
-    #   console=ttyAMA0,115200n8    serial output on arm64 (PL011/QEMU virt) — validation target; listed
-    #                                last so it wins /dev/console on hardware where both UARTs exist
-    #   Both consoles listed: Linux silently ignores the one that doesn't exist on the running arch.
-    cat > "${ESP_STAGING}/loader/entries/dakota-live.conf" << EOF
+# Kernel cmdline for dmsquash-live live boot:
+#   root=live:LABEL=...         dmsquash-live: find the ISO by volume label (blkid-based;
+#                                works on USB flash drives, optical drives, and QEMU virtio-scsi;
+#                                CDLABEL= requires cdrom_id which fails with the Debian-built
+#                                initramfs on GnomeOS kernels; /dev/sr0 only exists for optical
+#                                drives, breaking USB flash drive boots silently with quiet)
+#   rd.live.image               enable dmsquash-live mode
+#   rd.live.overlay.overlayfs=1 use overlayfs (not device mapper) for the rw layer
+#   enforcing=0                 disable SELinux enforcement (GNOME OS ships it)
+#   console=ttyS0,115200n8      serial output on amd64 (16550/QEMU q35) — validation target
+#   console=ttyAMA0,115200n8    serial output on arm64 (PL011/QEMU virt) — validation target; listed
+#                                last so it wins /dev/console on hardware where both UARTs exist
+#   Both consoles listed: Linux silently ignores the one that doesn't exist on the running arch.
+cat > "${ESP_STAGING}/loader/entries/dakota-live.conf" << EOF
 title   ${LIVE_TITLE}
 linux   /images/pxeboot/vmlinuz
 initrd  /images/pxeboot/initrd.img
 options root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8
 EOF
 
-    # EFI fallback path on the ISO9660 root
-    mkdir -p "${ISO_ROOT}/EFI/BOOT"
-    cp "${BOOT_EFI_SRC}" "${ISO_ROOT}/${BOOT_EFI_DEST}"
-    echo ">>> EFI fallback: ${BOOT_EFI_DEST} added to ISO root"
+# EFI fallback path on the ISO9660 root
+mkdir -p "${ISO_ROOT}/EFI/BOOT"
+cp "${BOOT_EFI_SRC}" "${ISO_ROOT}/${BOOT_EFI_DEST}"
+echo ">>> EFI fallback: ${BOOT_EFI_DEST} added to ISO root"
 
-    # ISO-root kernel/initramfs and loopback metadata
-    mkdir -p "${ISO_ROOT}/images/pxeboot" "${ISO_ROOT}/boot/grub"
-    cp "${VMLINUZ}" "${ISO_ROOT}/images/pxeboot/vmlinuz"
-    cp "${INITRD}"  "${ISO_ROOT}/images/pxeboot/initrd.img"
-    cat > "${ISO_ROOT}/boot/grub/loopback.cfg" << EOF
+# ISO-root kernel/initramfs and loopback metadata
+mkdir -p "${ISO_ROOT}/images/pxeboot" "${ISO_ROOT}/boot/grub"
+cp "${VMLINUZ}" "${ISO_ROOT}/images/pxeboot/vmlinuz"
+cp "${INITRD}"  "${ISO_ROOT}/images/pxeboot/initrd.img"
+cat > "${ISO_ROOT}/boot/grub/loopback.cfg" << EOF
 menuentry "${LIVE_TITLE}" {
     linux /images/pxeboot/vmlinuz root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8 rd.dakota.isofile=\${iso_path}
     initrd /images/pxeboot/initrd.img
 }
 EOF
-    echo ">>> Loopback boot metadata added to ISO root"
+echo ">>> Loopback boot metadata added to ISO root"
 
-    echo ">>> Copying squashfs..."
-    cp "${SQUASHFS_SRC}" "${ISO_ROOT}/LiveOS/squashfs.img"
-    echo ">>> Squashfs: $(du -sh "${ISO_ROOT}/LiveOS/squashfs.img" | cut -f1)"
+echo ">>> Copying squashfs..."
+cp "${SQUASHFS_SRC}" "${ISO_ROOT}/LiveOS/squashfs.img"
+echo ">>> Squashfs: $(du -sh "${ISO_ROOT}/LiveOS/squashfs.img" | cut -f1)"
 
-    INITRD_MB=$(du -m "${INITRD}"  | cut -f1)
-    VMLINUZ_MB=$(du -m "${VMLINUZ}" | cut -f1)
-    ESP_TOTAL_MB=$(( INITRD_MB + VMLINUZ_MB + 4 + 32 ))
-fi
+INITRD_MB=$(du -m "${INITRD}"  | cut -f1)
+VMLINUZ_MB=$(du -m "${VMLINUZ}" | cut -f1)
+ESP_TOTAL_MB=$(( INITRD_MB + VMLINUZ_MB + 4 + 32 ))
 
 
 # ── Create the FAT ESP image ────────────────────────────────────────────────
@@ -324,23 +161,10 @@ export MTOOLS_SKIP_CHECK=1
 # paths first and let parent creation be implicit where mtools supports it.
 mmd -i "${ESP_IMG}" ::/EFI ::/EFI/BOOT ::/loader ::/loader/entries ::/images ::/images/pxeboot
 
-if [[ "${MULTI_ARCH}" == "true" ]]; then
-    for spec in "${ARCH_SPECS[@]}"; do
-        IFS=':' read -r arch _bt _sf <<< "${spec}"
-        mmd -i "${ESP_IMG}" "::/images/pxeboot/${arch}"
-        mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/${arch}/vmlinuz" "::/images/pxeboot/${arch}/vmlinuz"
-        mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/${arch}/initrd.img" "::/images/pxeboot/${arch}/initrd.img"
-        mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/entries/dakota-live-${arch}.conf" "::/loader/entries/dakota-live-${arch}.conf"
-
-        local_efi_dest="EFI/BOOT/${EFI_BINARY_NAME[${arch}]}"
-        mcopy -i "${ESP_IMG}" "${ESP_STAGING}/${local_efi_dest}" "::/${local_efi_dest}"
-    done
-else
-    mcopy -i "${ESP_IMG}" "${ESP_STAGING}/${BOOT_EFI_DEST}" "::/${BOOT_EFI_DEST}"
-    mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/vmlinuz" "::/images/pxeboot/vmlinuz"
-    mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/initrd.img" "::/images/pxeboot/initrd.img"
-    mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/entries/dakota-live.conf" "::/loader/entries/dakota-live.conf"
-fi
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/${BOOT_EFI_DEST}" "::/${BOOT_EFI_DEST}"
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/vmlinuz" "::/images/pxeboot/vmlinuz"
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/images/pxeboot/initrd.img" "::/images/pxeboot/initrd.img"
+mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/entries/dakota-live.conf" "::/loader/entries/dakota-live.conf"
 mcopy -i "${ESP_IMG}" "${ESP_STAGING}/loader/loader.conf" "::/loader/loader.conf"
 
 # ── Assemble the ISO with xorriso ────────────────────────────────────────────
