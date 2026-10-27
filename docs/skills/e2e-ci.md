@@ -258,7 +258,8 @@ install would complete but the installed system drops to emergency mode on first
 
 **Current state:** All variants (`dakota`, `bluefin`, `bluefin-lts-hwe`) default to
 `filesystem: btrfs` in `images.json` and all E2E recipes. XFS is available only as a
-user-selectable option in the installer UI. `plain-install-qemu` uses `btrfs`.
+user-selectable option in the installer UI, and only for non-composefs variants (fisherman
+rejects composefs on XFS). `plain-install-qemu` uses `btrfs`.
 
 **Why CI didn't catch it initially:**
 1. `plain-install-qemu` hardcoded `"filesystem": "btrfs"` — `mkfs.xfs` was never called in CI

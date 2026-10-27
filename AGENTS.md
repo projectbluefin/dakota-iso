@@ -104,7 +104,7 @@ that cannot find the embedded VFS store.  The real functional gates are:
 |---|---|---|
 | Fast unit tests | `test.yml` — runs on every PR | Source-file invariants and Python logic. Necessary but not sufficient. |
 | LUKS install E2E | `test-luks-install.yml` | Encrypted install completes and installed system boots. |
-| Plain install E2E | `test-plain-install.yml` | Unencrypted XFS composefs install completes and installed system boots. |
+| Plain install E2E | `test-plain-install.yml` | Unencrypted btrfs composefs install completes and installed system boots. |
 
 Never say "tests pass" to mean "the application works". Say "unit tests pass" and specify
 which E2E gate (if any) covers the change.

@@ -505,7 +505,8 @@ else:
     recipe["local_imgref"] = "containers-storage:$NVIDIA_IMGREF"
 recipe["targetImgref"] = "$BASE_IMGREF"
 recipe["imgref"] = "$BASE_IMGREF"
-# All variants default to btrfs. XFS is available as a UI option only.
+# All variants default to btrfs. XFS is a UI option only, and only for
+# non-composefs variants (composefs needs fs-verity, which XFS lacks).
 recipe["filesystem"] = "btrfs"
 # Variant-specific bootloader and composefs backend
 # Normalise "grub" → "grub2": the bootloader file uses the short form but

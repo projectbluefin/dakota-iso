@@ -407,7 +407,7 @@ Two fields in recipe.json were missing/wrong for Fedora/CentOS variants, causing
 
 **1. `filesystem` was never set** — fisherman defaulted to xfs. All variants must install to btrfs.
 The fix: `configure-live.sh` now sets `recipe["filesystem"] = "btrfs"` for all variants.
-XFS is only available as a user option in the installer UI (`images.json` `"filesystems"` array).
+XFS is only a user option in the installer UI (`images.json` `"filesystems"` array), and only for non-composefs variants: fisherman rejects composefs on XFS (no fs-verity), so Dakota offers btrfs alone.
 
 **2. `local_imgref` pointed at the wrong store** — non-composefs variants embed the payload as
 an OCI layout at `oci:/var/lib/containers/oci-store`, NOT as VFS containers-storage.

@@ -40,7 +40,7 @@ The `stable` and `lts` legs were red at the time of the change — `sshpass` got
 | `bluefin` | `projectbluefin/bluefin-nvidia:stable` | same | grub2 | no | btrfs | retired |
 | `bluefin-lts-hwe` | `projectbluefin/bluefin-lts-hwe-nvidia:stable` | same | grub2 | no | btrfs | retired |
 
-**All variants default to btrfs. XFS is available as a user-selectable option in the installer UI only.**
+**All variants default to btrfs. XFS is offered as a user-selectable installer option only for the non-composefs variants (`utah`, `bluefin`, `bluefin-lts-hwe`); Dakota uses composefs, which needs fs-verity, so it cannot install to XFS.**
 
 There is one unified ISO: `dakota-live.iso`.
 
