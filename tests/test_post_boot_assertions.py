@@ -277,7 +277,9 @@ class TestJustfileWiring(unittest.TestCase):
             self.assertNotIn("STRICT_POST_BOOT:-0", body, header)
             self.assertNotIn("exit 0", body, header)
 
-    def test_installed_boot_reuses_live_nvram(self):
+    def test_installed_boot_can_reuse_live_nvram(self):
+        # LUKS always carries the live NVRAM over; plain only behind
+        # PLAIN_CARRY_LIVE_NVRAM=1 (see the pristine-default test below).
         for header, prefix in (
             ("luks-boot-qemu-installed target:", "dakota-qemu"),
             ("plain-boot-qemu-installed target:", "dakota-plain-qemu"),
@@ -286,6 +288,14 @@ class TestJustfileWiring(unittest.TestCase):
             self.assertIn(
                 f"cp /var/tmp/{prefix}-live-vars.fd \"$OVMF_VARS\"", body, header
             )
+
+    def test_plain_installed_boot_defaults_to_pristine_nvram(self):
+        # A carried-over live NVRAM left no valid BootOrder entry for the
+        # installed disk, so OVMF dropped to "EFI Internal Shell" (every plain
+        # E2E failed from 2026-10-25). The carry-over is opt-in only.
+        body = self._recipe_body("plain-boot-qemu-installed target:")
+        self.assertIn('"${PLAIN_CARRY_LIVE_NVRAM:-0}" == "1"', body)
+        self.assertIn('cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"', body)
 
     def test_installed_ssh_hostfwd_bound_to_loopback(self):
         text = JUSTFILE.read_text()

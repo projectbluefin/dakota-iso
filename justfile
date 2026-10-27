@@ -1376,11 +1376,14 @@ plain-boot-qemu-installed target:
         [[ -S "{{plain-qemu-monitor-live}}" ]] || break
         sleep 2
     done
-    # Carry over the live VM's NVRAM so Boot#### entries written by the
-    # installer (efibootmgr) survive into the installed boot; fall back to
-    # the pristine template if the live vars file is missing.
+    # Boot the installed disk from pristine NVRAM so OVMF enumerates the disk
+    # and finds its EFI loader. Carrying over the live VM's NVRAM (#267) left a
+    # stale BootOrder with no valid entry for this disk, so the firmware went
+    # straight to "EFI Internal Shell" and every plain install E2E (and the
+    # nightly ISO's E2E 4/4) failed from 2026-10-25. PLAIN_CARRY_LIVE_NVRAM=1
+    # restores the carry-over for debugging installer-written Boot#### entries.
     OVMF_VARS=/var/tmp/dakota-plain-qemu-installed-vars.fd
-    if [[ -f /var/tmp/dakota-plain-qemu-live-vars.fd ]]; then
+    if [[ "${PLAIN_CARRY_LIVE_NVRAM:-0}" == "1" && -f /var/tmp/dakota-plain-qemu-live-vars.fd ]]; then
         cp /var/tmp/dakota-plain-qemu-live-vars.fd "$OVMF_VARS"
     elif [[ -n "$OVMF_VARS_TEMPLATE" ]]; then
         cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
