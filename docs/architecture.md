@@ -29,6 +29,9 @@ the `FROM ... AS <name>` lines in `live/Containerfile`.
 Dakota is GNOME OS / freedesktop-sdk based — no package manager, no dracut.
 Building the initramfs in Debian's native environment avoids cross-distro binary grafting.
 Only `/tmp/initramfs.img` crosses the stage boundary.
+The Debian base is pinned by `@sha256` digest (Renovate bumps it), so a retagged
+`debian:bookworm` cannot change what goes into the signed ISO unreviewed;
+`tests/test_containerfile_pinned_bases.py` enforces this for every external base.
 
 **What `configure-live.sh` does in the final stage:**
 - Sets `VERSION_ID=latest` in `os-release` (GNOME OS omits it)

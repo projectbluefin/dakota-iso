@@ -72,7 +72,7 @@ RUN set -e; \
     fi
 
 # ── Stage 2b: Debian — cross-builds the initramfs for images without dracut ──
-FROM debian:bookworm AS initramfs-builder
+FROM debian:bookworm@sha256:d74df7598108a173a621eda4d58a2adbf850b2d9a9d81bc2cca1a6c21174a880 AS initramfs-builder
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
