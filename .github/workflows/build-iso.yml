@@ -9,6 +9,11 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
+      image_ref:
+        description: 'Explicit image ref to build and embed (default: ghcr.io/projectbluefin/dakota-nvidia:stable)'
+        required: false
+        default: ''
+        type: string
       skip_upload:
         description: 'Build ISO but skip uploading to R2 (dry run)'
         required: false
@@ -51,8 +56,10 @@ jobs:
       # not prove the image was built by this project's CI.
       - name: Verify payload image signature
         id: payload
+        env:
+          INPUT_IMAGE_REF: ${{ inputs.image_ref }}
         run: |
-          PINNED=$(scripts/verify-image-signature.sh ghcr.io/projectbluefin/dakota-nvidia:stable)
+          PINNED=$(scripts/verify-image-signature.sh "${INPUT_IMAGE_REF:-ghcr.io/projectbluefin/dakota-nvidia:stable}")
           echo "pinned=${PINNED}" >> "$GITHUB_OUTPUT"
           echo "digest=@${PINNED##*@}" >> "$GITHUB_OUTPUT"
 

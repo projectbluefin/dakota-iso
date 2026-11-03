@@ -182,8 +182,14 @@ class TestDigestContract(VerifyImageSignatureHarness):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), f"ghcr.io/projectbluefin/dakota-nvidia@{DIGEST}")
         self.assertIn("signed by projectbluefin/dakota CI", result.stderr)
-
-    def test_failed_verification_prints_nothing(self):
+    def test_verifies_digest_pinned_reference_directly(self):
+        explicit_ref = f"ghcr.io/projectbluefin/dakota-nvidia@{DIGEST}"
+        result = self.run_script(explicit_ref)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), explicit_ref)
+        self.assertIn("signed by projectbluefin/dakota CI", result.stderr)
+        self.assertEqual(len(self.cosign_calls()), 1)
+        self.assertIn(explicit_ref, self.cosign_calls()[0])
         result = self.run_script("ghcr.io/projectbluefin/utah:testing", STUB_COSIGN_FAIL="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")

@@ -175,14 +175,14 @@ def _dakota_verified_refs():
     verified = {}
     for job in workflow["jobs"].values():
         for step in job.get("steps") or []:
+            # Matches direct ref or shell parameter expansion with default: "${INPUT_IMAGE_REF:-ref}"
             match = re.search(
-                r"verify-image-signature\.sh\s+([^\s)]+)", step.get("run") or ""
+                r"verify-image-signature\.sh\s+(?:\"\$\{.*?:-([^\}]+)\}\"|([^\s)]+))",
+                step.get("run") or "",
             )
             if match and "id" in step:
-                verified[step["id"]] = match.group(1).strip("\"'")
+                verified[step["id"]] = (match.group(1) or match.group(2)).strip("\"'")
     return verified
-
-
 def _configure_live_default(key: str) -> str:
     """Return the literal default configure-live.sh uses for read_variant_config <key>."""
     match = re.search(
@@ -242,6 +242,9 @@ class TestDakotaPayloadConsistency(unittest.TestCase):
         )
         for raw in refs:
             ref = raw.strip("\"'")
+            fallback = re.search(r":-([^}]+)", ref)
+            if fallback:
+                ref = fallback.group(1).strip("\"'")
             pinned = re.fullmatch(
                 r"\$\{\{\s*steps\.([\w-]+)\.outputs\.pinned\s*\}\}", ref
             )
@@ -280,6 +283,27 @@ class TestDakotaPayloadConsistency(unittest.TestCase):
                     f"{BUILD_ISO_DAKOTA_WORKFLOW.name} builds TARGET={target!r} but "
                     f"dakota/live_target is {self.live_target!r}",
                 )
+
+    def test_workflow_dispatch_defines_image_ref_input_with_correct_default(self):
+        """build-iso.yml must define workflow_dispatch image_ref defaulting to payload_ref."""
+        with BUILD_ISO_DAKOTA_WORKFLOW.open() as handle:
+            workflow = yaml.safe_load(handle)
+        # YAML 1.1 parses unquoted 'on:' as boolean True
+        on_block = workflow.get("on") if "on" in workflow else workflow.get(True, {})
+        dispatch = on_block.get("workflow_dispatch", {})
+        inputs = dispatch.get("inputs", {})
+        self.assertIn("image_ref", inputs, "build-iso.yml workflow_dispatch missing image_ref input")
+        self.assertEqual(
+            inputs["image_ref"].get("default", ""),
+            "",
+            "image_ref input default should be empty to allow falling back to payload_ref in step env",
+        )
+        workflow_text = BUILD_ISO_DAKOTA_WORKFLOW.read_text()
+        self.assertIn(
+            "${{ inputs.image_ref }}",
+            workflow_text,
+            "build-iso.yml does not bind inputs.image_ref to the payload verification step",
+        )
 
     def test_installer_requests_the_embedded_payload(self):
         """configure-live.sh's nvidia_imgref default becomes local_imgref for dakota."""
