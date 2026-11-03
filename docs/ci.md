@@ -8,7 +8,7 @@ Two ISOs are built and published to R2 on a daily schedule (both also support `w
 
 | ISO | Workflow | R2 latest name | Image embedded | Trigger |
 |---|---|---|---|---|
-| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | Daily 03:00 UTC, `workflow_dispatch` |
+| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | Daily 03:00 UTC, `workflow_dispatch` (manual or automated by Mergeraptor upon Dakota `:stable` promotion) |
 | Utah | `build-iso-utah.yml` | `utah-live-latest.iso` | `projectbluefin/utah:testing` | Daily 04:00 UTC, `workflow_dispatch` |
 
 The Bluefin and Bluefin LTS HWE ISOs are **retired**. As of
@@ -33,7 +33,7 @@ gh workflow run build-iso.yml --ref main
 
 | Workflow | File | Trigger |
 |---|---|---|
-| Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch` |
+| Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch` (includes automated dispatch from `projectbluefin/dakota`'s `execute-release.yml` with promoted image digest) |
 | Utah Build & Publish | `build-iso-utah.yml` | Daily 04:00 UTC, `workflow_dispatch` (bluefin entries retired in #228) |
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
