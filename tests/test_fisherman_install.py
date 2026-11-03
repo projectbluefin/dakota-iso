@@ -13,8 +13,9 @@ whether an install job goes green or red:
 2. **Target discovery.** It picks the installed root from ``lsblk`` output,
    unlocking LUKS with the passphrase read out of the recipe JSON when the disk
    is encrypted, and it must close the mapper again afterwards.
-3. **Post-install patching.** It locates ``etc`` under either the composefs
-   (``ostree/bootc/deploy``) or classic (``ostree/deploy``) layout and writes
+3. **Post-install patching.** It locates ``etc`` under the composefs-native
+   (``state/deploy``), composefs/bootc (``ostree/bootc/deploy``) or classic
+   (``ostree/deploy``) layout and writes
    the hostname plus the ``rechunker-group-fix.service`` ordering-cycle
    override that keeps LTS/stable images bootable.
 
@@ -98,8 +99,9 @@ class FishermanInstallHarness(unittest.TestCase):
         """Install recording shims for every external command the script calls.
 
         ``layout`` is the directory tree the stub ``mount`` materialises under
-        the mount point, standing in for the deployment on the installed disk.
-        Pass ``None`` to mount an empty filesystem (no deployment found).
+        the mount point, standing in for the deployment on the installed disk
+        (space-separated for several directories).  Pass ``None`` to mount an
+        empty filesystem (no deployment found).
         """
         self._stub("fisherman", f"""
             printf '%s' {shlex.quote(fish_log)}
@@ -115,7 +117,7 @@ class FishermanInstallHarness(unittest.TestCase):
             [ {mount_rc} -eq 0 ] || exit {mount_rc}
             target="${{@: -1}}"
             echo "$target" > "$STUB_MNT"
-            {'mkdir -p "$target"/' + shlex.quote(layout) if layout else ':'}
+            {' '.join('mkdir -p "$target"/' + shlex.quote(d) + ';' for d in layout.split()) if layout else ':'}
         """)
         self._stub("umount", """
             echo "umount $*" >> "$STUB_CALLS"
@@ -130,7 +132,7 @@ class FishermanInstallHarness(unittest.TestCase):
             echo "cryptsetup $*" >> "$STUB_CALLS"
         """)
 
-    def run_script(self, recipe_path, **stub_kwargs):
+    def run_script(self, recipe_path, *extra_args, **stub_kwargs):
         self._install_stubs(**stub_kwargs)
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
@@ -139,7 +141,7 @@ class FishermanInstallHarness(unittest.TestCase):
         env["STUB_MNT"] = str(self.mnt_record)
         env["TMPDIR"] = str(self.sandbox)
         proc = subprocess.run(
-            ["bash", str(FISHERMAN_INSTALL), str(recipe_path)],
+            ["bash", str(FISHERMAN_INSTALL), str(recipe_path), *extra_args],
             capture_output=True, text=True, env=env, cwd=self.sandbox,
         )
         proc.calls = self.calls.read_text()
@@ -150,8 +152,11 @@ class FishermanInstallHarness(unittest.TestCase):
         if not self.mnt_record.exists():
             return None
         root = Path(self.mnt_record.read_text().strip())
-        matches = sorted(p for p in root.glob("ostree/**/etc") if p.is_dir())
-        return matches[0] if matches else None
+        for pattern in ("state/deploy/*/etc", "ostree/**/etc"):
+            matches = sorted(p for p in root.glob(pattern) if p.is_dir())
+            if matches:
+                return matches[0]
+        return None
 
 
 class TestFailureTriage(FishermanInstallHarness):
@@ -286,12 +291,75 @@ class TestPostInstallPatching(FishermanInstallHarness):
         self.assertIsNotNone(etc, "classic ostree layout was not discovered")
         self.assertEqual((etc / "hostname").read_text().strip(), "classic-box")
 
+    def test_composefs_native_layout_is_found(self):
+        """composefs-native installs keep /etc at state/deploy/<hash>/etc.
+
+        Regression for #283: the lookup only searched ostree/, so on the plain
+        composefs E2E every patch (hostname, debug SSH) was silently skipped.
+        """
+        recipe = self._write_recipe(hostname="native-box")
+        proc = self.run_script(
+            recipe, fish_rc=1, fish_log=LOG_HOSTNAME_COMPOSEFS,
+            layout="state/deploy/0123abcd/etc",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("post-install patches not applied", proc.stdout)
+        etc = self.deployed_etc()
+        self.assertIsNotNone(etc, "composefs-native layout was not discovered")
+        self.assertEqual(etc.parent.parent.name, "deploy")
+        self.assertEqual((etc / "hostname").read_text().strip(), "native-box")
+
+    def test_composefs_native_layout_preferred_over_ostree_dir(self):
+        """composefs-native installs also create ostree/ — state/deploy wins."""
+        recipe = self._write_recipe(hostname="native-box")
+        proc = self.run_script(
+            recipe, fish_rc=1, fish_log=LOG_HOSTNAME_COMPOSEFS,
+            layout="state/deploy/0123abcd/etc ostree/bootc/deploy/default/abc/etc",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("written to /tmp/", proc.stdout)
+        self.assertIn("/state/deploy/0123abcd/etc/hostname", proc.stdout)
+
+    def test_debug_ssh_override_lands_in_composefs_native_etc(self):
+        """The plain E2E's post-boot assertions depend on this override."""
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(
+            recipe, "--enable-debug-ssh", fish_rc=0,
+            layout="state/deploy/0123abcd/etc",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("debug SSH override written", proc.stdout)
+        etc = self.deployed_etc()
+        dropin = etc / "ssh/sshd_config.d/00-e2e-debug.conf"
+        self.assertIn("PermitRootLogin yes", dropin.read_text())
+        self.assertTrue(
+            (etc / "systemd/system/multi-user.target.wants/sshd.service").is_symlink()
+        )
+
+    def test_debug_ssh_is_opt_in(self):
+        """Without --enable-debug-ssh nothing SSH-related is written."""
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(recipe, fish_rc=0,
+                               layout="state/deploy/0123abcd/etc")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("debug SSH", proc.stdout)
+        self.assertFalse((self.deployed_etc() / "ssh").exists())
+
     def test_missing_deployment_etc_warns_without_failing(self):
         recipe = self._write_recipe(hostname="dakota")
         proc = self.run_script(recipe, fish_rc=1,
                                fish_log=LOG_HOSTNAME_COMPOSEFS, layout=None)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("deployment etc/ not found", proc.stdout)
+
+    def test_missing_deployment_etc_lists_what_is_there(self):
+        """An unknown layout must be diagnosable from the CI log alone."""
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(recipe, fish_rc=0,
+                               layout="future/layout/deploy/etc")
+        self.assertIn("deployment etc/ not found", proc.stdout)
+        self.assertIn("etc/ directories on the installed root", proc.stdout)
+        self.assertIn("/future/layout/deploy/etc", proc.stdout)
 
     def test_rechunker_override_breaks_the_ordering_cycle(self):
         """DefaultDependencies=no is what stops the boot-time deadlock."""

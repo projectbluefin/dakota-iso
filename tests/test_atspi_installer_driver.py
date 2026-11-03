@@ -213,6 +213,37 @@ class TestInstallerDriverFlow(unittest.TestCase):
         self.assertIn(f"source: {log}", diagnostics)
         self.assertNotIn("line 0", diagnostics)
         self.assertIn("line 204", diagnostics)
+        session.snapshots.assert_called_once_with(
+            installer, visible_only=False, max_depth=40
+        )
+
+    def test_diagnostics_tree_reaches_installer_labels_below_depth_12(self):
+        class Accessible:
+            def __init__(self, name, children=()):
+                self.name = name
+                self.description = ""
+                self.children = children
+
+            def __iter__(self):
+                return iter(self.children)
+
+        node = Accessible("Select a Disk")
+        for depth in range(22):
+            node = Accessible(f"container {depth}", (node,))
+        atspi = mock.Mock()
+        atspi.init.return_value = 0
+        atspi.get_desktop.return_value = Accessible("desktop", ())
+        session = self.driver.AtspiSession(atspi)
+
+        shallow, _ = session.snapshots(node, visible_only=False)
+        deep, _ = session.snapshots(
+            node,
+            visible_only=False,
+            max_depth=self.driver.DIAGNOSTICS_MAX_DEPTH,
+        )
+
+        self.assertNotIn("Select a Disk", [n.name for n in shallow])
+        self.assertIn("Select a Disk", [n.name for n in deep])
 
 
 class TestDriverDependencies(unittest.TestCase):

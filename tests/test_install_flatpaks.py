@@ -50,6 +50,7 @@ ROOTED_PATHS = (
     "/var/cache/flatpak-dl",
     "/var/lib/flatpak",
     "/var/lib/dbus/machine-id",
+    "/var/tmp",
     "/etc/machine-id",
     "/run/dbus",
     "/tmp/flatpaks-list",
@@ -168,6 +169,9 @@ class InstallFlatpaksHarness(unittest.TestCase):
         # that string fail.
         self._stub("flatpak", """
             echo "flatpak $*" >>"$STUB_CALLS"
+            if [[ "$1" == install && -d "$SANDBOX_ROOT/var/tmp" && -k "$SANDBOX_ROOT/var/tmp" ]]; then
+                echo "var-tmp-present sticky" >>"$STUB_CALLS"
+            fi
             if [[ -n "${STUB_FAIL_MATCH:-}" && " $* " == *"${STUB_FAIL_MATCH}"* ]]; then
                 exit 1
             fi
@@ -534,6 +538,19 @@ class TestMachineId(InstallFlatpaksHarness):
         self.assertNotIn("systemd-machine-id-setup", self.calls.read_text())
         self.assertEqual((self.root / "etc/machine-id").read_text(), "preexisting\n")
         self.assertTrue((self.root / "var/lib/dbus/machine-id").exists())
+
+    def test_missing_var_tmp_exists_for_installs_and_is_removed_afterwards(self):
+        # Utah's payload ships no /var/tmp; flatpak's OCI token flow needs it.
+        self.assertFalse((self.root / "var/tmp").exists())
+        self.assert_ok(self.run_script())
+        self.assertIn("var-tmp-present sticky", self.calls.read_text())
+        self.assertFalse((self.root / "var/tmp").exists(), "build-time /var/tmp shipped in the image")
+
+    def test_existing_var_tmp_is_kept(self):
+        (self.root / "var/tmp").mkdir()
+        (self.root / "var/tmp/keep").write_text("payload\n")
+        self.assert_ok(self.run_script())
+        self.assertEqual((self.root / "var/tmp/keep").read_text(), "payload\n")
 
     def test_session_bus_address_is_kept_when_already_set(self):
         self.assert_ok(self.run_script(DBUS_SESSION_BUS_ADDRESS="unix:path=/existing"))

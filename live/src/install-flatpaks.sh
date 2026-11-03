@@ -20,6 +20,17 @@ FLATPAK_CACHE="/var/cache/flatpak-dl"
 # and has ~60 GB free, so use a subdirectory of it as TMPDIR instead.
 mkdir -p "${FLATPAK_CACHE}/tmp"
 export TMPDIR="${FLATPAK_CACHE}/tmp"
+# Flatpak's OCI pulls (the tuna-os remote) still use /var/tmp regardless of
+# TMPDIR -- see the /var/tmp note in configure-live.sh -- and a payload image
+# need not ship it: Utah's clean-stage strips /var down to /var/cache and
+# leaves /var/tmp to tmpfiles at boot. Without it the install fails with
+#   Failed to get tokens for ref: opendir(/var/tmp): No such file or directory
+# Create it for the build only, like the machine id below.
+CREATED_VAR_TMP=0
+if [[ ! -d /var/tmp ]]; then
+    CREATED_VAR_TMP=1
+    mkdir -m 1777 /var/tmp
+fi
 mkdir -p /run/dbus
 # An OCI flatpak remote (tuna-os, for Utah's Ghostty) makes flatpak spawn a
 # session bus of its own, and a bus refuses to start without a machine id --
@@ -256,4 +267,8 @@ echo "Cache updated"
 if [[ "${CREATED_MACHINE_ID}" == 1 ]]; then
     : > /etc/machine-id
     rm -f /var/lib/dbus/machine-id
+fi
+# Leave /var as the payload shipped it; the live boot mounts a tmpfs there.
+if [[ "${CREATED_VAR_TMP}" == 1 ]]; then
+    rm -rf /var/tmp
 fi

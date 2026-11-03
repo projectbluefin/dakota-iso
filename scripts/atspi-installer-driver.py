@@ -26,6 +26,10 @@ INSTALLER_NAMES = (
 )
 BUTTON_ROLES = ("button", "push button")
 TOGGLE_ROLES = ("check", "radio", "switch")
+# The installer's page labels sit around depth 22 of its accessibility tree
+# (#244). Only the failure dump walks this deep; page classification keeps the
+# shallower default because inactive pages also report SHOWING (#119).
+DIAGNOSTICS_MAX_DEPTH = 40
 
 
 class DriverError(RuntimeError):
@@ -331,7 +335,9 @@ class InstallerDriver:
         if installer is None:
             print("Installer accessibility application was not found.", file=sys.stderr)
         else:
-            nodes, _ = self.session.snapshots(installer, visible_only=False)
+            nodes, _ = self.session.snapshots(
+                installer, visible_only=False, max_depth=DIAGNOSTICS_MAX_DEPTH
+            )
             print("--- accessibility tree ---", file=sys.stderr)
             for node in nodes:
                 indent = "  " * len(node.path)

@@ -57,7 +57,7 @@ If all five are checked, you're done. If any are unchecked, finish them first.
 | Category | Example |
 |---|---|
 | Upstream bug workaround | "`installer_channel=dev` regressed fisherman overlay storage — use `stable` until tuna-os/fisherman#38 resolves" |
-| Non-obvious correctness requirement | "Use `buildah commit --squash` not `podman create --entrypoint /bin/sh && podman commit` — the latter corrupts Entrypoint and breaks bootc install" |
+| Non-obvious correctness requirement | "Build the payload with `podman build` from a FROM-only Containerfile, not `podman create --entrypoint /bin/sh && podman commit` — the latter corrupts Entrypoint and breaks bootc install" |
 | Convention not obvious from code | "skopeo copy must run inside the installer container, not the build host — otherwise tar-split metadata format mismatches" |
 | Trial-and-error discovery | "dmsquash-live requires `CDLABEL=DAKOTA_LIVE` exactly — changing the label breaks live boot without any helpful error message" |
 | CI/environment quirk | "BTRFS hosts: even with squash-to-1-layer, VFS import is slow — use XFS loopback for local builds" |

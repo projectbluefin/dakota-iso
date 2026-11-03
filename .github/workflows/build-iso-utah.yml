@@ -9,7 +9,9 @@ concurrency:
 # The Bluefin/Bluefin-LTS matrix entries below are disabled.
 on:
   schedule:
-    - cron: '0 4 * * *'
+    # Monthly, on the 8th: Utah releases :stable on Mondays at 06:00 UTC, so by
+    # 04:00 on the 8th the month's first Monday release has always happened.
+    - cron: '0 4 8 * *'
   workflow_dispatch:
     inputs:
       variant:
@@ -31,6 +33,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      id-token: write  # keyless cosign signing of the ISO checksum
 
     strategy:
       fail-fast: false
@@ -54,10 +57,10 @@ jobs:
           # chain lives in its own ISO pipeline, so ISOs from this path boot with
           # Secure Boot disabled.
           - variant: utah
-            payload_image: ghcr.io/projectbluefin/utah:testing
+            payload_image: ghcr.io/projectbluefin/utah:stable
             live_target: utah
             registry: projectbluefin
-            tag: testing
+            tag: stable
             iso_name: utah-live
 
     steps:
@@ -67,9 +70,11 @@ jobs:
       # Skip if workflow_dispatch selected a specific variant that doesn't match
       - name: Check if this variant should build
         id: should_build
+        env:
+          INPUT: ${{ inputs.variant }}
+          VARIANT: ${{ matrix.variant }}
         run: |
-          INPUT="${{ inputs.variant }}"
-          if [[ -z "$INPUT" || "$INPUT" == "all" || "$INPUT" == "${{ matrix.variant }}" ]]; then
+          if [[ -z "$INPUT" || "$INPUT" == "all" || "$INPUT" == "$VARIANT" ]]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
@@ -83,7 +88,7 @@ jobs:
         if: steps.should_build.outputs.build == 'true'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y podman buildah skopeo \
+          sudo apt-get install -y podman skopeo \
             mtools xorriso squashfs-tools dosfstools isomd5sum jq
 
       - name: Log in to GHCR
@@ -159,8 +164,13 @@ jobs:
 
       - name: Assemble ISO
         if: steps.should_build.outputs.build == 'true'
+        env:
+          VARIANT: ${{ matrix.variant }}
         run: |
-          sudo bash live/src/build-iso.sh \
+          # The systemd-boot title comes from the variant's live_title file
+          # (docs/variants.md); without --title build-iso.sh says "Dakota Live".
+          LIVE_TITLE="$(cat "${VARIANT}/live_title")"
+          sudo bash live/src/build-iso.sh --title "$LIVE_TITLE" \
             /var/iso-build/${{ matrix.live_target }}-boot.tar \
             /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
             /var/iso-build/${{ matrix.iso_name }}.iso
@@ -250,6 +260,25 @@ jobs:
             { echo "ERROR: live environment did not reach ready state"
               sudo tail -50 /tmp/serial.log; exit 1; }
 
+      # Sign the published checksum with keyless cosign (GitHub OIDC), so the
+      # ISO can be checked against something an R2 write cannot forge (#220).
+      # It runs under the same conditions as the upload, before it: if signing
+      # fails, nothing is published or rotated.
+      - name: Sign ISO checksum (keyless cosign)
+        if: >
+          steps.should_build.outputs.build == 'true' &&
+          inputs.skip_upload != true &&
+          github.event_name != 'pull_request' &&
+          steps.boot_verify.outcome == 'success'
+        env:
+          CHECKSUM: ${{ steps.checksum.outputs.latest_path }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --output-signature "${CHECKSUM}.sig" \
+            --output-certificate "${CHECKSUM}.pem" \
+            "$CHECKSUM"
+
       - name: Upload ISO to Cloudflare R2
         if: >
           steps.should_build.outputs.build == 'true' &&
@@ -299,6 +328,9 @@ jobs:
 
           rclone copyto --log-level INFO --s3-no-check-bucket "$ISO" "R2:testing/${LATEST_NAME}"
           rclone copyto --log-level INFO --s3-no-check-bucket "${{ steps.checksum.outputs.latest_path }}" "R2:testing/${LATEST_NAME}-CHECKSUM"
+          for ext in sig pem; do
+            rclone copyto --log-level INFO --s3-no-check-bucket "${{ steps.checksum.outputs.latest_path }}.${ext}" "R2:testing/${LATEST_NAME}-CHECKSUM.${ext}"
+          done
 
       - name: Publish latest URLs summary
         if: >

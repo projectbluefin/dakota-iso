@@ -11,7 +11,7 @@ embedded OCI store lets the installer deploy to non-NVIDIA hardware without a ne
 Home repo: [projectbluefin/dakota-iso](https://github.com/projectbluefin/dakota-iso)
 
 **Scope: dakota and utah.** Bluefin and Bluefin LTS HWE are retired (#228).
-`build-iso-utah.yml` builds and publishes Utah live ISOs daily (04:00 UTC) and via manual dispatch.
+`build-iso-utah.yml` builds and publishes Utah live ISOs from `utah:stable` monthly (04:00 UTC on the 8th) and via manual dispatch.
 The bluefin and bluefin-lts-hwe code, docs and size invariants are retained for revival,
 not for current CI. **Do not re-add bluefin or bluefin-lts-hwe to any workflow matrix.** Revival steps: [`docs/variants.md`](docs/variants.md).
 
@@ -104,7 +104,7 @@ that cannot find the embedded VFS store.  The real functional gates are:
 |---|---|---|
 | Fast unit tests | `test.yml` — runs on every PR | Source-file invariants and Python logic. Necessary but not sufficient. |
 | LUKS install E2E | `test-luks-install.yml` | Encrypted install completes and installed system boots. |
-| Plain install E2E | `test-plain-install.yml` | Unencrypted XFS composefs install completes and installed system boots. |
+| Plain install E2E | `test-plain-install.yml` | Unencrypted btrfs composefs install completes and installed system boots. |
 
 Never say "tests pass" to mean "the application works". Say "unit tests pass" and specify
 which E2E gate (if any) covers the change.
@@ -238,12 +238,13 @@ The `skill-drift.yml` CI check warns when a PR changes implementation files with
 | `dakota` (composefs) | ~5.5 GB | ~4.5 GB |
 | `bluefin` / `bluefin-lts-hwe` (non-composefs) | ~7 GB | ~6 GB |
 
-- If a **bluefin/lts-hwe** ISO is **~12 GB**: the non-composefs OCI embedding is NOT
-  squashing layers before writing to `oci-store`. bluefin-nvidia has ~120 OCI layers;
-  without `--squash`, all ~120 layer blobs land in the squashfs → ~8 GB OCI store → 12 GB ISO.
-  **Fix:** `buildah commit --squash --format oci` (not `--format oci` alone) in both
-  `justfile` and `scripts/build-live-squashfs.sh` non-composefs paths.
-  **This has been rediscovered multiple times — never remove `--squash` from this path.**
+- If a **bluefin/lts-hwe** ISO is **~12 GB**: do **not** "fix" it by squashing the
+  non-composefs payload. That path intentionally keeps every layer —
+  `payload_to_oci_archive` in `scripts/payload-oci.sh` is called with `squash=false`
+  for non-composefs variants, because squashing destroys the ostree commit objects
+  `bootc install` needs. Look instead for the payload being embedded twice or a stale
+  store left in the squashfs staging tree. Only the composefs (dakota) path squashes
+  (`podman build --squash-all`) — **never remove `--squash-all` from that path.**
 - If a **dakota** ISO is **~8 GB**: the VFS OCI store is being double-embedded.
   The live squashfs already contains the OCI baked in as VFS containers-storage.
   Do **not** build a separate `store.squashfs.img` or pass `--store` to `build-iso.sh`.

@@ -134,7 +134,7 @@ Config files (read by `configure-live.sh` at container build time):
 - `live/src/<variant>/composefs` — "true" or "false"
 - `live/src/<variant>/bootloader` — "grub" (normalized to "grub2") or "systemd"
 
-All variants: filesystem=btrfs. XFS is a UI option only, never the default.
+All variants: filesystem=btrfs. XFS is a UI option only, never the default, and only for non-composefs variants; composefs (Dakota) needs fs-verity, which XFS lacks.
 
 ---
 

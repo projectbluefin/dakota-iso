@@ -686,6 +686,7 @@ luks-boot target:
 #   just luks-install-qemu dakota     # SSH fisherman install (uses luks-install internals)
 #   just luks-boot-qemu-installed dakota  # reboot QEMU into installed disk
 #   just luks-unlock-qemu dakota      # send passphrase via QEMU monitor
+#   just luks-verify-qemu dakota      # SSH post-boot assertions (UEFI, Flatpak, LUKS cmdline)
 
 # QEMU memory (MiB) for the live install phase.
 # 4096 is intentionally tight: the overlay tmpfs is only ~2 GiB, which
@@ -720,6 +721,9 @@ luks-qemu-serial-installed := "/tmp/dakota-qemu-installed-serial.log"
 
 # SSH port for QEMU SLIRP forwarding (LUKS test)
 luks-qemu-ssh-port := "2222"
+# SSH port forwarded to the *installed* system after reboot, for post-boot
+# assertions (see verify-post-install.sh / projectbluefin/dakota#651).
+luks-qemu-ssh-port-installed := "2224"
 
 # ── Plain (no-encryption) install test paths ─────────────────────────────────
 # Uses port 2223 and separate socket/disk paths so both tests can run concurrently.
@@ -732,6 +736,9 @@ plain-qemu-monitor-installed := "/tmp/dakota-plain-qemu-installed.sock"
 plain-qemu-serial-live := "/tmp/dakota-plain-qemu-live-serial.log"
 plain-qemu-serial-installed := "/tmp/dakota-plain-qemu-installed-serial.log"
 plain-qemu-ssh-port := "2223"
+# SSH port forwarded to the *installed* system after reboot, for post-boot
+# assertions (see verify-post-install.sh / projectbluefin/dakota#651).
+plain-qemu-ssh-port-installed := "2225"
 
 # Full end-to-end test: build the ISO then run the LUKS install + boot test.
 # This is the primary integration test — mirrors .github/workflows/test-luks-install.yml.
@@ -768,10 +775,11 @@ luks-test-qemu target installer_channel="dev":
           "{{luks-qemu-serial-installed}}"
     just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-live {{target}}
     just luks-qemu-ssh-port={{luks-qemu-ssh-port}} luks-install-qemu {{target}}
-    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-installed {{target}}
+    just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-qemu-ssh-port-installed={{luks-qemu-ssh-port-installed}} luks-boot-qemu-installed {{target}}
     just luks-qemu-monitor-installed={{luks-qemu-monitor-installed}} \
          luks-qemu-serial-installed={{luks-qemu-serial-installed}} \
          luks-unlock-qemu {{target}}
+    just luks-qemu-ssh-port-installed={{luks-qemu-ssh-port-installed}} luks-verify-qemu {{target}}
 
 # Boot the live ISO in QEMU (daemonized) with a blank install disk attached.
 # Creates the install disk if it doesn't exist.
@@ -911,7 +919,7 @@ luks-boot-qemu-installed target:
         if [[ -x "$candidate" ]]; then QEMU="$candidate"; break; fi
     done
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
-    OVMF_CODE=""; OVMF_VARS=""
+    OVMF_CODE=""; OVMF_VARS=""; OVMF_VARS_TEMPLATE=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
               /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
@@ -924,7 +932,7 @@ luks-boot-qemu-installed target:
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd; do
-        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-qemu-installed-vars.fd; OVMF_VARS=/var/tmp/dakota-qemu-installed-vars.fd; break; fi
+        [[ -f "$f" ]] && { OVMF_VARS_TEMPLATE="$f"; break; }
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
 
@@ -942,6 +950,17 @@ luks-boot-qemu-installed target:
         echo "Waiting for live QEMU to exit (attempt $i)..."
         sleep 2
     done
+    # Carry over the live VM's NVRAM so Boot#### entries written by the
+    # installer (efibootmgr) survive into the installed boot; fall back to
+    # the pristine template if the live vars file is missing.
+    OVMF_VARS=/var/tmp/dakota-qemu-installed-vars.fd
+    if [[ -f /var/tmp/dakota-qemu-live-vars.fd ]]; then
+        cp /var/tmp/dakota-qemu-live-vars.fd "$OVMF_VARS"
+    elif [[ -n "$OVMF_VARS_TEMPLATE" ]]; then
+        cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+    else
+        OVMF_VARS=""
+    fi
     # KVM access: try direct, then sudo, then fall back to TCG
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
@@ -965,7 +984,7 @@ luks-boot-qemu-installed target:
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=disk,file={{luks-qemu-disk}},format=qcow2" \
         -device virtio-blk-pci,drive=disk \
-        -netdev user,id=net0 \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:{{luks-qemu-ssh-port-installed}}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -monitor "unix:{{luks-qemu-monitor-installed}},server,nowait" \
         -serial "file:{{luks-qemu-serial-installed}}" \
@@ -997,6 +1016,19 @@ luks-unlock-qemu target:
         key=$(echo "$label" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
         bash "live/src/show-screenshot.sh" "/tmp/luks-screenshot-${key}.ppm" "$label" || true
     done
+
+# Post-boot assertions against the unlocked, installed LUKS system
+# (projectbluefin/dakota#651): UEFI boot entry, Flatpak exclusion, and LUKS
+# cmdline UUID parseability (rd.luks.uuid=/rd.luks.name=), all over SSH.
+luks-verify-qemu target:
+    #!/usr/bin/bash
+    set -euo pipefail
+    # Post-boot assertions (projectbluefin/dakota#651). Assertion failures are
+    # observability-only unless STRICT_POST_BOOT=1 (handled inside
+    # verify-post-install.sh; CI does not set it, so a green run does NOT
+    # prove the invariants). SSH unreachable is also non-blocking unless
+    # STRICT_POST_BOOT=1 (then rc 2).
+    bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase"
 
 # Run Python unit tests.
 # Note: pytest passing means source-file invariants and mocked logic are OK.
@@ -1116,9 +1148,11 @@ plain-test-qemu target:
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
          plain-boot-qemu-installed {{target}}
     just output_dir={{output_dir}} plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
          plain-verify-qemu {{target}}
 
 # Drive the already auto-launched graphical installer in a fresh debug ISO.
@@ -1195,9 +1229,11 @@ gui-e2e target:
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
          plain-boot-qemu-installed {{target}}
     just output_dir={{output_dir}} plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
+         plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
          plain-verify-qemu {{target}}
 
 # Boot the live ISO in QEMU for a plain install test.
@@ -1318,7 +1354,7 @@ plain-boot-qemu-installed target:
         if [[ -x "$candidate" ]]; then QEMU="$candidate"; break; fi
     done
     [[ -z "$QEMU" ]] && { echo "qemu-kvm / qemu-system-x86_64 not found" >&2; exit 1; }
-    OVMF_CODE=""; OVMF_VARS=""
+    OVMF_CODE=""; OVMF_VARS=""; OVMF_VARS_TEMPLATE=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
               /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
@@ -1331,7 +1367,7 @@ plain-boot-qemu-installed target:
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-i386-vars.fd; do
-        if [[ -f "$f" ]]; then cp "$f" /var/tmp/dakota-plain-qemu-installed-vars.fd; OVMF_VARS=/var/tmp/dakota-plain-qemu-installed-vars.fd; break; fi
+        [[ -f "$f" ]] && { OVMF_VARS_TEMPLATE="$f"; break; }
     done
     [[ -z "$OVMF_CODE" ]] && { echo "OVMF firmware not found" >&2; exit 1; }
     rm -f "{{plain-qemu-monitor-installed}}" "{{plain-qemu-serial-installed}}"
@@ -1340,6 +1376,20 @@ plain-boot-qemu-installed target:
         [[ -S "{{plain-qemu-monitor-live}}" ]] || break
         sleep 2
     done
+    # Boot the installed disk from pristine NVRAM so OVMF enumerates the disk
+    # and finds its EFI loader. Carrying over the live VM's NVRAM (#267) left a
+    # stale BootOrder with no valid entry for this disk, so the firmware went
+    # straight to "EFI Internal Shell" and every plain install E2E (and the
+    # nightly ISO's E2E 4/4) failed from 2026-10-25. PLAIN_CARRY_LIVE_NVRAM=1
+    # restores the carry-over for debugging installer-written Boot#### entries.
+    OVMF_VARS=/var/tmp/dakota-plain-qemu-installed-vars.fd
+    if [[ "${PLAIN_CARRY_LIVE_NVRAM:-0}" == "1" && -f /var/tmp/dakota-plain-qemu-live-vars.fd ]]; then
+        cp /var/tmp/dakota-plain-qemu-live-vars.fd "$OVMF_VARS"
+    elif [[ -n "$OVMF_VARS_TEMPLATE" ]]; then
+        cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+    else
+        OVMF_VARS=""
+    fi
     QEMU_ACCEL="-accel kvm"
     QEMU_PREFIX=""
     if ! test -r /dev/kvm 2>/dev/null; then
@@ -1358,7 +1408,7 @@ plain-boot-qemu-installed target:
         -drive "if=pflash,format=raw,file=${OVMF_VARS}" \
         -drive "if=none,id=disk,file={{plain-qemu-disk}},format=raw,cache=unsafe" \
         -device virtio-blk-pci,drive=disk \
-        -netdev user,id=net0 \
+        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:{{plain-qemu-ssh-port-installed}}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -monitor "unix:{{plain-qemu-monitor-installed}},server,nowait" \
         -serial "file:{{plain-qemu-serial-installed}}" \
@@ -1391,8 +1441,16 @@ plain-verify-qemu target:
             if ! test -w "$MONITOR" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
             echo "screendump $SCREENSHOT" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
             bash "live/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
+            # Post-boot assertions (projectbluefin/dakota#651): UEFI entry +
+            # Flatpak exclusion, over SSH into the now-booted installed system.
+            # Assertion failures are observability-only unless
+            # STRICT_POST_BOOT=1 (handled inside verify-post-install.sh; CI
+            # does not set it); SSH unreachable is likewise non-blocking
+            # unless STRICT_POST_BOOT=1 (then rc 2).
+            POST_BOOT_RC=0
+            bash "scripts/verify-post-install.sh" "{{plain-qemu-ssh-port-installed}}" "none" || POST_BOOT_RC=$?
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
-            exit 0
+            exit "$POST_BOOT_RC"
         fi
         # Detect emergency shell / kernel panic — fast-fail
         if echo "$LOG" | grep -q "Emergency mode\|You are in emergency mode\|Kernel panic"; then

@@ -18,8 +18,8 @@ CI (build-iso.yml) — same entry point:
 | Stage | Base | Purpose |
 |---|---|---|
 | `ref` | Target image | Provides kernel modules |
-| `initramfs-native` | `ref` | Builds the dmsquash-live initramfs with the target's own dracut when it has one (Fedora/RPM images); otherwise records a fallback to the Debian stage |
-| `initramfs-builder` | Debian | Cross-builds the dmsquash-live initramfs against the target's kernel modules when the native stage fell back; otherwise passes the native initramfs through |
+| `initramfs-native` | `ref` | Builds the dmsquash-live + dakota-isofile (Ventoy/file-backed boot) initramfs with the target's own dracut when it has one (Fedora/RPM images); otherwise records a fallback to the Debian stage |
+| `initramfs-builder` | Debian | Cross-builds the dmsquash-live + dakota-isofile initramfs against the target's kernel modules when the native stage fell back; otherwise passes the native initramfs through |
 | final | Target image | Receives the selected initramfs + live-env setup + Flatpaks |
 
 `tests/test_containerfile_stage_inventory.py` keeps this table in step with
@@ -29,6 +29,9 @@ the `FROM ... AS <name>` lines in `live/Containerfile`.
 Dakota is GNOME OS / freedesktop-sdk based — no package manager, no dracut.
 Building the initramfs in Debian's native environment avoids cross-distro binary grafting.
 Only `/tmp/initramfs.img` crosses the stage boundary.
+The Debian base is pinned by `@sha256` digest (Renovate bumps it), so a retagged
+`debian:bookworm` cannot change what goes into the signed ISO unreviewed;
+`tests/test_containerfile_pinned_bases.py` enforces this for every external base.
 
 **What `configure-live.sh` does in the final stage:**
 - Sets `VERSION_ID=latest` in `os-release` (GNOME OS omits it)
@@ -46,11 +49,6 @@ Runs on the host (not inside a container). Assembles the final ISO from the expo
 **Why host-side?** Host tools (xorriso, mksquashfs, mtools) avoid the overhead
 of a build container and allow the justfile to control output paths directly.
 xorriso available via brew at `/home/linuxbrew/.linuxbrew/bin/xorriso`.
-
-**Multi-arch support:** Pass `--arch <arch>:<boot-tar>:<squashfs>` (repeatable) to produce
-a single fat-ESP ISO with per-arch kernels, initramfs images, squashfs rootfs images, and both
-`BOOTX64.EFI` + `BOOTAA64.EFI`. Single-arch positional-arg invocation is unchanged.
-See `docs/multi-arch.md` for design rationale and size estimates.
 
 ## ISO layout
 
@@ -104,8 +102,8 @@ at `/var/lib/containers/storage`. The installer finds it there for offline insta
 without a network pull. No separate `store.squashfs.img` is needed.
 
 `scripts/build-live-squashfs.sh --oci-image <ref>` populates the store (used by both
-`just iso-sd-boot` and CI). It squashes the image to a single layer via `buildah commit
---squash`, then runs `skopeo copy` **inside the installer container** so tar-split
+`just iso-sd-boot` and CI). It squashes the image to a single layer via `podman build
+--squash-all` (`scripts/payload-oci.sh`), then runs `skopeo copy` **inside the installer container** so tar-split
 metadata is written in JSON format (the live ISO expects JSON; build-host
 containers-storage emits binary tar-split). The VFS staging dir is then copied into the
 squashfs root via `cp -a` (not bind-mount — see CI lessons).
@@ -170,7 +168,7 @@ Unit tests live in `tests/` and run via `pytest tests/ -v` (gated on every PR by
 | File | Tests | Coverage |
 |---|---|---|
 | `tests/test_luks_unlock.py` | 67 | `luks-unlock.py`: virsh/QEMU screenshot, serial parsing, passphrase injection, unlock/boot verdicts |
-| `tests/test_multi_arch_iso.py` | 4 | `build-iso.sh`: `--arch` flag arg parsing; single-arch + multi-arch ISO integration (skipped if tools absent) |
+| `tests/test_build_iso_assembly.py` | 2 | `live/src/build-iso.sh`: real ISO assembly from a mock boot tar + squashfs; unknown flags rejected (skipped if tools absent) |
 | `tests/test_iso_sd_boot.py` | 8 | `iso-sd-boot.sh`: arg/env option plumbing into `just` container invocation, composefs true/false modes, OCI payload embed path + storage driver, compression tiers |
 
 Run locally:

@@ -4,23 +4,23 @@ How the GitHub Actions workflows build, test, and publish Dakota ISOs.
 
 ## ISOs produced
 
-Two ISOs are built and published to R2 on a daily schedule (both also support `workflow_dispatch`):
+Two ISOs are built and published to R2 (Dakota daily, Utah monthly; both also support `workflow_dispatch`):
 
 | ISO | Workflow | R2 latest name | Image embedded | Trigger |
 |---|---|---|---|---|
-| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | Daily 03:00 UTC, `workflow_dispatch` (manual or automated by Mergeraptor upon Dakota `:stable` promotion) |
-| Utah | `build-iso-utah.yml` | `utah-live-latest.iso` | `projectbluefin/utah:testing` | Daily 04:00 UTC, `workflow_dispatch` |
+| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | Daily 03:00 UTC, `workflow_dispatch` |
+| Utah | `build-iso-utah.yml` | `utah-live-latest.iso` | `projectbluefin/utah:stable` | Monthly, 8th 04:00 UTC, `workflow_dispatch` |
 
 The Bluefin and Bluefin LTS HWE ISOs are **retired**. As of
-#228 this repo ships Dakota and Utah; `build-iso-utah.yml` runs daily at 04:00 UTC
-and via `workflow_dispatch`.
+#228 this repo ships Dakota and Utah; `build-iso-utah.yml` runs monthly on the 8th at 04:00 UTC
+(after Utah's Monday `:stable` release) and via `workflow_dispatch`.
 See [`docs/variants.md`](variants.md) for the full dormancy map and revival steps.
 
 | ISO | Workflow | R2 latest name | State |
 |---|---|---|---|
 | Bluefin | `build-iso-utah.yml` | `bluefin-live-latest.iso` | retired (#228) — matrix entry disabled |
 | Bluefin LTS HWE | `build-iso-utah.yml` | `bluefin-lts-hwe-live-latest.iso` | retired (#228) — matrix entry disabled |
-| Utah | `build-iso-utah.yml` | `utah-live-latest.iso` | active daily 04:00 UTC + dispatch |
+| Utah | `build-iso-utah.yml` | `utah-live-latest.iso` | active monthly (8th 04:00 UTC) + dispatch |
 
 The Dakota ISO is a **unified NVIDIA ISO** — the live environment boots the NVIDIA variant; the offline OCI store lets the installer deploy to non-NVIDIA hardware without a network pull (bootc auto-rebases on first upgrade).
 
@@ -33,8 +33,8 @@ gh workflow run build-iso.yml --ref main
 
 | Workflow | File | Trigger |
 |---|---|---|
-| Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch` (includes automated dispatch from `projectbluefin/dakota`'s `execute-release.yml` with promoted image digest) |
-| Utah Build & Publish | `build-iso-utah.yml` | Daily 04:00 UTC, `workflow_dispatch` (bluefin entries retired in #228) |
+| Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch` |
+| Utah Build & Publish | `build-iso-utah.yml` | Monthly 8th 04:00 UTC, `workflow_dispatch` (bluefin entries retired in #228) |
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
@@ -52,7 +52,7 @@ gh workflow run build-iso.yml --ref main
 ### Pipeline steps
 
 1. **Free disk space** — `ublue-os/remove-unwanted-software` reclaims ~119 GB at `/var/iso-build`
-2. **Install deps** — `apt-get install podman buildah skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
+2. **Install deps** — `apt-get install podman skopeo mtools xorriso squashfs-tools dosfstools isomd5sum`
 3. **Log in to GHCR** — `sudo podman login ghcr.io`
 4. **Install cosign** — `sigstore/cosign-installer` (SHA-pinned)
 5. **Verify payload signature** — `scripts/verify-image-signature.sh ghcr.io/projectbluefin/dakota-nvidia:stable` checks the keyless cosign signature — a projectbluefin workflow identity, run from the repository that owns the image (`--certificate-github-workflow-repository projectbluefin/dakota` here) — and prints the digest-pinned ref; the job fails if verification fails
@@ -63,7 +63,8 @@ gh workflow run build-iso.yml --ref main
 10. **Generate checksum** — latest variant
 11. **Plain-install E2E gates** — live boot, ENOSPC export gate, full install, installed-boot verification
 12. **Boot verification** — QEMU UEFI smoke boot on the production ISO
-13. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, and production boot smoke all succeed
+13. **Sign checksum** — `cosign sign-blob` (keyless, GitHub OIDC; the job has `id-token: write`) writes `<CHECKSUM>.sig` and `<CHECKSUM>.pem` next to the checksum; runs under the upload's exact conditions and before it, so a signing failure publishes nothing
+14. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, production boot smoke, and signing all succeed
 
 > ⚠️ **Do not add `--store` back or re-add the offline store squashfs step.**
 > The OCI image is already embedded in the live squashfs via VFS containers-storage.
@@ -112,11 +113,47 @@ new ISO  → latest
 ```
 
 Objects published per build:
-- `dakota-live-latest.iso` + `-CHECKSUM` (always overwritten)
-- `dakota-live-backup-{1,2,3}.iso` + `-CHECKSUM` (rotated; slots beyond 3 are pruned)
+- `dakota-live-latest.iso` + `-CHECKSUM` + `-CHECKSUM.sig` + `-CHECKSUM.pem` (always overwritten)
+- `dakota-live-backup-{1,2,3}.iso` + `-CHECKSUM` (rotated; slots beyond 3 are pruned; the
+  rotation moves only the ISO and checksum, so backup checksums carry no signature)
 
 All are updated only after ENOSPC gate, full install, installed-boot verification,
 and production ISO smoke boot all pass.
+
+### Verifying a downloaded ISO
+
+The checksum and the ISO are uploaded by the same job with the same credentials, so
+the checksum on its own only guards against a corrupted download — anyone who can
+write the bucket can replace both consistently (#220). The checksum is therefore
+signed with keyless cosign; the signature binds it to a GitHub Actions run of this
+repository's publish workflow, which a bucket write cannot forge.
+
+```bash
+NAME=dakota-live-latest.iso   # or utah-live-latest.iso
+for f in "$NAME" "$NAME-CHECKSUM" "$NAME-CHECKSUM.sig" "$NAME-CHECKSUM.pem"; do
+  curl -fsSLO "https://projectbluefin.dev/$f"
+done
+
+# 1. The checksum was produced by build-iso.yml / build-iso-utah.yml on main.
+cosign verify-blob "$NAME-CHECKSUM" \
+  --signature "$NAME-CHECKSUM.sig" \
+  --certificate "$NAME-CHECKSUM.pem" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp \
+    '^https://github\.com/projectbluefin/dakota-iso/\.github/workflows/build-iso(-utah)?\.yml@refs/heads/main$'
+
+# 2. The ISO matches the verified checksum.
+sha256sum -c "$NAME-CHECKSUM"
+```
+
+Both commands must succeed. Pin the identity exactly as above: a regexp that only
+anchors on the organisation would accept a signature from any projectbluefin
+workflow (the mistake `scripts/verify-image-signature.sh` fixed in #259).
+
+Only the `latest` checksum is signed. Backup slots lose the signature in rotation, and
+`promote-release.yml` rewrites the checksum for the promoted filename, so named releases
+(`dakota-live-alpha6.iso` etc.) have no `.sig`/`.pem` yet — verify those by promoting
+only from a `latest` whose signature you have checked first.
 
 ### README table auto-refresh
 
@@ -129,7 +166,7 @@ server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
 
 ## build-iso-utah.yml
 
-**Triggers:** Daily 04:00 UTC (`0 4 * * *`), `workflow_dispatch`.
+**Triggers:** Monthly on the 8th, 04:00 UTC (`0 4 8 * *`), `workflow_dispatch`.
 **Matrix:** `utah` (active); `bluefin` and `bluefin-lts-hwe` retired in #228.
 **Runner:** `ubuntu-24.04`
 
@@ -253,16 +290,19 @@ Runs `pytest tests/ -v` against Python 3.11.
 > are `test-luks-install.yml` (LUKS E2E) and `test-plain-install.yml` (plain install E2E).
 > Never claim a change is verified based on `pytest` alone.
 
-| File | Tests | What it checks |
-|---|---|---|
-| `tests/test_live_build_invariants.py` | 32 | Static assertions on `live/Containerfile`, `live/src/build-iso.sh`, `live/src/configure-live.sh`, publish workflows, E2E workflow wiring, and variant config files. Also pins the DEBUG-only SSH guard and publish gating/concurrency. |
-| `tests/test_luks_unlock.py` | 67 | `live/src/luks-unlock.py` routing, passphrase injection key sequences, screenshot parsing, and the `qemu`/`libvirt` unlock state machines (when to type, success vs. emergency-shell exit codes). |
-| `tests/test_multi_arch_iso.py` | 2 | `live/src/build-iso.sh --arch` flag: single-arch backwards compat and two-arch assembly. **Skipped when `xorriso`/`mtools` are absent.** CI installs these tools so the tests run; they are skipped only in local environments lacking them — and the skip message names the exact apt packages to install. |
+Every `tests/test_*.py` file is collected automatically, so this page does not keep a
+per-file list (a hand-maintained table here drifted out of date). To see what is covered,
+browse [`tests/`](../tests/) — most modules open with a docstring saying what they guard — or run
+`pytest tests/ --collect-only -q`.
+
+Some tests skip themselves when optional tooling is missing. For example,
+`tests/test_build_iso_assembly.py` needs `xorriso`/`mtools`; CI installs them so the tests
+run, and the skip message names the apt packages to install locally.
 
 Run locally with:
 ```bash
 sudo apt-get install -y xorriso dosfstools mtools squashfs-tools
-pip install pytest
+pip install pytest PyYAML jsonschema
 pytest tests/ -v
 ```
 
@@ -334,7 +374,7 @@ baked the OCI into the squashfs.  CI diverged from this path and the gap was und
 because CI only validated boot, not install.
 
 **Fix:** `scripts/build-live-squashfs.sh` now accepts `--oci-image <ref>`.  When provided it:
-1. Squashes the payload to a single layer via `buildah commit --squash`
+1. Squashes the payload to a single layer via `podman build --squash-all`
 2. Runs `skopeo copy` inside the live container (for JSON tar-split compatibility)
 3. Copies the populated VFS staging dir into the squashfs root with `cp -a` before mksquashfs
 
@@ -564,15 +604,13 @@ error: Installing to filesystem: No filesystem uuid found in target root
 squashing the OCI payload. fisherman always formats root partitions with `-L root`, so
 `LABEL=root` is a stable, reliable mount spec that bypasses UUID detection entirely.
 
-**How injection works:**
+**How injection works** (`payload_build` in `scripts/payload-oci.sh`):
+```dockerfile
+FROM ${PAYLOAD_IMAGE}
+COPY bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml
 ```
-buildah from --pull-never ${PAYLOAD_IMAGE}
-echo "root-mount-spec = 'LABEL=root'" > .bootc-root-mount.toml
-buildah copy ${CTR} .bootc-root-mount.toml /tmp/.bootc-root-mount.toml
-buildah run  ${CTR} -- sh -c 'cat /tmp/.bootc-root-mount.toml >> /usr/lib/bootc/install/00-defaults.toml'
-buildah commit --squash ...
-```
-This is done in the `iso-sd-boot` recipe in `justfile` before buildah commit.
+built with `podman build --pull=never` (plus `--squash-all` for composefs payloads).
+Both `scripts/iso-sd-boot.sh` and `scripts/build-live-squashfs.sh` use it.
 
 ---
 
@@ -617,13 +655,14 @@ fully installed.
 **Symptom:** Black screen on boot on all NVIDIA hardware. Live ISO appears to hang
 after BIOS handoff with no display output.
 
-**Root cause:** `nvidia-drm.modeset=1` was never set in any of the four boot entry
+**Root cause:** `nvidia-drm.modeset=1` was never set in any of the boot entry
 locations in `live/src/build-iso.sh`. Without KMS
 enabled, the NVIDIA proprietary driver cannot take over the framebuffer from the
 BIOS, leaving the screen dark even though the system is running fine.
 
-**Fix:** Added `nvidia-drm.modeset=1` to all 4 boot cmdline entries in both files
-(BLS entries, loopback GRUB entries, single-arch and multi-arch paths).
+**Fix:** Added `nvidia-drm.modeset=1` to every boot cmdline entry
+(BLS entries and loopback GRUB entries; at the time there were four, two of them
+in the since-removed multi-arch path).
 
 **Regression test:** `TestBootCmdline::test_live_build_iso_has_nvidia_drm_modeset`
 and `test_dakota_build_iso_has_nvidia_drm_modeset` in `tests/test_live_build_invariants.py`

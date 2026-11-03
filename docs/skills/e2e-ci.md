@@ -13,7 +13,7 @@ tags:
   - testing
 description: Architecture, QEMU disk configuration, ENOSPC prevention, and live/installed boot verification for dakota-iso.
 version: "1.0"
-last_updated: "2026-07-30"
+last_updated: "2026-07-31"
 metadata:
   type: reference
 context7_sources:
@@ -258,7 +258,8 @@ install would complete but the installed system drops to emergency mode on first
 
 **Current state:** All variants (`dakota`, `bluefin`, `bluefin-lts-hwe`) default to
 `filesystem: btrfs` in `images.json` and all E2E recipes. XFS is available only as a
-user-selectable option in the installer UI. `plain-install-qemu` uses `btrfs`.
+user-selectable option in the installer UI, and only for non-composefs variants (fisherman
+rejects composefs on XFS). `plain-install-qemu` uses `btrfs`.
 
 **Why CI didn't catch it initially:**
 1. `plain-install-qemu` hardcoded `"filesystem": "btrfs"` — `mkfs.xfs` was never called in CI
@@ -334,6 +335,30 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 
 ---
 
+## Post-boot assertions need SSH into the *installed* system, not just the live env (2026-06-25, dakota#651)
+
+**Symptom:**
+`efibootmgr -v` written by fisherman lives in host UEFI NVRAM and `/proc/cmdline` is a kernel-runtime artifact — neither can be checked from a BLS entry file or from the live environment. The live-env-only SSH (`debug-ssh-banner`, `configure-live.sh`) doesn't help here because it only covers the *live ISO*, not the freshly-installed target disk before its first boot.
+
+**The fix:**
+`scripts/fisherman-install.sh --enable-debug-ssh` mounts the freshly-installed deployment (same mount/unlock logic already used for the hostname-write workaround) and patches `root:root` + a `sshd.service` system-preset + `PermitRootLogin`/`PasswordAuthentication` directly onto disk — mirroring `configure-live.sh`'s `DEBUG=1` convention but applied to the *installed* system instead of the live squashfs. `luks-boot-qemu-installed`/`plain-boot-qemu-installed` forward a second SSH port (`*-qemu-ssh-port-installed`) to this now-enabled sshd. `scripts/verify-post-install.sh` then SSHes in as `root` once the installed system reaches its boot target and asserts `efibootmgr -v`, `flatpak list --system --app`, and (LUKS only) `/proc/cmdline`. Test-only — never shipped in a production image.
+
+**Non-blocking by default:** these assertions are observability-only until fisherman #1/#2 and common#385 land. On assertion failure `scripts/verify-post-install.sh` prints `⚠️ ... NON-BLOCKING` plus a `::warning::` annotation and exits 0; only `STRICT_POST_BOOT=1` makes it exit 1 and fail the recipes, and CI does not set it. SSH unreachable is also non-blocking by default (`::warning::`, exit 0) until the debug-SSH path has a green E2E run on main; under `STRICT_POST_BOOT=1` it exits 2. The LUKS installed VM reuses the live VM's OVMF vars file so installer-written Boot#### entries survive the reboot. The plain installed VM boots from the pristine OVMF vars template by default (a carried-over NVRAM had no valid BootOrder entry for the disk and dropped OVMF to the EFI shell); set `PLAIN_CARRY_LIVE_NVRAM=1` to opt back into the carry-over when debugging installer-written entries.
+
+**Lesson:** when a post-boot invariant can only be observed at runtime (firmware NVRAM state, live kernel cmdline, running daemon output), don't try to approximate it from static files during install — enable a throwaway debug path into the actual booted target instead.
+
+### composefs-native `/etc` lives under `state/deploy/`, not `ostree/` (2026-10-27, #283)
+
+**Symptom:** plain E2E logs `WARNING: deployment etc/ not found under …/ostree — post-install patches not applied`, then `❌ Post-boot assertions SKIPPED: could not reach installed system over SSH`. The hostname patch and the debug-SSH override were never written, so the post-boot assertions above never ran.
+
+**Root cause:** `fisherman-install.sh` only searched `ostree/bootc/deploy` and `ostree/deploy`. A composefs-native install (`bootc install --composefs-backend`) keeps the writable `/etc` at `state/deploy/<composefs-hash>/etc` on the root filesystem — the tree bind-mounted at `/etc` on boot, and the path fisherman's own `DefaultComposeFsDeployEtcDir` writes the hostname to. These installs *also* create an `ostree/` directory, so "ostree/ exists" says nothing about the layout.
+
+**Fix:** search `state/deploy/*/etc` first, then the two `ostree/` layouts. When nothing matches, the script prints every `etc/` within depth 4 plus the root listing, so the next layout change shows up in the CI log.
+
+**Note:** `state/deploy/<hash>/` holds only `etc` (and state), not `usr` — the `ssh.service` vs `sshd.service` probe there falls back to `sshd.service`, which is what dakota ships.
+
+---
+
 ## Red Flags
 
 - Claiming "tests pass" without specifying which gate (`plain-e2e`, `luks-test-qemu`, or unit tests)
@@ -344,6 +369,8 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 - Using `installer_channel=dev` in production builds; the scheduled GUI
   acceptance matrix deliberately tests both dev and stable
 - SSH connecting to a production ISO that has sshd disabled (build with `debug=1` for testing)
+- Claiming post-boot assertions (UEFI/Flatpak/LUKS cmdline, dakota#651) pass without SSHing into the *installed, booted* disk — a BLS entry or live-env check is not equivalent
+- Treating a green `plain-test-qemu`/`luks-test-qemu` run as proof the post-boot assertions passed — they soft-fail unless `STRICT_POST_BOOT=1`; grep the log for `✅ All post-boot assertions passed`
 
 ### Drive the auto-launched installer through AT-SPI
 
@@ -373,6 +400,15 @@ of those forcing settings. `just gui-e2e dakota` then uses the existing plain
 QEMU boot and verification recipes around the guest driver. On a failure,
 retain the driver's tree/log diagnostics and the serial logs.
 
+### Diagnostics tree dump must walk deeper than page classification (2026-10-27)
+
+The installer's page labels sit around depth 22 of its AT-SPI tree, but the
+driver walked only 12 levels, so failure dumps never showed the real page
+(#244). The failure dump now uses `DIAGNOSTICS_MAX_DEPTH = 40`. Page
+classification in `run()` keeps the default depth of 12 on purpose: inactive
+installer pages also report `SHOWING` (#119), so walking deeper there would
+mix hidden pages into classification. Change those two depths independently.
+
 Source: Context7 `/websites/api_pygobject_gnome` confirms the
 `gi.require_version(...); from gi.repository import ...` binding pattern.
 The current GNOME OS image is the authority for the `Atspi` namespace used by
@@ -386,6 +422,11 @@ Before marking any E2E work complete:
 - [ ] fisherman install exits `EXIT:0` in install.log
 - [ ] Installed system boots to Graphical target (not just QEMU started)
 - [ ] `just plain-test-qemu <target>` completed with `✅ Installed system boot verified`
+- [ ] `just plain-test-qemu <target>` / `just luks-test-qemu <target>` log
+      `✅ All post-boot assertions passed` (UEFI entry, Flatpak exclusion, and for
+      LUKS, cmdline UUID — see `scripts/verify-post-install.sh`, dakota#651).
+      Exit status alone is not enough: failures are non-blocking unless run
+      with `STRICT_POST_BOOT=1`
 - [ ] ISO size ~5.3 GB (release) or ~6.5 GB (fast) — not 8+ GB (double-embedded store)
 - [ ] squashfs root contains `proc/`, `sys/`, `dev/` as empty dirs
 - [ ] GPT type GUID = `28732ac1...` (EFI System Partition, not Basic Data)

@@ -1,11 +1,11 @@
 {
-  "default_image": "ghcr.io/projectbluefin/utah:testing",
+  "default_image": "ghcr.io/projectbluefin/utah:stable",
   "fallback_flatpaks": [],
   "images": [
     {
       "name": "Utah",
-      "imgref": "ghcr.io/projectbluefin/utah:testing",
-      "nvidia_imgref": "ghcr.io/projectbluefin/utah:testing",
+      "imgref": "ghcr.io/projectbluefin/utah:stable",
+      "nvidia_imgref": "ghcr.io/projectbluefin/utah:stable",
       "desc": "Utah — Bluefin on Fedora Hummingbird",
       "icon": "resource:///org/bootcinstaller/Installer/images/bluefin.png",
       "bootloader": "grub2",

@@ -25,7 +25,7 @@ Covered behaviour
 3. Container build delegation invokes `just debug=... installer_channel=... container <target>`.
 4. Composefs mode (composefs=true) squashes the payload image, inspects diff_id, updates
    ostree.final-diffid annotation/label, and embeds into VFS containers-storage.
-5. Non-composefs mode (composefs=false) commits without squash to preserve ostree commits,
+5. Non-composefs mode (composefs=false) builds the payload without squash to preserve ostree commits,
    and embeds into overlay containers-storage.
 6. Compression selection sets mksquashfs block size and compression level (fast: level 3,
    128K; release: level 15, 1M).
@@ -33,7 +33,7 @@ Covered behaviour
    and output ISO path.
 8. A ghcr.io/projectbluefin payload_ref is cosign-verified through
    scripts/verify-image-signature.sh, pulled by the verified digest and handed to
-   `buildah from --pull-never` as that digest; a failed verification aborts before any
+   the payload `podman build --pull=never` as that digest; a failed verification aborts before any
    container tooling runs; non-project refs skip verification and stay --pull-never.
 """
 
@@ -69,7 +69,7 @@ class IsoSdBootHarness(unittest.TestCase):
         # Copy script under test, preserving stub PATH precedence
         script_content = SCRIPT.read_text()
         # In iso-sd-boot.sh, two lines prepend hardcoded /usr/sbin:/usr/bin to PATH,
-        # which would shadow stubbed podman/buildah binaries in an unprivileged test sandbox.
+        # which would shadow stubbed podman/skopeo binaries in an unprivileged test sandbox.
         # Preserve the stub PATH in front:
         script_content = self._rewrite_path_line(
             script_content,
@@ -85,12 +85,13 @@ class IsoSdBootHarness(unittest.TestCase):
         self.script_under_test = self.sandbox / "scripts" / "iso-sd-boot.sh"
         self.script_under_test.write_text(script_content)
         self.script_under_test.chmod(0o755)
-        shutil.copy2(REPO / "scripts" / "variant-config.sh", self.sandbox / "scripts" / "variant-config.sh")
-        (self.sandbox / "scripts" / "variant-config.sh").chmod(0o755)
+        for helper in ("variant-config.sh", "payload-oci.sh"):
+            shutil.copy2(REPO / "scripts" / helper, self.sandbox / "scripts" / helper)
+            (self.sandbox / "scripts" / helper).chmod(0o755)
 
         # Stub the cosign gate. The real script resolves the tag to a verified digest and
         # prints "<repo>@<digest>"; the stub mirrors that contract so the tests can assert
-        # the digest-pinned ref is what reaches podman pull / buildah from. Setting
+        # the digest-pinned ref is what reaches podman pull / the payload build. Setting
         # VERIFY_FAIL=1 makes it exit non-zero like a failed `cosign verify`.
         self.verify_stub = self.sandbox / "scripts" / "verify-image-signature.sh"
         self.verify_stub.write_text(
@@ -178,6 +179,16 @@ class IsoSdBootHarness(unittest.TestCase):
         # into the call log while it still exists.
         self._stub("podman", f"""
             echo "podman $*" >> "$STUB_CALLS"
+            if [ "$1" = "build" ]; then
+                _prev=""
+                for _arg in "$@"; do
+                    if [ "$_prev" = "-f" ] && [ -f "$_arg" ]; then
+                        sed 's|^|containerfile |' "$_arg" >> "$STUB_CALLS"
+                    fi
+                    _prev="$_arg"
+                done
+                exit 0
+            fi
             if [ "$1" = "run" ]; then
                 for _arg in "$@"; do
                     case "$_arg" in
@@ -187,6 +198,10 @@ class IsoSdBootHarness(unittest.TestCase):
                             ;;
                     esac
                 done
+                exit 0
+            fi
+            if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+                echo "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
                 exit 0
             fi
             if [ "$1" = "image" ] && [ "$2" = "mount" ]; then
@@ -275,6 +290,11 @@ class IsoSdBootHarness(unittest.TestCase):
             env=env,
             cwd=self.sandbox,
         )
+
+    def payload_builds(self):
+        """`podman build` calls that prepare the payload."""
+        return [c for c in self.recorded_calls()
+                if c.startswith("podman build") and "localhost/iso-payload-work:" in c]
 
     def recorded_calls(self):
         if not self.calls_log.exists():
@@ -385,15 +405,18 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
         self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
 
         calls = self.recorded_calls()
-        buildah_calls = [c for c in calls if c.startswith("buildah ")]
+        self.assertFalse([c for c in calls if c.startswith("buildah")],
+                         "iso-sd-boot.sh must not need buildah")
 
-        # Commit with --squash for composefs
-        squash_commits = [c for c in buildah_calls if "commit --squash" in c]
-        self.assertTrue(len(squash_commits) >= 1, "buildah commit --squash was not called for composefs mode")
+        # Every payload build squashes for composefs
+        builds = self.payload_builds()
+        self.assertEqual(len(builds), 2, f"expected inject+relabel payload builds: {calls!r}")
+        for build in builds:
+            self.assertIn("--squash-all", build)
 
-        # Config with ostree.final-diffid
-        annot_configs = [c for c in buildah_calls if "config --annotation ostree.final-diffid" in c]
-        self.assertTrue(len(annot_configs) >= 1, "ostree.final-diffid annotation was not set")
+        # Second pass records the squashed diff_id as label and annotation
+        self.assertIn("--label ostree.final-diffid=", builds[1])
+        self.assertIn("--annotation ostree.final-diffid=", builds[1])
 
         # Delegate build-iso receives --title as ONE argument, then the boot-files tar,
         # the rootfs squashfs and the output ISO path, in that order. Asserting the full
@@ -415,13 +438,17 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
         self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
 
         calls = self.recorded_calls()
-        buildah_calls = [c for c in calls if c.startswith("buildah ")]
+        self.assertFalse([c for c in calls if c.startswith("buildah")],
+                         "iso-sd-boot.sh must not need buildah")
 
-        # Must commit WITHOUT --squash
-        squash_commits = [c for c in buildah_calls if "commit --squash" in c]
-        self.assertEqual(len(squash_commits), 0, "buildah commit --squash must NOT be called in non-composefs mode")
-        plain_commits = [c for c in buildah_calls if "commit " in c and "--squash" not in c]
-        self.assertTrue(len(plain_commits) >= 1, "plain buildah commit was not called")
+        # Must build WITHOUT squashing
+        builds = self.payload_builds()
+        self.assertEqual(len(builds), 1, f"expected one payload build: {calls!r}")
+        self.assertNotIn("--squash", builds[0], "payload must NOT be squashed in non-composefs mode")
+        self.assertIn(
+            "containerfile COPY bootc-root-mount.toml /usr/lib/bootc/install/00-defaults.toml",
+            calls,
+        )
 
         # Delegate build-iso receives the LTS title plus boot tar, squashfs, ISO in order
         invocations = self.delegate_invocations()
@@ -520,7 +547,7 @@ class TestIsoSdBootPayloadVerification(IsoSdBootHarness):
         return matches[0]
 
     def test_project_payload_is_verified_pulled_and_consumed_by_digest(self):
-        """ghcr.io/projectbluefin payload: verify → pull pinned digest → buildah from pinned digest."""
+        """ghcr.io/projectbluefin payload: verify → pull pinned digest → build FROM pinned digest."""
         res = self.run_script(env_vars={"TARGET": "dakota", "OUTPUT_DIR": str(self.sandbox / "output")})
         self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
 
@@ -529,16 +556,16 @@ class TestIsoSdBootPayloadVerification(IsoSdBootHarness):
 
         self.assertIn("verify-image-signature ghcr.io/projectbluefin/dakota:stable", calls)
         self.assertIn(f"podman pull {pinned}", calls)
-        self.assertIn(f"buildah from --pull-never {pinned}", calls)
-        self.assertNotIn("buildah from --pull-never ghcr.io/projectbluefin/dakota:stable", calls,
-                         "buildah must not consume the unverified mutable tag")
+        self.assertIn(f"containerfile FROM {pinned}", calls)
+        self.assertNotIn("containerfile FROM ghcr.io/projectbluefin/dakota:stable", calls,
+                         "the payload build must not consume the unverified mutable tag")
 
         # The pull must come after the intermediate `podman image prune`: a digest-only
         # pull has no tag, so a prune running later would discard it as dangling.
         self.assertLess(self._call_index(calls, "podman image prune"),
                         self._call_index(calls, "podman pull "))
         self.assertLess(self._call_index(calls, "podman pull "),
-                        self._call_index(calls, f"buildah from --pull-never {pinned}"))
+                        self._call_index(calls, f"containerfile FROM {pinned}"))
 
         # The embedded store still names the image by its payload_ref tag, which is what
         # the installer recipe inside the ISO looks up.
@@ -547,7 +574,7 @@ class TestIsoSdBootPayloadVerification(IsoSdBootHarness):
         self.assertIn("containers-storage:ghcr.io/projectbluefin/dakota:stable", embed[0])
 
     def test_failed_verification_aborts_before_any_container_tooling(self):
-        """A failed cosign verify stops the build before just/podman/buildah run."""
+        """A failed cosign verify stops the build before just/podman run."""
         res = self.run_script(env_vars={
             "TARGET": "dakota",
             "OUTPUT_DIR": str(self.sandbox / "output"),
@@ -562,7 +589,7 @@ class TestIsoSdBootPayloadVerification(IsoSdBootHarness):
         self.assertEqual(self.delegate_invocations(), [])
 
     def test_empty_payload_ref_is_refused(self):
-        """An empty payload_ref fails loudly instead of handing '' to the verifier or buildah."""
+        """An empty payload_ref fails loudly instead of handing '' to the verifier or podman."""
         (self.sandbox / "dakota" / "payload_ref").write_text("\n")
         res = self.run_script(env_vars={"TARGET": "dakota", "OUTPUT_DIR": str(self.sandbox / "output")})
         self.assertNotEqual(res.returncode, 0)
@@ -580,4 +607,5 @@ class TestIsoSdBootPayloadVerification(IsoSdBootHarness):
         calls = self.recorded_calls()
         self.assertFalse([c for c in calls if c.startswith("verify-image-signature ")])
         self.assertFalse([c for c in calls if c.startswith("podman pull ")])
-        self.assertIn("buildah from --pull-never localhost/my-variant:dev", calls)
+        self.assertIn("containerfile FROM localhost/my-variant:dev", calls)
+        self.assertTrue(all("--pull=never" in c for c in self.payload_builds()))

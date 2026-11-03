@@ -45,6 +45,7 @@ TEST_PLAIN_WORKFLOW = REPO / ".github" / "workflows" / "test-plain-install.yml"
 LIVE_LUKS_UNLOCK = REPO / "live" / "src" / "luks-unlock.py"
 BUILD_LIVE_SQUASHFS = REPO / "scripts" / "build-live-squashfs.sh"
 ISO_SD_BOOT = REPO / "scripts" / "iso-sd-boot.sh"
+PAYLOAD_OCI = REPO / "scripts" / "payload-oci.sh"
 README = REPO / "README.md"
 
 # Variant directories that must be fully configured.
@@ -285,6 +286,49 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
             "Debian dracut cross-build must include --add 'dmsquash-live' "
             "for the live boot to work.",
         )
+
+    def test_every_initramfs_build_adds_dakota_isofile(self):
+        """Both dracut calls must build in the Ventoy/file-backed boot module.
+
+        loopback.cfg passes rd.dakota.isofile= on the kernel command line; only
+        the 95dakota-isofile module reads it. A Containerfile rewrite once
+        dropped the module silently, leaving file-backed ISO boot broken.
+        """
+        add_lines = [
+            line for line in self.content.splitlines()
+            if '--add "' in line
+        ]
+        self.assertGreaterEqual(
+            len(add_lines), 2,
+            "Native and Debian initramfs builds must both declare --add modules.",
+        )
+        for line in add_lines:
+            self.assertIn("dakota-isofile", line)
+
+    def test_dakota_isofile_module_copied_into_each_dracut_stage(self):
+        """Each stage that runs dracut must have the module in modules.d."""
+        copy = (
+            "COPY src/dracut/95dakota-isofile "
+            "/usr/lib/dracut/modules.d/95dakota-isofile"
+        )
+        self.assertTrue(
+            (REPO / "live" / "src" / "dracut" / "95dakota-isofile"
+             / "module-setup.sh").is_file()
+        )
+        native = self.content.split("AS initramfs-native", 1)[1].split(
+            "FROM debian:", 1
+        )[0]
+        debian = self.content.split("AS initramfs-builder", 1)[1].split(
+            "\nFROM ", 1
+        )[0]
+        for name, stage in (("initramfs-native", native),
+                            ("initramfs-builder", debian)):
+            self.assertIn("dracut -v", stage)
+            self.assertIn(copy, stage, f"{name} must COPY the dakota-isofile module")
+            self.assertLess(
+                stage.index(copy), stage.index("dracut -v"),
+                f"{name} must COPY the module before running dracut",
+            )
 
     def test_debian_stage_does_not_add_virtio_modules(self):
         """Debian cross-build must NOT add virtio modules (breaks GnomeOS boot).
@@ -1193,10 +1237,10 @@ class TestBuildLiveSquashfs(unittest.TestCase):
         )
 
     def test_composefs_payload_commit_squash(self):
-        """Every `buildah commit` in the composefs payload path must pass --squash.
+        """The composefs payload path must squash every payload build.
 
-        Chunkified payload images carry ~120 layers. Committing them without
-        --squash explodes the VFS containers-storage directory embedded in the
+        Chunkified payload images carry ~120 layers. Embedding them without
+        squashing explodes the VFS containers-storage directory embedded in the
         squashfs, inflating ISOs from ~5 GB to ~12 GB (recurring regression
         documented in AGENTS.md).
         """
@@ -1212,15 +1256,43 @@ class TestBuildLiveSquashfs(unittest.TestCase):
             len(lines),
         )
 
-        commits = [l.strip() for l in lines[start:end] if re.search(r"\bbuildah commit\b", l)]
-        self.assertTrue(commits, "no `buildah commit` found in the composefs payload path")
-        for commit in commits:
-            self.assertIn(
-                "--squash",
-                commit,
-                f"`buildah commit` in the composefs payload path is missing --squash: {commit!r}. "
-                "Omitting --squash inflates ISO size from ~5 GB to ~12 GB.",
+        calls = [l.strip() for l in lines[start:end] if "payload_to_oci_archive" in l]
+        self.assertTrue(calls, "no payload_to_oci_archive call in the composefs payload path")
+        for call in calls:
+            self.assertTrue(
+                call.endswith(" true"),
+                f"composefs payload path must ask payload_to_oci_archive to squash: {call!r}. "
+                "Omitting the squash inflates ISO size from ~5 GB to ~12 GB.",
             )
+
+        # Every build on the squash path of the helper passes --squash-all.
+        helper = PAYLOAD_OCI.read_text()
+        squash_path = helper[helper.index('payload_build "${base_tag}" "${from}" true --squash-all'):]
+        builds = re.findall(r"^\s*payload_build .*$", squash_path, re.MULTILINE)
+        self.assertEqual(len(builds), 2, builds)
+        for build in builds:
+            self.assertIn("--squash-all", build)
+
+    def test_payload_injects_only_bootc_install_config(self):
+        """The payload Containerfile copies exactly one file: the bootc install config."""
+        helper = PAYLOAD_OCI.read_text()
+        self.assertIn('PAYLOAD_ROOT_MOUNT_DEST="/usr/lib/bootc/install/00-defaults.toml"', helper)
+        copies = re.findall(r"COPY [^']*", helper)
+        self.assertEqual(copies, ["COPY bootc-root-mount.toml %s\\n"], copies)
+
+    def test_payload_build_never_uses_create_commit(self):
+        """The payload is prepared with `podman build`, never create+commit or buildah.
+
+        `podman create --entrypoint ... && podman commit` rewrites the image
+        Entrypoint and breaks `bootc install` (docs/build.md). A FROM-only
+        Containerfile inherits the base config instead. buildah is not
+        installable on bootc image-mode hosts, so it must not come back either.
+        """
+        for path in (BUILD_LIVE_SQUASHFS, ISO_SD_BOOT, PAYLOAD_OCI):
+            code = [l for l in path.read_text().splitlines() if not l.lstrip().startswith("#")]
+            for line in code:
+                self.assertNotRegex(line, r"\bbuildah\b", f"{path.name}: {line.strip()!r}")
+                self.assertNotRegex(line, r"\bpodman (create|commit)\b", f"{path.name}: {line.strip()!r}")
 
     def test_build_live_squashfs_rejects_missing_positional_args(self):
         """Positional mode must fail fast when image/output paths are absent.
@@ -1274,6 +1346,27 @@ class TestBuildLiveSquashfs(unittest.TestCase):
                 "default to filesystem=btrfs. "
                 f"Got: {img.get('filesystem')!r}",
             )
+
+    def test_composefs_images_do_not_offer_xfs(self):
+        """No images.json entry with composefs=true may offer xfs.
+
+        fisherman rejects composeFsBackend on XFS (it needs fs-verity, which
+        XFS lacks), so offering xfs next to composefs fails at install time.
+        """
+        import json
+        for images_json in sorted((REPO / "live" / "src").rglob("images.json")):
+            data = json.loads(images_json.read_text())
+            for img in data.get("images", []):
+                if not img.get("composefs"):
+                    continue
+                offered = [img.get("filesystem"), *img.get("filesystems", [])]
+                self.assertNotIn(
+                    "xfs",
+                    offered,
+                    f"{images_json.relative_to(REPO)} image '{img.get('name')}' "
+                    "sets composefs=true but offers xfs; fisherman rejects "
+                    "composefs on XFS. Offer btrfs or ext4 instead.",
+                )
 
     def test_justfile_lts_filesystem_is_btrfs(self):
         """justfile _filesystem_for must return btrfs for all targets."""
@@ -1444,12 +1537,13 @@ class TestPayloadPristine(unittest.TestCase):
     PAYLOAD_SCRIPTS = {
         "scripts/iso-sd-boot.sh": ISO_SD_BOOT,
         "scripts/build-live-squashfs.sh": BUILD_LIVE_SQUASHFS,
+        "scripts/payload-oci.sh": PAYLOAD_OCI,
     }
 
     def test_no_storage_conf_injected_into_payload(self):
-        """No build script may buildah-copy a storage.conf into the payload."""
+        """No build script may copy a storage.conf into the payload."""
         pattern = re.compile(
-            r"buildah copy.*(?:/etc/containers/storage\.conf|storage\.conf.*/etc/containers)"
+            r"(?:buildah copy|COPY).*(?:/etc/containers/storage\.conf|storage\.conf.*/etc/containers)"
         )
         for name, path in self.PAYLOAD_SCRIPTS.items():
             for line in path.read_text().splitlines():

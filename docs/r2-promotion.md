@@ -108,16 +108,24 @@ done
 ```
 https://projectbluefin.dev/dakota-live-latest.iso
 https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM
+https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM.sig
+https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM.pem
 https://projectbluefin.dev/dakota-live-backup-1.iso
 https://projectbluefin.dev/dakota-live-backup-2.iso
 https://projectbluefin.dev/dakota-live-backup-3.iso
 
 https://projectbluefin.dev/utah-live-latest.iso
 https://projectbluefin.dev/utah-live-latest.iso-CHECKSUM
+https://projectbluefin.dev/utah-live-latest.iso-CHECKSUM.sig
+https://projectbluefin.dev/utah-live-latest.iso-CHECKSUM.pem
 https://projectbluefin.dev/utah-live-backup-1.iso
 https://projectbluefin.dev/utah-live-backup-2.iso
 https://projectbluefin.dev/utah-live-backup-3.iso
 ```
+
+The `.sig`/`.pem` pair is the keyless cosign signature of the `latest` checksum; see
+[Verifying a downloaded ISO](ci.md#verifying-a-downloaded-iso) for the check. Named
+releases and backup slots carry no signature.
 
 The `bluefin-live-*` and `bluefin-lts-hwe-live-*` URLs are retired (#228): those matrix
 entries are commented out in `build-iso-utah.yml` and are not `promote-release.yml`
@@ -161,8 +169,13 @@ podman run --rm \
 CI uploads latest objects only:
 1. `dakota-live-latest.iso`
 2. `dakota-live-latest.iso-CHECKSUM`
+3. `dakota-live-latest.iso-CHECKSUM.sig` / `.pem` — keyless cosign signature of the checksum
 
 Named releases are manual snapshots copied from latest after the CI gate passes.
+Before promoting, verify the `latest` checksum signature
+([procedure](ci.md#verifying-a-downloaded-iso)): the promoted checksum is rewritten
+for the new filename and is not re-signed, so the signature on `latest` is the only
+proof that what you are promoting came out of CI.
 
 ## Rotating R2 credentials
 
