@@ -8,7 +8,7 @@ Two ISOs are built and published to R2 (Dakota daily, Utah monthly; both also su
 
 | ISO | Workflow | R2 latest name | Image embedded | Trigger |
 |---|---|---|---|---|
-| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | Daily 03:00 UTC, `workflow_dispatch` |
+| Dakota | `build-iso.yml` | `dakota-live-latest.iso` | `projectbluefin/dakota-nvidia:stable` | Daily 03:00 UTC, `workflow_dispatch`, `repository_dispatch` (`dakota-release`, `client_payload.image_ref`) |
 | Utah | `build-iso-utah.yml` | `utah-live-latest.iso` | `projectbluefin/utah:stable` | Monthly, 8th 04:00 UTC, `workflow_dispatch` |
 
 The Bluefin and Bluefin LTS HWE ISOs are **retired**. As of
@@ -33,7 +33,7 @@ gh workflow run build-iso.yml --ref main
 
 | Workflow | File | Trigger |
 |---|---|---|
-| Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch` |
+| Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch`, `repository_dispatch` (`dakota-release`, `client_payload.image_ref`) |
 | Utah Build & Publish | `build-iso-utah.yml` | Monthly 8th 04:00 UTC, `workflow_dispatch` (bluefin entries retired in #228) |
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
@@ -43,7 +43,7 @@ gh workflow run build-iso.yml --ref main
 
 ## build-iso.yml
 
-**Triggers:** Daily 03:00 UTC (`0 3 * * *`), `workflow_dispatch`
+**Triggers:** Daily 03:00 UTC (`0 3 * * *`), `workflow_dispatch`, `repository_dispatch` (`dakota-release`, `client_payload.image_ref`)
 **Job:** `build-and-publish` (single job, no matrix)
 **Runner:** `ubuntu-24.04`
 **Runs as:** root via `sudo`

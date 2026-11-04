@@ -60,7 +60,6 @@ jobs:
         id: payload
         env:
           INPUT_IMAGE_REF: ${{ github.event.client_payload.image_ref || inputs.image_ref }}
-          WORKFLOW_INPUT_IMAGE_REF: ${{ inputs.image_ref }}
         run: |
           PINNED=$(scripts/verify-image-signature.sh "${INPUT_IMAGE_REF:-ghcr.io/projectbluefin/dakota-nvidia:stable}")
           echo "pinned=${PINNED}" >> "$GITHUB_OUTPUT"
