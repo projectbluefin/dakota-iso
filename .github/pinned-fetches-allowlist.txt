@@ -1,0 +1,2 @@
+# localhost/ images are built and consumed inside the same job; never pulled.
+localhost/

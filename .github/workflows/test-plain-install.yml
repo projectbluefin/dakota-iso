@@ -122,10 +122,8 @@ jobs:
       # `main`/`prod` split, `dev` is its default and active line.
       - name: Clone fisherman (dev — tuna-os/fisherman's active line)
         run: |
-          git clone https://github.com/tuna-os/fisherman.git \
-            --branch dev \
-            --depth 1 \
-            /tmp/fisherman
+          git clone https://github.com/tuna-os/fisherman.git /tmp/fisherman
+          git -C /tmp/fisherman checkout --detach 2aedba4e0494fab130de9ffe00f5d6142583e76c
           git -C /tmp/fisherman --no-pager log --oneline -1
 
       - name: Build ISO
