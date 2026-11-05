@@ -3,6 +3,20 @@
   "extends": [
     "local>projectbluefin/renovate-config"
   ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/test-(luks|plain)-install\\.yml$/"
+      ],
+      "matchStrings": [
+        "checkout --detach (?<currentDigest>[0-9a-f]{40}) # (?<currentValue>dev)\\s"
+      ],
+      "depNameTemplate": "tuna-os/fisherman",
+      "packageNameTemplate": "https://github.com/tuna-os/fisherman",
+      "datasourceTemplate": "git-refs"
+    }
+  ],
   "github-actions": {
     "enabled": true,
     "pinDigests": true
@@ -11,6 +25,13 @@
     {
       "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions",
+      "automerge": false
+    },
+    {
+      "matchDepNames": [
+        "tuna-os/fisherman"
+      ],
+      "groupName": "tuna-os/fisherman",
       "automerge": false
     }
   ]
