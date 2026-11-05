@@ -166,6 +166,42 @@ def _dakota_workflow_runs():
     return "\n".join(runs)
 
 
+def _resolve_shell_default(ref: str, script: str) -> str:
+    """Resolve a shell variable or parameter expansion to its literal default."""
+    fallback = re.search(r":-([^}]+)", ref)
+    if fallback:
+        return fallback.group(1).strip("\"'")
+    var = re.fullmatch(r"\$\{?(\w+)\}?", ref)
+    if var:
+        assigned = re.search(rf'^\s*{var.group(1)}="\$\{{\w+:-([^}}]+)\}}"', script, re.M)
+        if assigned:
+            return assigned.group(1)
+    return ref
+
+
+def _dakota_verified_refs():
+    """Map each build-iso.yml step id to the ref it passes to verify-image-signature.sh.
+
+    A verify step prints the digest-pinned form of the ref it checked, and later
+    steps consume it as `${{ steps.<id>.outputs.pinned }}`.
+    """
+    with BUILD_ISO_DAKOTA_WORKFLOW.open() as handle:
+        workflow = yaml.safe_load(handle)
+
+    verified = {}
+    for job in workflow["jobs"].values():
+        for step in job.get("steps") or []:
+            # Matches direct ref or shell parameter expansion with default: "${INPUT_IMAGE_REF:-ref}"
+            match = re.search(
+                r"verify-image-signature\.sh\s+(?:\"\$\{.*?:-([^\}]+)\}\"|([^\s)]+))",
+                step.get("run") or "",
+            )
+            if match and "id" in step:
+                ref = (match.group(1) or match.group(2)).strip("\"'")
+                verified[step["id"]] = _resolve_shell_default(ref, step["run"])
+    return verified
+
+
 def _configure_live_default(key: str) -> str:
     """Return the literal default configure-live.sh uses for read_variant_config <key>."""
     match = re.search(
@@ -202,6 +238,7 @@ class TestDakotaPayloadConsistency(unittest.TestCase):
         cls.payload_ref = _read_scalar(REPO / "dakota" / "payload_ref")
         cls.live_target = _read_scalar(REPO / "dakota" / "live_target")
         cls.runs = _dakota_workflow_runs()
+        cls.verified_refs = _dakota_verified_refs()
 
     def test_dakota_has_no_variant_src_dir(self):
         """The default-based checks below only hold while live/src/dakota/ is absent."""
@@ -210,6 +247,42 @@ class TestDakotaPayloadConsistency(unittest.TestCase):
             "live/src/dakota/ now exists, so configure-live.sh reads it instead of "
             "its literal defaults; extend TestVariantPayloadConsistency to dakota",
         )
+
+    def test_published_iso_embeds_the_tested_payload(self):
+        """Every image build-iso.yml verifies, pulls or embeds must be dakota/payload_ref."""
+        refs = re.findall(
+            r"(?:--oci-image|\bIMAGE=|verify-image-signature\.sh)\s*(\"[^\"]*\"|[^\s)]+)",
+            self.runs,
+        )
+        self.assertTrue(
+            refs,
+            f"no `--oci-image` / `IMAGE=` found in {BUILD_ISO_DAKOTA_WORKFLOW.name}; "
+            f"this guard would silently pass",
+        )
+        for raw in refs:
+            ref = _resolve_shell_default(raw.strip("\"'"), self.runs)
+            pinned = re.fullmatch(
+                r"\$\{\{\s*steps\.([\w-]+)\.outputs\.pinned\s*\}\}", ref
+            )
+            if pinned:
+                step_id = pinned.group(1)
+                self.assertIn(
+                    step_id,
+                    self.verified_refs,
+                    f"{BUILD_ISO_DAKOTA_WORKFLOW.name} pulls {raw!r} but step "
+                    f"{step_id!r} does not run verify-image-signature.sh",
+                )
+                # The pinned digest is whatever that step verified, so check the
+                # ref it verified.
+                ref = self.verified_refs[step_id]
+            with self.subTest(ref=ref):
+                self.assertEqual(
+                    ref,
+                    self.payload_ref,
+                    f"{BUILD_ISO_DAKOTA_WORKFLOW.name} embeds {ref!r} but "
+                    f"dakota/payload_ref (what the E2E gates test) is "
+                    f"{self.payload_ref!r}",
+                )
 
     def test_published_iso_boots_the_tested_live_target(self):
         """build-iso.yml's live container TARGET must be dakota/live_target."""

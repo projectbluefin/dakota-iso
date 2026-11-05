@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       image_ref:
-        description: 'Explicit image ref to build and embed (default: ghcr.io/projectbluefin/dakota-nvidia:stable)'
+        description: 'Image to embed: ghcr.io/projectbluefin/dakota-nvidia:stable (default) or ghcr.io/projectbluefin/dakota-nvidia@sha256:<digest>; other refs are rejected'
         required: false
         default: ''
         type: string
