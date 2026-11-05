@@ -19,6 +19,8 @@ on:
         required: false
         default: false
         type: boolean
+  repository_dispatch:
+    types: [dakota-release]
 
 jobs:
   build-and-publish:
@@ -57,7 +59,7 @@ jobs:
       - name: Verify payload image signature
         id: payload
         env:
-          INPUT_IMAGE_REF: ${{ inputs.image_ref }}
+          INPUT_IMAGE_REF: ${{ github.event.client_payload.image_ref || inputs.image_ref }}
         run: |
           PINNED=$(scripts/verify-image-signature.sh "${INPUT_IMAGE_REF:-ghcr.io/projectbluefin/dakota-nvidia:stable}")
           echo "pinned=${PINNED}" >> "$GITHUB_OUTPUT"
