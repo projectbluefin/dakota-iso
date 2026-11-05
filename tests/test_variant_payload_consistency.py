@@ -299,9 +299,9 @@ class TestDakotaPayloadConsistency(unittest.TestCase):
             "image_ref input default should be empty to allow falling back to payload_ref in step env",
         )
         workflow_text = BUILD_ISO_DAKOTA_WORKFLOW.read_text()
-        self.assertIn(
-            "${{ inputs.image_ref }}",
+        self.assertRegex(
             workflow_text,
+            r"INPUT_IMAGE_REF: \$\{\{ (github\.event\.client_payload\.image_ref \|\| )?inputs\.image_ref \}\}",
             "build-iso.yml does not bind inputs.image_ref to the payload verification step",
         )
 
