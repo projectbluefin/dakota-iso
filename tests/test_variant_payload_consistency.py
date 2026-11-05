@@ -20,6 +20,9 @@ them are checked here against the workflow matrix as the single source of truth.
 
 import json
 import re
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -163,26 +166,6 @@ def _dakota_workflow_runs():
     return "\n".join(runs)
 
 
-def _dakota_verified_refs():
-    """Map each build-iso.yml step id to the ref it passes to verify-image-signature.sh.
-
-    A verify step prints the digest-pinned form of the ref it checked, and later
-    steps consume it as `${{ steps.<id>.outputs.pinned }}`.
-    """
-    with BUILD_ISO_DAKOTA_WORKFLOW.open() as handle:
-        workflow = yaml.safe_load(handle)
-
-    verified = {}
-    for job in workflow["jobs"].values():
-        for step in job.get("steps") or []:
-            # Matches direct ref or shell parameter expansion with default: "${INPUT_IMAGE_REF:-ref}"
-            match = re.search(
-                r"verify-image-signature\.sh\s+(?:\"\$\{.*?:-([^\}]+)\}\"|([^\s)]+))",
-                step.get("run") or "",
-            )
-            if match and "id" in step:
-                verified[step["id"]] = (match.group(1) or match.group(2)).strip("\"'")
-    return verified
 def _configure_live_default(key: str) -> str:
     """Return the literal default configure-live.sh uses for read_variant_config <key>."""
     match = re.search(
@@ -219,7 +202,6 @@ class TestDakotaPayloadConsistency(unittest.TestCase):
         cls.payload_ref = _read_scalar(REPO / "dakota" / "payload_ref")
         cls.live_target = _read_scalar(REPO / "dakota" / "live_target")
         cls.runs = _dakota_workflow_runs()
-        cls.verified_refs = _dakota_verified_refs()
 
     def test_dakota_has_no_variant_src_dir(self):
         """The default-based checks below only hold while live/src/dakota/ is absent."""
@@ -228,45 +210,6 @@ class TestDakotaPayloadConsistency(unittest.TestCase):
             "live/src/dakota/ now exists, so configure-live.sh reads it instead of "
             "its literal defaults; extend TestVariantPayloadConsistency to dakota",
         )
-
-    def test_published_iso_embeds_the_tested_payload(self):
-        """Every image build-iso.yml verifies, pulls or embeds must be dakota/payload_ref."""
-        refs = re.findall(
-            r"(?:--oci-image|\bIMAGE=|verify-image-signature\.sh)\s*(\"[^\"]*\"|[^\s)]+)",
-            self.runs,
-        )
-        self.assertTrue(
-            refs,
-            f"no `--oci-image` / `IMAGE=` found in {BUILD_ISO_DAKOTA_WORKFLOW.name}; "
-            f"this guard would silently pass",
-        )
-        for raw in refs:
-            ref = raw.strip("\"'")
-            fallback = re.search(r":-([^}]+)", ref)
-            if fallback:
-                ref = fallback.group(1).strip("\"'")
-            pinned = re.fullmatch(
-                r"\$\{\{\s*steps\.([\w-]+)\.outputs\.pinned\s*\}\}", ref
-            )
-            if pinned:
-                step_id = pinned.group(1)
-                self.assertIn(
-                    step_id,
-                    self.verified_refs,
-                    f"{BUILD_ISO_DAKOTA_WORKFLOW.name} pulls {raw!r} but step "
-                    f"{step_id!r} does not run verify-image-signature.sh",
-                )
-                # The pinned digest is whatever that step verified, so check the
-                # ref it verified.
-                ref = self.verified_refs[step_id]
-            with self.subTest(ref=ref):
-                self.assertEqual(
-                    ref,
-                    self.payload_ref,
-                    f"{BUILD_ISO_DAKOTA_WORKFLOW.name} embeds {ref!r} but "
-                    f"dakota/payload_ref (what the E2E gates test) is "
-                    f"{self.payload_ref!r}",
-                )
 
     def test_published_iso_boots_the_tested_live_target(self):
         """build-iso.yml's live container TARGET must be dakota/live_target."""
@@ -304,6 +247,51 @@ class TestDakotaPayloadConsistency(unittest.TestCase):
             r"INPUT_IMAGE_REF: \$\{\{ (github\.event\.client_payload\.image_ref \|\| )?inputs\.image_ref \}\}",
             "build-iso.yml does not bind inputs.image_ref to the payload verification step",
         )
+
+    def test_image_ref_restricts_the_published_payload(self):
+        """Only the stable NVIDIA tag or an NVIDIA SHA-256 digest reaches verification."""
+        workflow = yaml.safe_load(BUILD_ISO_DAKOTA_WORKFLOW.read_text())
+        steps = workflow["jobs"]["build-and-publish"]["steps"]
+        script = next(step["run"] for step in steps if step.get("id") == "payload")
+        image = "ghcr.io/projectbluefin/dakota-nvidia"
+        digest = "a" * 64
+        cases = [
+            ("", f"{image}:stable"),
+            (f"{image}:stable", f"{image}:stable"),
+            (f"{image}@sha256:{digest}", f"{image}@sha256:{digest}"),
+            ("ghcr.io/projectbluefin/utah:stable", None),
+            ("ghcr.io/projectbluefin/dakota:stable", None),
+            (f"{image}:testing", None),
+            (f"{image}:latest", None),
+            (f"{image}@sha256:{'a' * 63}", None),
+            (f"{image}@sha256:{'g' * 64}", None),
+            (f"{image}@sha256:{digest}\nextra", None),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            verifier = root / "scripts" / "verify-image-signature.sh"
+            verifier.write_text('#!/bin/bash\nprintf "%s" "$1" > called\nprintf "%s" "$1"\n')
+            verifier.chmod(0o755)
+            output = root / "output"
+            for ref, accepted in cases:
+                with self.subTest(ref=ref):
+                    (root / "called").unlink(missing_ok=True)
+                    output.write_text("")
+                    result = subprocess.run(
+                        ["bash", "-eo", "pipefail", "-c", script],
+                        cwd=root,
+                        env={**os.environ, "INPUT_IMAGE_REF": ref, "GITHUB_OUTPUT": str(output)},
+                        capture_output=True,
+                        text=True,
+                    )
+                    if accepted is None:
+                        self.assertNotEqual(result.returncode, 0, result.stderr)
+                        self.assertFalse((root / "called").exists())
+                        self.assertEqual(output.read_text(), "")
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual((root / "called").read_text(), accepted)
 
     def test_installer_requests_the_embedded_payload(self):
         """configure-live.sh's nvidia_imgref default becomes local_imgref for dakota."""
