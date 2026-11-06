@@ -58,8 +58,9 @@ fi
 # Real ssh consumes stdin; drain it so `printf ... | $SSH ...` pipelines
 # never die on SIGPIPE under `set -o pipefail`.
 cat > /dev/null 2>&1 || true
-if [[ "$remote_cmd" == *"podman image exists"* ]]; then
-    exit "${STUB_IMAGE_EXISTS:-1}"
+if [[ "$remote_cmd" == 'sudo cat /etc/bootc-installer/media-input.json' ]]; then
+    printf '{"image":"ghcr.io/example/media:embedded","targetImgref":"ghcr.io/example/media:stable"}\n'
+    exit 0
 fi
 if [[ "$remote_cmd" == *"fisherman-install.sh"* ]]; then
     exit "${STUB_FISHERMAN_RC:-0}"
@@ -233,7 +234,7 @@ class LuksInstallHarness(unittest.TestCase):
             **self.extra_env,
         }
         if args is None:
-            args = [str(target), PASSPHRASE, "2222", str(self.monitor), str(self.fisher_repo)]
+            args = [str(target), PASSPHRASE, "2222", str(self.monitor)]
         return subprocess.run(
             ["bash", "scripts/luks-install-qemu.sh", *args],
             cwd=self.workdir,
@@ -269,10 +270,9 @@ class LuksInstallHarness(unittest.TestCase):
 
 
 class TestArgumentValidation(LuksInstallHarness):
-    def test_four_arguments_is_one_short_and_exits_1(self):
-        """The plain lane's 4-argument call shape must not be accepted here."""
+    def test_three_arguments_is_one_short_and_exits_1(self):
         result = self.run_script(
-            None, args=["target", "2222", str(self.monitor), str(self.fisher_repo)]
+            None, args=["target", "2222", str(self.monitor)]
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("Usage:", result.stderr)
@@ -293,19 +293,13 @@ class TestComposefsRecipe(LuksInstallHarness):
         self.make_variant("dakota", composefs="true", bootloader="systemd")
         self.target = self.make_target("ghcr.io/example/dakota:latest", "dakota")
 
-    def test_cached_image_uses_containers_storage_offline(self):
-        result = self.run_script(self.target, image_exists=True)
+    def test_receipt_selects_offline_source_and_update_target(self):
+        result = self.run_script(self.target)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("using offline install", result.stdout)
-        self.assertEqual(
-            self.recipe()["image"], "containers-storage:ghcr.io/example/dakota:latest"
-        )
-
-    def test_uncached_image_falls_back_to_docker_transport(self):
-        result = self.run_script(self.target, image_exists=False)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("fisherman will pull from network", result.stdout)
-        self.assertEqual(self.recipe()["image"], "docker://ghcr.io/example/dakota:latest")
+        self.assertEqual(self.recipe()["image"], "ghcr.io/example/media:embedded")
+        self.assertEqual(self.recipe()["targetImgref"], "ghcr.io/example/media:stable")
+        self.assertNotIn("podman image exists", self.stub_log())
+        self.assertNotIn("docker://", self.stub_log())
 
     def test_recipe_contract_fields(self):
         self.run_script(self.target, image_exists=True)
@@ -313,10 +307,10 @@ class TestComposefsRecipe(LuksInstallHarness):
         self.assertTrue(recipe["composeFsBackend"])
         self.assertEqual(recipe["bootloader"], "systemd")
         self.assert_recipe_contract(recipe)
-        self.assertNotIn("targetImgref", recipe)
+        self.assertEqual(recipe["targetImgref"], "ghcr.io/example/media:stable")
 
     def test_passphrase_argument_reaches_the_recipe(self):
-        args = [str(self.target), "other-secret", "2222", str(self.monitor), str(self.fisher_repo)]
+        args = [str(self.target), "other-secret", "2222", str(self.monitor)]
         result = self.run_script(self.target, image_exists=True, args=args)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.recipe()["encryption"]["passphrase"], "other-secret")
@@ -357,12 +351,12 @@ class TestBootcDirectRecipe(LuksInstallHarness):
         self.make_variant("lts", composefs="false", bootloader="grub")
         self.target = self.make_target("ghcr.io/example/lts:latest", "lts")
 
-    def test_empty_image_and_target_imgref_trigger_bootc_direct(self):
-        result = self.run_script(self.target, image_exists=True)
+    def test_ostree_uses_the_same_bound_media_identity(self):
+        result = self.run_script(self.target)
         self.assertEqual(result.returncode, 0, result.stderr)
         recipe = self.recipe()
-        self.assertEqual(recipe["image"], "")
-        self.assertEqual(recipe["targetImgref"], "ghcr.io/example/lts:latest")
+        self.assertEqual(recipe["image"], "ghcr.io/example/media:embedded")
+        self.assertEqual(recipe["targetImgref"], "ghcr.io/example/media:stable")
         self.assertFalse(recipe["composeFsBackend"])
 
     def test_recipe_contract_fields(self):
@@ -371,12 +365,12 @@ class TestBootcDirectRecipe(LuksInstallHarness):
         self.assertEqual(recipe["bootloader"], "grub2")
         self.assert_recipe_contract(recipe)
 
-    def test_patched_fisherman_is_built_and_used(self):
-        self.run_script(self.target, image_exists=True)
+    def test_ostree_uses_shipped_pinned_fisherman(self):
+        self.run_script(self.target)
         log = self.stub_log()
-        self.assertIn("./cmd/fisherman/", log)
-        self.assertTrue((self.capture / "fisherman").exists())
-        self.assertIn("FISHERMAN_BIN=/tmp/fisherman", log)
+        self.assertNotIn("go build", log)
+        self.assertNotIn("FISHERMAN_BIN=", log)
+        self.assertIn("sudo bash /tmp/fisherman-install.sh", log)
 
     def test_install_failure_exits_1_and_dumps_diagnostics(self):
         result = self.run_script(self.target, image_exists=True, fisherman_rc=1)

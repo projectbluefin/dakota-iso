@@ -82,17 +82,24 @@ Per the AGENTS.md verification requirements — **do not claim the build works u
 
 "ISO booted" alone is **not** proof. The live session boot proves the initramfs works. Only a completed install and a successful boot of the installed disk proves fisherman, partitioning, and post-install steps work.
 
+Since the bound-media cutover (2026-11-06), require a separate native pinned
+fisherman preflight proof before expensive builds. The fixture-backed consumer
+test rejects missing, corrupt and writable media before disk access; it does not
+prove installation. Both Dakota and Utah must then complete fresh offline installs
+and boot the installed disks. The installed `/var` btrfs mount must show
+`compress=zstd` or `compress=zstd:1`, and `/proc/cmdline` must persist it in
+`rootflags=`. These checks and SSH reachability are hard gates even when older
+UEFI/Flatpak observations are non-blocking.
+
 ---
 
-## ISO size invariant
+## ISO payload and size invariant
 
-| Size | Meaning |
-|---|---|
-| ~5.3 GB | ✅ Release compression — correct |
-| ~4.7 GB | ⚠️ Acceptable (dev build or smaller payload) — verify install works |
-| ~6–7 GB | ❌ Fast compression (`zstd-3`) — use `release` for R2 |
-| ~8 GB | ❌ Double-embedded OCI store — do not pass `--store` to `build-iso.sh` |
-| ~4.4 GB + install fails | ❌ VFS store missing — rebuild with `--oci-image <ref>` |
+Bound media embeds one OCI layout plus its schema-v1 receipt. Do not infer a
+missing/double store from VFS-era byte thresholds: compressed OCI blobs no longer
+deduplicate per-file against the live OS. Record actual ISO bytes and inspect for
+exactly one `usr/share/bootc-installer/oci` layout with no extra archive/store.
+Keep production squashfs compression at `release` and never squash ostree layers.
 
 The build log prints the size as `du -sh` (allocated blocks). The real size is `stat -c%s`. On XFS with sparse files these can diverge significantly — use `stat` for the definitive number.
 

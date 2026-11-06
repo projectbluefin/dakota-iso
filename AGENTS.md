@@ -231,26 +231,21 @@ The `skill-drift.yml` CI check warns when a PR changes implementation files with
 - **Block device writes** (USB burning, disk inspection via nbd) always require root.
   Use `udisksctl` for unmounting; provide `dd` / `qemu-nbd` commands for the user to run.
 
-### ISO size invariant
+### ISO payload and size invariant
 
-| Variant | Expected size (fast) | Expected size (release) |
-|---|---|---|
-| `dakota` (composefs) | ~5.5 GB | ~4.5 GB |
-| `bluefin` / `bluefin-lts-hwe` (non-composefs) | ~7 GB | ~6 GB |
-
-- If a **bluefin/lts-hwe** ISO is **~12 GB**: do **not** "fix" it by squashing the
-  non-composefs payload. That path intentionally keeps every layer —
-  `payload_to_oci_archive` in `scripts/payload-oci.sh` is called with `squash=false`
-  for non-composefs variants, because squashing destroys the ostree commit objects
-  `bootc install` needs. Look instead for the payload being embedded twice or a stale
-  store left in the squashfs staging tree. Only the composefs (dakota) path squashes
-  (`podman build --squash-all`) — **never remove `--squash-all` from that path.**
-- If a **dakota** ISO is **~8 GB**: the VFS OCI store is being double-embedded.
-  The live squashfs already contains the OCI baked in as VFS containers-storage.
-  Do **not** build a separate `store.squashfs.img` or pass `--store` to `build-iso.sh`.
-- If an ISO is **~4.4 GB** and installs fail with `does not resolve to an image ID`: the
-  VFS store is missing. `scripts/build-live-squashfs.sh` must be called with
-  `--oci-image <ref>`.
+- Both active variants embed **one OCI layout**, never a second archive/store,
+  via `payload_embed_oci_archive` in `scripts/payload-oci.sh`. Its schema-v1
+  `/etc/bootc-installer/media-input.json` binds the actual manifest/config to
+  `/run/rootfsbase/usr/share/bootc-installer/oci` on the read-only squashfs.
+- Keep `live-iso-mode` and fisherman's strict digest/read-only/no-symlink gate.
+  Missing receipt or corrupt media is an installation refusal, not a network fallback.
+- Composefs (Dakota) retains `podman build --squash-all`; non-composefs (Utah and
+  retired variants) must retain all layers to preserve ostree commit objects.
+- Do not pass `--store` to `build-iso.sh` or restore a VFS/overlay payload import.
+- Record actual ISO bytes with `stat -c%s`. VFS-era 4.5–5.5 GB expectations do not
+  apply mechanically: compressed OCI blobs cannot deduplicate per-file against
+  the live OS. A size change needs measured contents and installation evidence,
+  not a second embedded payload or deletion of required layers.
 
 ### Sensitive paths (require maintainer review)
 

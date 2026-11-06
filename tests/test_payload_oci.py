@@ -22,6 +22,9 @@ callers do) with ``podman`` replaced by a recording stub, and cover:
 """
 
 import os
+import json
+import io
+import tarfile
 import shlex
 import shutil
 import subprocess
@@ -29,6 +32,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from tests.oci_fixture import make_oci_archive
 
 REPO = Path(__file__).parent.parent
 HELPER = REPO / "scripts" / "payload-oci.sh"
@@ -36,6 +40,72 @@ HELPER = REPO / "scripts" / "payload-oci.sh"
 ROOT_MOUNT_DEST = "/usr/lib/bootc/install/00-defaults.toml"
 ROOT_MOUNT_TOML = '[install]\nroot-mount-spec = "LABEL=root"\n'
 DIFFID = "sha256:" + "ab" * 32
+
+
+class TestEmbeddedMedia(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "root"
+        config = self.root / "etc/bootc-installer"
+        config.mkdir(parents=True)
+        (config / "recipe.json").write_text(json.dumps({
+            "imgref": "ghcr.io/projectbluefin/dakota:stable",
+            "local_imgref": "ghcr.io/projectbluefin/dakota-nvidia:stable",
+        }))
+        self.archive = Path(self.tmp.name) / "payload.tar"
+        self.files, self.manifest, self.config = make_oci_archive(self.archive)
+
+    def embed(self):
+        return subprocess.run(["bash", "-c", 'set -euo pipefail; source "$1"; payload_embed_oci_archive "$2" "$3"',
+                               "bash", str(HELPER), str(self.archive), str(self.root)],
+                              capture_output=True, text=True, timeout=30)
+
+    def test_receipt_binds_actual_platform_manifest_and_config(self):
+        result = self.embed()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads((self.root / "etc/bootc-installer/media-input.json").read_text())
+        self.assertEqual(receipt["schemaVersion"], 1)
+        self.assertEqual(receipt["platformManifestDigest"], self.manifest["digest"])
+        self.assertEqual(receipt["configDigest"], self.config["digest"])
+        self.assertEqual(receipt["platform"], "linux/amd64")
+        self.assertEqual(receipt["image"], "ghcr.io/projectbluefin/dakota-nvidia:stable")
+        self.assertEqual(receipt["targetImgref"], "ghcr.io/projectbluefin/dakota:stable")
+        self.assertEqual(receipt["ociLayoutPath"], "/run/rootfsbase/usr/share/bootc-installer/oci")
+        layout = self.root / "usr/share/bootc-installer/oci"
+        for name, data in self.files.items():
+            self.assertEqual((layout / name).read_bytes(), data)
+        self.assertFalse((self.root / "var/lib/containers/storage").exists())
+
+    def test_corrupt_layer_is_refused_before_receipt_is_written(self):
+        layer = json.loads(self.files["blobs/sha256/" + self.manifest["digest"].split(":")[1]])["layers"][0]
+        name = "blobs/sha256/" + layer["digest"].split(":")[1]
+        self.files[name] = b"X" + self.files[name][1:]
+        with tarfile.open(self.archive, "w") as tar:
+            for name, data in self.files.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(data)
+                tar.addfile(entry, io.BytesIO(data))
+        result = self.embed()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("size/hash mismatch", result.stderr)
+        self.assertFalse((self.root / "etc/bootc-installer/media-input.json").exists())
+
+    def test_archive_symlinks_are_refused(self):
+        with tarfile.open(self.archive, "a") as tar:
+            entry = tarfile.TarInfo("alias")
+            entry.type = tarfile.SYMTYPE
+            entry.linkname = "/etc"
+            tar.addfile(entry)
+        result = self.embed()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe OCI archive member", result.stderr)
+
+    def test_stale_layout_is_not_merged(self):
+        self.assertEqual(self.embed().returncode, 0)
+        result = self.embed()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stale embedded OCI layout", result.stderr)
 
 # podman stub: logs every call as one shell-quoted line, snapshots each build
 # context (the last argument) into $STUB_CAPTURE/build-<n>, prints

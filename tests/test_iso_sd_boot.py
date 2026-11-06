@@ -38,12 +38,14 @@ Covered behaviour
 """
 
 import os
+import json
 import shutil
 import subprocess
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from tests.oci_fixture import make_oci_archive
 
 REPO = Path(__file__).parent.parent
 SCRIPT = REPO / "scripts" / "iso-sd-boot.sh"
@@ -60,6 +62,10 @@ class IsoSdBootHarness(unittest.TestCase):
         self.bindir.mkdir()
         self.calls_log = self.sandbox / "calls.log"
         self.calls_log.touch()
+        self.fixture_archive = self.sandbox / "fixture.oci.tar"
+        make_oci_archive(self.fixture_archive)
+        self.media_capture = self.sandbox / "media-capture"
+        self.media_capture.mkdir()
 
         # Replicate repository structure in sandbox
         (self.sandbox / "scripts").mkdir()
@@ -172,11 +178,7 @@ class IsoSdBootHarness(unittest.TestCase):
             exit 0
         """)
 
-        # `podman run ... skopeo copy` is the step that embeds the payload OCI archive
-        # into the staged containers-storage. The storage driver it uses is only
-        # observable through the storage.conf bind-mounted at /tmp/st.conf, which the
-        # script deletes right after the run — so the stub dumps that file's contents
-        # into the call log while it still exists.
+        # The producer consumes real OCI bytes; podman only supplies the archive.
         self._stub("podman", f"""
             echo "podman $*" >> "$STUB_CALLS"
             if [ "$1" = "build" ]; then
@@ -189,15 +191,10 @@ class IsoSdBootHarness(unittest.TestCase):
                 done
                 exit 0
             fi
-            if [ "$1" = "run" ]; then
-                for _arg in "$@"; do
-                    case "$_arg" in
-                        *:/tmp/st.conf:ro)
-                            _conf=$(echo "$_arg" | sed 's|:/tmp/st.conf:ro$||')
-                            sed 's|^|storage-conf |' "$_conf" >> "$STUB_CALLS"
-                            ;;
-                    esac
-                done
+            if [ "$1" = "push" ]; then
+                archive="${{3#oci-archive:}}"
+                archive="${{archive%%:*}}"
+                cp "{self.fixture_archive}" "$archive"
                 exit 0
             fi
             if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
@@ -238,6 +235,8 @@ class IsoSdBootHarness(unittest.TestCase):
 
         self._stub("mksquashfs", """
             echo "mksquashfs $*" >> "$STUB_CALLS"
+            cp "$1/etc/bootc-installer/media-input.json" "$STUB_MEDIA/receipt.json"
+            cp -a "$1/usr/share/bootc-installer/oci" "$STUB_MEDIA/layout-copy"
             touch "$2"
             exit 0
         """)
@@ -251,7 +250,7 @@ class IsoSdBootHarness(unittest.TestCase):
         """)
 
         self._stub("findmnt", """
-            echo "xfs"
+            echo "btrfs"
             exit 0
         """)
 
@@ -273,12 +272,20 @@ class IsoSdBootHarness(unittest.TestCase):
 
     def run_script(self, env_vars=None):
         self._install_stubs()
+        target = (env_vars or {}).get("TARGET", "dakota")
+        payload = self.sandbox / target / "payload_ref"
+        if payload.exists():
+            config = self.sandbox / "fake-ctr-mount/etc/bootc-installer"
+            config.mkdir(parents=True, exist_ok=True)
+            ref = payload.read_text().strip()
+            (config / "recipe.json").write_text(json.dumps({"imgref": ref, "local_imgref": ref}))
 
         env = dict(os.environ)
         for name in self.SCRIPT_ENV_VARS:
             env.pop(name, None)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["STUB_CALLS"] = str(self.calls_log)
+        env["STUB_MEDIA"] = str(self.media_capture)
 
         if env_vars:
             env.update(env_vars)
@@ -458,60 +465,20 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
             self.expected_delegate_argv("lts", "Bluefin LTS Live", out_dir),
         )
 
-    def test_composefs_true_embeds_payload_into_vfs_containers_storage(self):
-        """Composefs mode embeds the payload OCI into a VFS store under var/lib."""
-        out_dir = self.sandbox / "output"
-        res = self.run_script(env_vars={
-            "TARGET": "dakota",
-            "OUTPUT_DIR": str(out_dir),
-        })
-        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
-
-        work = Path(os.path.realpath(out_dir))
-        embeds = self.embed_run_calls()
-        self.assertEqual(len(embeds), 1, f"expected exactly one embed run, got {embeds!r}")
-        embed = embeds[0]
-
-        # The staged store must be the composefs location (var/lib), bind-mounted at
-        # the graphroot the storage.conf points at.
-        self.assertIn(f"-v {work}/dakota-cs-staging/var/lib/containers/storage:/vfs-storage", embed)
-        self.assertNotIn("/usr/lib/containers/storage:/vfs-storage", embed)
-        self.assertIn(f"-v {work}/dakota-payload.oci.tar:/payload.oci.tar:ro", embed)
-        self.assertIn("localhost/dakota-installer", embed)
-        self.assertIn(
-            "skopeo copy oci-archive:/payload.oci.tar:ghcr.io/projectbluefin/dakota:stable "
-            "containers-storage:ghcr.io/projectbluefin/dakota:stable",
-            embed,
-        )
-
-        # Driver is only visible in the storage.conf the run consumes.
-        self.assertIn('driver = "vfs"', self.storage_conf_lines())
-
-    def test_composefs_false_embeds_payload_into_overlay_containers_storage(self):
-        """Non-composefs mode embeds the payload OCI into an overlay store under usr/lib."""
-        out_dir = self.sandbox / "output"
-        res = self.run_script(env_vars={
-            "TARGET": "lts",
-            "OUTPUT_DIR": str(out_dir),
-        })
-        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
-
-        work = Path(os.path.realpath(out_dir))
-        embeds = self.embed_run_calls()
-        self.assertEqual(len(embeds), 1, f"expected exactly one embed run, got {embeds!r}")
-        embed = embeds[0]
-
-        self.assertIn(f"-v {work}/lts-cs-staging/usr/lib/containers/storage:/vfs-storage", embed)
-        self.assertNotIn("/var/lib/containers/storage:/vfs-storage", embed)
-        self.assertIn(f"-v {work}/lts-payload.oci.tar:/payload.oci.tar:ro", embed)
-        self.assertIn("localhost/lts-installer", embed)
-        self.assertIn(
-            "skopeo copy oci-archive:/payload.oci.tar:ghcr.io/projectbluefin/bluefin-lts:stable "
-            "containers-storage:ghcr.io/projectbluefin/bluefin-lts:stable",
-            embed,
-        )
-
-        self.assertIn('driver = "overlay"', self.storage_conf_lines())
+    def test_both_backends_embed_exactly_one_bound_oci_layout(self):
+        for target in ("dakota", "lts"):
+            with self.subTest(target=target):
+                res = self.run_script(env_vars={"TARGET": target})
+                self.assertEqual(res.returncode, 0, res.stderr)
+                receipt = json.loads((self.media_capture / "receipt.json").read_text())
+                ref = (self.sandbox / target / "payload_ref").read_text().strip()
+                self.assertEqual(receipt["image"], ref)
+                self.assertEqual(receipt["targetImgref"], ref)
+                self.assertEqual(receipt["ociLayoutPath"], "/run/rootfsbase/usr/share/bootc-installer/oci")
+                self.assertTrue((self.media_capture / "layout-copy/index.json").exists())
+                self.assertEqual(self.embed_run_calls(), [])
+                self.assertEqual(self.storage_conf_lines(), [])
+                shutil.rmtree(self.media_capture / "layout-copy")
 
     def test_compression_fast_vs_release(self):
         """COMPRESSION=fast uses level 3 and 128K block; release uses level 15 and 1M block."""
@@ -567,11 +534,9 @@ class TestIsoSdBootPayloadVerification(IsoSdBootHarness):
         self.assertLess(self._call_index(calls, "podman pull "),
                         self._call_index(calls, f"containerfile FROM {pinned}"))
 
-        # The embedded store still names the image by its payload_ref tag, which is what
-        # the installer recipe inside the ISO looks up.
-        embed = self.embed_run_calls()
-        self.assertEqual(len(embed), 1)
-        self.assertIn("containers-storage:ghcr.io/projectbluefin/dakota:stable", embed[0])
+        receipt = json.loads((self.media_capture / "receipt.json").read_text())
+        self.assertEqual(receipt["image"], "ghcr.io/projectbluefin/dakota:stable")
+        self.assertEqual(self.embed_run_calls(), [])
 
     def test_failed_verification_aborts_before_any_container_tooling(self):
         """A failed cosign verify stops the build before just/podman run."""

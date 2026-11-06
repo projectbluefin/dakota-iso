@@ -31,9 +31,8 @@
 # STRICT_POST_BOOT=1 to make them exit 1. CI does not set it, so a green run
 # does NOT prove the invariants.
 #
-# SSH unreachable is likewise non-blocking by default (warning + exit 0)
-# until the debug-SSH path has a first green E2E run on main; with
-# STRICT_POST_BOOT=1 it exits 2.
+# SSH reachability and btrfs zstd compression/rootflags are hard requirements.
+# The older UEFI/Flatpak/LUKS observations retain STRICT_POST_BOOT semantics.
 
 set -uo pipefail
 
@@ -72,6 +71,21 @@ check_uefi_boot_entry() {
     return 0
 }
 
+# check_btrfs_compression <findmnt FSTYPE,OPTIONS for /var> <kernel cmdline>
+check_btrfs_compression() {
+    local mount="$1" cmdline="$2" token flags
+    [[ "${mount}" == btrfs\ * ]] || return 1
+    flags="${mount#* }"
+    [[ ",${flags}," =~ ,compress=zstd(:1)?, ]] || return 1
+    for token in ${cmdline}; do
+        if [[ "${token}" == rootflags=* ]]; then
+            flags="${token#rootflags=}"
+            [[ ",${flags}," =~ ,compress=zstd(:1)?, ]] && return 0
+        fi
+    done
+    return 1
+}
+
 # Allow tests to source this file for the helper functions only.
 (return 0 2>/dev/null) && return 0
 
@@ -99,13 +113,19 @@ done
 if [[ "$READY" -ne 1 ]]; then
     echo "❌ Post-boot assertions SKIPPED: could not reach installed system over SSH after 5 minutes" >&2
     echo "   (debug SSH may not have been enabled, or sshd/network wasn't up in time)" >&2
-    if [[ "${STRICT_POST_BOOT:-0}" != "1" ]]; then
-        echo "⚠️ SSH unreachable is NON-BLOCKING until the debug-SSH path has a green E2E run on main. Set STRICT_POST_BOOT=1 to fail hard." >&2
-        [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::warning title=Post-boot assertions skipped (SSH unreachable, non-blocking)::verify-post-install.sh could not reach the installed system over SSH; see log. Set STRICT_POST_BOOT=1 to gate."
-        exit 0
-    fi
+    # Compression is a required release property, not an observability check.
     exit 2
 fi
+
+MOUNT_OPTIONS=$($SSH 'findmnt -rn -o FSTYPE,OPTIONS -T /var') || exit 1
+BOOT_CMDLINE=$($SSH 'cat /proc/cmdline') || exit 1
+echo "Installed /var mount: ${MOUNT_OPTIONS}"
+echo "Installed cmdline: ${BOOT_CMDLINE}"
+if ! check_btrfs_compression "${MOUNT_OPTIONS}" "${BOOT_CMDLINE}"; then
+    echo '❌ Installed btrfs compress=zstd[:1] mount option and persistent rootflags are required' >&2
+    exit 1
+fi
+echo '✅ Installed btrfs zstd compression and persistent rootflags verified'
 
 FAIL=0
 TOTAL=2

@@ -150,17 +150,12 @@ jobs:
             /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
             /var/iso-build/${{ matrix.live_target }}-boot.tar
 
-      - name: Verify offline OCI store is embedded
+      - name: Verify bound OCI media receipt is embedded
         if: steps.should_build.outputs.build == 'true'
         run: |
-          # bluefin/lts-hwe use composeFsBackend=false; build-live-squashfs.sh embeds the
-          # OCI store as an overlay store at usr/lib/containers/storage.
-          if ! sudo unsquashfs -lc /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
-              usr/lib/containers/storage 2>/dev/null | grep -q "squashfs-root"; then
-            echo "ERROR: Overlay store missing — OCI embedding failed" >&2
-            exit 1
-          fi
-          echo ">>> OCI store assertion passed (overlay store present)"
+          sudo unsquashfs -cat /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
+            etc/bootc-installer/media-input.json | \
+            jq -e '.schemaVersion == 1 and .ociLayoutPath == "/run/rootfsbase/usr/share/bootc-installer/oci"'
 
       - name: Assemble ISO
         if: steps.should_build.outputs.build == 'true'
@@ -194,6 +189,61 @@ jobs:
           LATEST_CHECKSUM_PATH="output/${LATEST_NAME}-CHECKSUM"
           sha256sum "$ISO" | sed "s|${ISO}|${LATEST_NAME}|" > "$LATEST_CHECKSUM_PATH"
           echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
+
+      - name: Install E2E dependencies
+        if: steps.should_build.outputs.build == 'true'
+        run: |
+          sudo apt-get install -y qemu-system-x86 ovmf sshpass socat -qq
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+
+      - name: Install just
+        if: steps.should_build.outputs.build == 'true'
+        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1 (just)
+        with:
+          tool: just
+
+      - name: Build debug ISO from production media
+        if: steps.should_build.outputs.build == 'true'
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          sudo bash scripts/build-debug-iso.sh \
+            /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
+            /var/iso-build/${{ matrix.live_target }}-boot.tar \
+            "output/${VARIANT}-debug-live.iso" "$(cat "${VARIANT}/live_title")"
+
+      - name: Bound OCI media preflight (4 GiB)
+        id: e2e_enospc
+        if: steps.should_build.outputs.build == 'true'
+        timeout-minutes: 10
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          sudo env PATH="$PATH" just qemu-mem=4096 plain-boot-qemu-live "$VARIANT"
+          sudo env PATH="$PATH" just plain-enospc-gate "$VARIANT"
+          echo quit | sudo socat - UNIX-CONNECT:/tmp/dakota-plain-qemu-live.sock
+          sudo rm -f /var/tmp/dakota-plain-install.img
+
+      - name: Full offline install (8 GiB)
+        id: e2e_install
+        if: steps.should_build.outputs.build == 'true'
+        timeout-minutes: 60
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          sudo env PATH="$PATH" just qemu-mem=8192 plain-boot-qemu-live "$VARIANT"
+          sudo env PATH="$PATH" just plain-install-qemu "$VARIANT"
+
+      - name: Boot installed system and verify compression (8 GiB)
+        id: e2e_verify
+        if: steps.should_build.outputs.build == 'true'
+        timeout-minutes: 20
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          sudo env PATH="$PATH" just qemu-mem=8192 plain-boot-qemu-installed "$VARIANT"
+          sudo env PATH="$PATH" just plain-verify-qemu "$VARIANT"
 
       - name: Upload ISO artifact
         if: steps.should_build.outputs.build == 'true'
@@ -269,7 +319,7 @@ jobs:
           steps.should_build.outputs.build == 'true' &&
           inputs.skip_upload != true &&
           github.event_name != 'pull_request' &&
-          steps.boot_verify.outcome == 'success'
+          steps.boot_verify.outcome == 'success' && steps.e2e_enospc.outcome == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success'
         env:
           CHECKSUM: ${{ steps.checksum.outputs.latest_path }}
         run: |
@@ -284,7 +334,7 @@ jobs:
           steps.should_build.outputs.build == 'true' &&
           inputs.skip_upload != true &&
           github.event_name != 'pull_request' &&
-          steps.boot_verify.outcome == 'success'
+          steps.boot_verify.outcome == 'success' && steps.e2e_enospc.outcome == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success'
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -337,7 +387,7 @@ jobs:
           steps.should_build.outputs.build == 'true' &&
           inputs.skip_upload != true &&
           github.event_name != 'pull_request' &&
-          steps.boot_verify.outcome == 'success'
+          steps.boot_verify.outcome == 'success' && steps.e2e_enospc.outcome == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success'
         run: |
           LATEST_NAME="${{ steps.iso.outputs.latest_name }}"
           {

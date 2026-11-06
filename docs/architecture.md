@@ -7,10 +7,10 @@ How the Dakota live ISO is assembled and how it boots.
 ```
 just iso-sd-boot dakota
   └─ just container dakota           → builds localhost/dakota-installer (live/Containerfile)
-  └─ iso-sd-boot (assembly)          → populates VFS store, runs build-iso.sh on host
+  └─ iso-sd-boot (assembly)          → embeds bound OCI layout, runs build-iso.sh on host
 
-CI (build-iso.yml) — same entry point:
-  └─ sudo just ... iso-sd-boot dakota → container build + VFS store + squashfs + ISO
+CI (build-iso.yml / build-iso-utah.yml) uses the same payload-oci.sh producer:
+  └─ build-live-squashfs.sh → one OCI layout + media receipt + squashfs + ISO
 ```
 
 ### Container: `<target>-installer` (`live/Containerfile` — 4 stages)
@@ -55,7 +55,7 @@ xorriso available via brew at `/home/linuxbrew/.linuxbrew/bin/xorriso`.
 ```
 EFI/efi.img                  — FAT32 ESP: systemd-boot + kernel + initramfs
 EFI/BOOT/BOOTX64.EFI        — EFI fallback (Proxmox OVMF / Ventoy)
-LiveOS/squashfs.img          — squashfs of the full live rootfs (NVIDIA variant, with embedded VFS store)
+LiveOS/squashfs.img          — full live rootfs plus one embedded OCI layout
 boot/grub/loopback.cfg       — Ventoy/GRUB loopback metadata
 images/pxeboot/*             — kernel/initramfs copies for loopback ISO boot
 ```
@@ -95,41 +95,41 @@ xorriso -indev output/dakota-live.iso -report_system_area plain 2>/dev/null | gr
 Note: `fdisk -l` shows `Disklabel type: dos` on hybrid layouts — this is expected and
 does NOT mean GPT is missing. `gdisk`, `parted`, and UEFI firmware see GPT correctly.
 
-## Offline image store (VFS embedded in main squashfs)
+## Bound offline OCI media
 
-The OCI image is baked directly into the main `squashfs.img` as VFS containers-storage
-at `/var/lib/containers/storage`. The installer finds it there for offline installation
-without a network pull. No separate `store.squashfs.img` is needed.
+Both build entry points source `scripts/payload-oci.sh`. They prepare the payload
+with `payload_to_oci_archive`, then `payload_embed_oci_archive <archive> <root>`
+extracts those exact bytes once under `/usr/share/bootc-installer/oci` and writes
+`/etc/bootc-installer/media-input.json`. The temporary archive is deleted; there
+is no VFS/overlay payload import, additional image store, or runtime OCI export.
+Composefs payloads retain the existing single-layer squash and diff-id annotation;
+Utah and retained non-composefs variants keep all ostree commit layers.
 
-`scripts/build-live-squashfs.sh --oci-image <ref>` populates the store (used by both
-`just iso-sd-boot` and CI). It squashes the image to a single layer via `podman build
---squash-all` (`scripts/payload-oci.sh`), then runs `skopeo copy` **inside the installer container** so tar-split
-metadata is written in JSON format (the live ISO expects JSON; build-host
-containers-storage emits binary tar-split). The VFS staging dir is then copied into the
-squashfs root via `cp -a` (not bind-mount — see CI lessons).
+The schema-v1 receipt binds registry source identity (`image`) separately from
+the installed update ref (`targetImgref`), plus the actual platform manifest and
+config SHA-256 digests and config-derived `platform`. The producer verifies every
+descriptor's size and hash. Fisherman v0.5.3 independently streams and validates
+all blobs before disk mutation, including per-file read-only and no-symlink checks.
 
-**Why VFS not overlay?**
-- Overlay driver creates a conflicting `db.sql` file at first live boot
-- VFS layers are plain directories — readable without mount privileges
-- `driver = "vfs"` in `/etc/containers/storage.conf` set by `configure-live.sh`
+The layout path is **`/run/rootfsbase/usr/share/bootc-installer/oci`**, not the
+writable live `/usr` overlay. dracut's `90dmsquash-live/dmsquash-live-root.sh`
+(059, also the bookworm 057 path) selects `FSIMG=$SQUASHED` for a flat squashfs
+containing `proc/`, and uses `mkdir /run/rootfsbase; mount -r $FSIMG /run/rootfsbase`
+for the overlayfs lower root. This is a real read-only mount, not a path alias.
 
-**skopeo /var/tmp sizing:**
-The squashed dakota-nvidia image has a ~9GB uncompressed layer. skopeo writes temp
-blobs to `/var/tmp` directly (ignores `TMPDIR` set by fisherman). Live ISO sets
-`/var/tmp` tmpfs to `size=80%` so it scales with machine RAM (16GB → 13GB available).
+`live-media-setup.service` binds the receipt target before display-manager and
+`live-ready.service`. `bind-media-target.py` follows the GUI's PCI display-class
+NVIDIA detection and catalog mapping: NVIDIA hardware tracks the NVIDIA ref;
+other hardware tracks the base ref. Recipe `imgref`/`targetImgref` agree with the
+receipt; `local_imgref` stays the embedded registry source. CLI gates read the
+same receipt, never guess from podman's cache, never fall back to a network pull,
+and always use the shipped pinned fisherman binary.
 
-## Embedded OCI image (VFS containers-storage)
-
-The squashfs embeds the Dakota OCI image as VFS containers-storage so the installer
-can install offline without a network pull.
-
-Requirements:
-- `driver = "vfs"` in `/etc/containers/storage.conf` (set by `configure-live.sh`)
-- skopeo copy runs **inside the installer container** (not the build host) to ensure
-  tar-split metadata is in JSON format the live ISO expects. Build-host containers/storage
-  emits binary tar-split; the installer image expects JSON.
-- `fisherman` scratch dir: on live ISOs `/var` is a small RAM overlay. fisherman detects
-  tmpfs `/var` and uses a self-bind-mounted scratch dir on the target disk.
+The `live-iso-mode` marker remains mandatory. Missing, writable, corrupt, aliased,
+wrong-platform or source/target-mismatched media must refuse installation.
+The low-RAM gate invokes the real consumer with `/never-a-device` as the disk;
+only the exact invalid-disk refusal after successful media validation passes.
+Full plain/LUKS installation and installed-system boot remain separate proofs.
 
 ## Installer: tuna-installer / bootc-installer
 
@@ -181,6 +181,13 @@ pytest tests/ -v
 
 ## Lessons
 
+### Bound media producer/consumer cutover (2026-11-06)
+
+The following VFS/tar-split lessons describe the superseded containers-storage
+implementation. Do not restore its runtime export or double-embed a payload to
+work around missing `media-input.json`; use the bound media contract above.
+
+
 ### xorriso `-append_partition` vs `-boot_image isolinux partition_entry=gpt_basdat` (2026-05)
 
 The old `build-iso.sh` used `partition_entry=gpt_basdat` which produces GPT type
@@ -211,7 +218,7 @@ the GPU at install time:
 `_find_nvidia_imgref_for()` to match the `images.json` entry by `imgref`.
 `configure-live.sh` uses `BASE_IMGREF` / `NVIDIA_IMGREF` separately:
 - `recipe["imgref"] = BASE_IMGREF` (matched by processor.py)
-- `recipe["local_imgref"] = "containers-storage:{NVIDIA_IMGREF}"` (offline install source)
+- `recipe.local_imgref` is the embedded registry identity bound to the OCI receipt.
 
 **Flatpak path bug in `image.py`** (fixed in projectbluefin/bootc-installer#183):
 `_load_manifest()` was hardcoded to `/etc/bootc-installer/images.json`. Inside a

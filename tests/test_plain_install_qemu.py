@@ -59,8 +59,9 @@ remote_cmd="${!#}"
 # Real ssh consumes stdin; drain it so the script's `printf ... | $SSH ...`
 # pipelines never die on SIGPIPE under `set -o pipefail`.
 cat > /dev/null 2>&1 || true
-if [[ "$remote_cmd" == *"podman image exists"* ]]; then
-    exit "${STUB_IMAGE_EXISTS:-1}"
+if [[ "$remote_cmd" == 'sudo cat /etc/bootc-installer/media-input.json' ]]; then
+    printf '{"image":"ghcr.io/example/media:embedded","targetImgref":"ghcr.io/example/media:stable"}\n'
+    exit 0
 fi
 if [[ "$remote_cmd" == *"fisherman-install.sh"* ]]; then
     exit "${STUB_FISHERMAN_RC:-0}"
@@ -156,7 +157,7 @@ class PlainInstallHarness(unittest.TestCase):
             "STUB_FISHERMAN_RC": str(fisherman_rc),
         }
         if args is None:
-            args = [str(target), "2222", str(self.monitor), str(self.fisher_repo)]
+            args = [str(target), "2222", str(self.monitor)]
         return subprocess.run(
             ["bash", "scripts/plain-install-qemu.sh", *args],
             cwd=self.workdir,
@@ -192,7 +193,7 @@ class PlainInstallHarness(unittest.TestCase):
 
 class TestArgumentValidation(PlainInstallHarness):
     def test_too_few_arguments_exits_1_with_usage(self):
-        result = self.run_script(None, args=["target", "2222", "/tmp/mon"])
+        result = self.run_script(None, args=["target", "2222"])
         self.assertEqual(result.returncode, 1)
         self.assertIn("Usage:", result.stderr)
 
@@ -210,26 +211,20 @@ class TestComposefsRecipe(PlainInstallHarness):
         self.make_variant("dakota", composefs="true", bootloader="systemd")
         self.target = self.make_target("ghcr.io/example/dakota:latest", "dakota")
 
-    def test_cached_image_uses_containers_storage_offline(self):
-        result = self.run_script(self.target, image_exists=True)
+    def test_receipt_selects_offline_source_and_update_target(self):
+        result = self.run_script(self.target)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("using offline install", result.stdout)
-        self.assertEqual(
-            self.recipe()["image"], "containers-storage:ghcr.io/example/dakota:latest"
-        )
-
-    def test_uncached_image_falls_back_to_docker_transport(self):
-        result = self.run_script(self.target, image_exists=False)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("fisherman will pull from network", result.stdout)
-        self.assertEqual(self.recipe()["image"], "docker://ghcr.io/example/dakota:latest")
+        self.assertEqual(self.recipe()["image"], "ghcr.io/example/media:embedded")
+        self.assertEqual(self.recipe()["targetImgref"], "ghcr.io/example/media:stable")
+        self.assertNotIn("podman image exists", self.stub_log())
+        self.assertNotIn("docker://", self.stub_log())
 
     def test_recipe_contract_fields(self):
         self.run_script(self.target, image_exists=True)
         recipe = self.recipe()
         self.assertTrue(recipe["composeFsBackend"])
         self.assert_recipe_contract(recipe)
-        self.assertNotIn("targetImgref", recipe)
+        self.assertEqual(recipe["targetImgref"], "ghcr.io/example/media:stable")
 
     def test_composefs_path_does_not_build_fisherman(self):
         """The podman path uses the shipped fisherman — no local go build."""
@@ -305,12 +300,12 @@ class TestBootcDirectRecipe(PlainInstallHarness):
         self.make_variant("lts", composefs="false", bootloader="grub")
         self.target = self.make_target("ghcr.io/example/lts:latest", "lts")
 
-    def test_empty_image_and_target_imgref_trigger_bootc_direct(self):
-        result = self.run_script(self.target, image_exists=True)
+    def test_ostree_uses_the_same_bound_media_identity(self):
+        result = self.run_script(self.target)
         self.assertEqual(result.returncode, 0, result.stderr)
         recipe = self.recipe()
-        self.assertEqual(recipe["image"], "")
-        self.assertEqual(recipe["targetImgref"], "ghcr.io/example/lts:latest")
+        self.assertEqual(recipe["image"], "ghcr.io/example/media:embedded")
+        self.assertEqual(recipe["targetImgref"], "ghcr.io/example/media:stable")
         self.assertFalse(recipe["composeFsBackend"])
 
     def test_recipe_contract_fields(self):
@@ -327,16 +322,11 @@ class TestBootcDirectRecipe(PlainInstallHarness):
         self.assertNotIn("containers-storage:", target_imgref)
         self.assertNotIn("docker://", target_imgref)
 
-    def test_patched_fisherman_is_built_and_uploaded(self):
-        self.run_script(self.target, image_exists=True)
-        log = self.stub_log()
-        self.assertIn("go build", log)
-        self.assertIn("./cmd/fisherman/", log)
-        self.assertTrue((self.capture / "fisherman").exists())
-
-    def test_fisherman_bin_override_is_exported_to_the_installer(self):
-        self.run_script(self.target, image_exists=True)
-        self.assertIn("FISHERMAN_BIN=/tmp/fisherman", self.stub_log())
+    def test_ostree_uses_shipped_pinned_fisherman(self):
+        self.run_script(self.target)
+        self.assertNotIn("go build", self.stub_log())
+        self.assertNotIn("FISHERMAN_BIN=", self.stub_log())
+        self.assertIn("sudo bash /tmp/fisherman-install.sh", self.stub_log())
 
     def test_install_failure_exits_1_and_dumps_diagnostics(self):
         result = self.run_script(self.target, image_exists=True, fisherman_rc=1)

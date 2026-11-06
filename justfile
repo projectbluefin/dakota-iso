@@ -24,10 +24,6 @@ installer_channel := "stable"
 # Example: just luks-passphrase=MySecret luks-install dakota
 luks-passphrase := "testpassphrase"
 
-# Path to the projectbluefin/fisherman repo for building the patched fisherman binary
-# used in bootcDirect mode (ostree variants: stable, lts).
-# Override with: just fisher_repo=/path/to/fisherman/fisherman luks-test-qemu stable
-fisher_repo := "/tmp/fisherman/fisherman"
 
 # Squashfs compression preset:
 #   fast    (default) — zstd level 3,  128K blocks — quick local builds/CI
@@ -145,8 +141,8 @@ container target:
 #
 # Builds the live environment container from live/Containerfile, then assembles
 # the ISO on the host using build-iso.sh.  This produces a single-variant ISO
-# for local testing.  CI builds a unified ISO with both NVIDIA (live) and
-# non-NVIDIA (offline store) variants — see scripts/build-live-squashfs.sh.
+# for local testing. CI uses the same single bound OCI payload layout through
+# scripts/build-live-squashfs.sh.
 #
 # Output: output/<target>-live.iso
 iso-sd-boot target:
@@ -365,6 +361,7 @@ boot-iso-serial target:
         /usr/share/OVMF/OVMF_CODE.fd \
         /usr/share/edk2/ovmf/OVMF_CODE.fd \
         /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
+        /usr/share/qemu/edk2-x86_64-code.fd \
         /usr/share/ovmf/OVMF.fd \
         /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
         /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
@@ -375,6 +372,7 @@ boot-iso-serial target:
         /usr/share/OVMF/OVMF_VARS.fd \
         /usr/share/edk2/ovmf/OVMF_VARS.fd \
         /usr/share/edk2-ovmf/x64/OVMF_VARS.fd \
+        /usr/share/qemu/edk2-i386-vars.fd \
               /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
@@ -440,6 +438,7 @@ boot-libvirt-debug target:
         /usr/share/OVMF/OVMF_CODE.fd \
         /usr/share/edk2/ovmf/OVMF_CODE.fd \
         /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
+        /usr/share/qemu/edk2-x86_64-code.fd \
         /usr/share/ovmf/OVMF.fd \
         /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
         /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
@@ -450,6 +449,7 @@ boot-libvirt-debug target:
         /usr/share/OVMF/OVMF_VARS.fd \
         /usr/share/edk2/ovmf/OVMF_VARS.fd \
         /usr/share/edk2-ovmf/x64/OVMF_VARS.fd \
+        /usr/share/qemu/edk2-i386-vars.fd \
               /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
@@ -545,7 +545,6 @@ luks-install target:
     VM_NAME="dakota-debug"
     PASSPHRASE="{{luks-passphrase}}"
     DISK="/dev/sda"
-    PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o IdentitiesOnly=yes -o PreferredAuthentications=password"
     SSH="sshpass -p live ssh $SSH_OPTS"
     SCP="sshpass -p live scp $SSH_OPTS"
@@ -582,16 +581,12 @@ luks-install target:
     done
     $SSH liveuser@"$GUEST_IP" true || { echo "ERROR: SSH timed out"; exit 1; }
 
-    # ── Upload fisherman recipe ───────────────────────────────────────────────
-    # Use containers-storage so fisherman uses the OCI image already embedded in
-    # the squashfs (no network pull needed; matches what the GUI installer does).
-    # Write to a local temp file first to avoid $() heredoc syntax that confuses
-    # just's parser (it sees the closing ) at column 0 as a delimiter).
+    # Use the same boot-time source and update target as the graphical installer.
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
     BOOTLOADER=$(variant_bootloader_recipe "{{target}}")
-    printf '{\n  "disk": "%s",\n  "filesystem": "btrfs",\n  "image": "containers-storage:'"${PAYLOAD_IMAGE}"'",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-luks-test",\n  "encryption": {"type": "luks-passphrase", "passphrase": "%s"},\n  "flatpaks": []\n}\n' \
-        "${DISK}" "$(variant_composefs_json "{{target}}")" "${BOOTLOADER}" "${PASSPHRASE}" > "${RECIPE_TMP}"
+    $SSH liveuser@"$GUEST_IP" 'sudo cat /etc/bootc-installer/media-input.json' > "${RECIPE_TMP}"
+    python3 -c 'import json,sys; p,d,c,b,s=sys.argv[1:]; m=json.load(open(p)); r=dict(disk=d,filesystem="btrfs",image=m["image"],targetImgref=m["targetImgref"],composeFsBackend=c=="true",bootloader=b,hostname="dakota-luks-test",encryption={"type":"luks-passphrase","passphrase":s},flatpaks=[]); open(p,"w").write(json.dumps(r)+"\n")' "${RECIPE_TMP}" "${DISK}" "$(variant_composefs_json "{{target}}")" "${BOOTLOADER}" "${PASSPHRASE}"
     $SCP "${RECIPE_TMP}" liveuser@"$GUEST_IP":/tmp/luks-recipe.json
     echo "Uploaded recipe to /tmp/luks-recipe.json"
 
@@ -806,12 +801,14 @@ luks-boot-qemu-live target:
     OVMF_CODE=""; OVMF_VARS=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
               /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
+              /usr/share/qemu/edk2-x86_64-code.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
               /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
         [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
     done
     for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
               /usr/share/edk2/ovmf/OVMF_VARS.fd \
+              /usr/share/qemu/edk2-i386-vars.fd \
               /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
@@ -906,7 +903,7 @@ luks-boot-qemu-live target:
 # Run fisherman LUKS install via SSH into the live QEMU VM.
 # Reuses the same SSH logic as luks-install; install disk is /dev/vda in QEMU.
 luks-install-qemu target:
-    ./scripts/luks-install-qemu.sh "{{target}}" "{{luks-passphrase}}" "{{luks-qemu-ssh-port}}" "{{luks-qemu-monitor-live}}" "{{fisher_repo}}"
+    ./scripts/luks-install-qemu.sh "{{target}}" "{{luks-passphrase}}" "{{luks-qemu-ssh-port}}" "{{luks-qemu-monitor-live}}"
 
 # Boot the installed disk in QEMU (no ISO). Called after luks-install-qemu.
 luks-boot-qemu-installed target:
@@ -922,12 +919,14 @@ luks-boot-qemu-installed target:
     OVMF_CODE=""; OVMF_VARS=""; OVMF_VARS_TEMPLATE=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
               /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
+              /usr/share/qemu/edk2-x86_64-code.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
               /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
         [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
     done
     for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
               /usr/share/edk2/ovmf/OVMF_VARS.fd \
+              /usr/share/qemu/edk2-i386-vars.fd \
               /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
@@ -1074,48 +1073,17 @@ plain-e2e target:
                "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-test-qemu {{target}}
 
-# ENOSPC regression gate: boot live ISO + run fisherman only through the OCI
-# export step, then exit.  Passes when skopeo copies the blob without hitting
-# ENOSPC in /var/tmp.  Runs at 4 GiB to keep overlay tmpfs tight (~2 GiB).
-# Deliberately does NOT wait for the full bootc install — that is tested
-# separately at 8 GiB RAM by plain-install-qemu.
+# Low-RAM regression gate: strict media preflight streams the actual embedded
+# blobs without exporting into tmpfs. The deliberately invalid disk prevents
+# any disk mutation; only that exact post-preflight refusal is accepted.
 plain-enospc-gate target:
     #!/usr/bin/bash
     set -euo pipefail
-    source scripts/variant-config.sh
-    PAYLOAD_IMAGE=$(cat "{{target}}/payload_ref" | tr -d '[:space:]')
     SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
     SSH="sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}}"
     SCP="sshpass -p live scp $SSH_OPTS -P {{plain-qemu-ssh-port}}"
-    if $SSH "sudo podman image exists '${PAYLOAD_IMAGE}' 2>/dev/null"; then
-        INSTALL_IMAGE="containers-storage:${PAYLOAD_IMAGE}"
-    else
-        INSTALL_IMAGE="docker://${PAYLOAD_IMAGE}"
-    fi
-    RECIPE_TMP=$(mktemp /tmp/plain-enospc-recipe-XXXXXX.json)
-    trap "rm -f '${RECIPE_TMP}'" EXIT
-    BOOTLOADER=$(variant_bootloader_recipe "{{target}}")
-    printf '{\n  "disk": "/dev/vda",\n  "filesystem": "btrfs",\n  "image": "%s",\n  "composeFsBackend": %s,\n  "bootloader": "%s",\n  "hostname": "dakota-enospc-test",\n  "encryption": {"type": "none"},\n  "flatpaks": []\n}\n' \
-        "${INSTALL_IMAGE}" "$(variant_composefs_json "{{target}}")" "${BOOTLOADER}" > "${RECIPE_TMP}"
-    $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/enospc-recipe.json
-    echo "Running fisherman (watching for OCI export completion)..."
-    # Run fisherman via process substitution (not a pipe) so that exit 0/1
-    # inside the while loop exits the *outer* script rather than just the
-    # pipe subshell.  With a pipe and set -o pipefail, sshpass returns 255
-    # on the broken-pipe when the while subshell exits, causing a spurious
-    # failure even though the ENOSPC gate passed.
-    while IFS= read -r line; do
-        echo "[fisherman] $line"
-        if echo "$line" | grep -q 'OCI export complete'; then
-            echo ">>> ENOSPC gate PASSED (OCI export complete without ENOSPC)"
-            exit 0
-        fi
-        if echo "$line" | grep -qE '(ENOSPC|no space left|fatal:|error:)'; then
-            echo ">>> ENOSPC gate FAILED: $line" >&2
-            exit 1
-        fi
-    done < <($SSH 'sudo /usr/local/bin/fisherman /tmp/enospc-recipe.json' 2>&1)
-    echo ">>> fisherman exited — OCI export completed successfully"
+    $SCP scripts/check-live-media.sh liveuser@127.0.0.1:/tmp/check-live-media.sh
+    $SSH 'sudo bash /tmp/check-live-media.sh'
 
 
 # Run the full plain install test (CI entry point).
@@ -1258,12 +1226,14 @@ plain-boot-qemu-live target:
     OVMF_CODE=""; OVMF_VARS=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
               /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
+              /usr/share/qemu/edk2-x86_64-code.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
               /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
         [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
     done
     for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
               /usr/share/edk2/ovmf/OVMF_VARS.fd \
+              /usr/share/qemu/edk2-i386-vars.fd \
               /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \
@@ -1341,7 +1311,7 @@ plain-boot-qemu-live target:
 
 # Run fisherman plain (no-encryption) composefs install via SSH.
 plain-install-qemu target:
-    ./scripts/plain-install-qemu.sh "{{target}}" "{{plain-qemu-ssh-port}}" "{{plain-qemu-monitor-live}}" "{{fisher_repo}}"
+    ./scripts/plain-install-qemu.sh "{{target}}" "{{plain-qemu-ssh-port}}" "{{plain-qemu-monitor-live}}"
 
 # Boot the installed disk (no ISO) after plain-install-qemu.
 plain-boot-qemu-installed target:
@@ -1357,12 +1327,14 @@ plain-boot-qemu-installed target:
     OVMF_CODE=""; OVMF_VARS=""; OVMF_VARS_TEMPLATE=""
     for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd \
               /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd \
+              /usr/share/qemu/edk2-x86_64-code.fd \
               /home/linuxbrew/.linuxbrew/share/qemu/edk2-x86_64-code.fd \
               /home/linuxbrew/.linuxbrew/Cellar/qemu/11.0.1/share/qemu/edk2-x86_64-code.fd; do
         [[ -f "$f" ]] && { OVMF_CODE="$f"; break; }
     done
     for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd \
               /usr/share/edk2/ovmf/OVMF_VARS.fd \
+              /usr/share/qemu/edk2-i386-vars.fd \
               /var/home/jorge/VMs/bluefin-test/OVMF_VARS.fd \
               /var/home/james/dev/ostree-composefs-rebase/ovmf_vars.fd \
               /var/home/james/.local/share/Trash/files/e2e-logs-3/ovmf_vars.fd \

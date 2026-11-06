@@ -147,6 +147,20 @@ class TestVerifyPostInstallScript(unittest.TestCase):
         for name, out in bad.items():
             self.assertNotEqual(self._check_uefi(out), 0, f"should reject: {name}")
 
+    def test_compression_requires_live_mount_and_persistent_rootflags(self):
+        cases = [
+            ("btrfs rw,compress=zstd:1,subvol=/", "root=LABEL=root rootflags=compress=zstd:1", True),
+            ("btrfs rw,compress=zstd,subvol=/", "rootflags=subvol=/,compress=zstd ro", True),
+            ("btrfs rw,compress=zstd:3", "rootflags=compress=zstd:1", False),
+            ("btrfs rw", "rootflags=compress=zstd:1", False),
+            ("btrfs rw,compress=zstd:1", "root=LABEL=root", False),
+            ("overlay rw", "rootflags=compress=zstd:1", False),
+        ]
+        for mount, cmdline, expected in cases:
+            result = subprocess.run(["bash", "-c", 'source "$0"; check_btrfs_compression "$1" "$2"',
+                                     str(VERIFY_SCRIPT), mount, cmdline], capture_output=True, text=True)
+            self.assertEqual(result.returncode == 0, expected, (mount, cmdline, result.stderr))
+
 
 class TestFishermanInstallDebugSSH(unittest.TestCase):
     """The --enable-debug-ssh path must stay opt-in, never unconditional."""
@@ -251,8 +265,8 @@ class TestJustfileWiring(unittest.TestCase):
         text = VERIFY_SCRIPT.read_text()
         unreachable = text[text.index('if [[ "$READY" -ne 1 ]]'):]
         unreachable = unreachable[:unreachable.index("\nfi\n")]
-        self.assertIn('"${STRICT_POST_BOOT:-0}" != "1"', unreachable)
-        self.assertIn("::warning", unreachable)
+        self.assertNotIn("exit 0", unreachable)
+        self.assertIn("Compression is a required release property", unreachable)
         self.assertTrue(unreachable.rstrip().endswith("exit 2"))
 
     def test_nested_plain_runs_forward_installed_ssh_port(self):
