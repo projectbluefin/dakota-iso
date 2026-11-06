@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       image_ref:
-        description: 'Explicit image ref to build and embed (default: ghcr.io/projectbluefin/dakota-nvidia:stable)'
+        description: 'Image to embed: ghcr.io/projectbluefin/dakota-nvidia:stable (default) or ghcr.io/projectbluefin/dakota-nvidia@sha256:<digest>; other refs are rejected'
         required: false
         default: ''
         type: string
@@ -61,7 +61,14 @@ jobs:
         env:
           INPUT_IMAGE_REF: ${{ github.event.client_payload.image_ref || inputs.image_ref }}
         run: |
-          PINNED=$(scripts/verify-image-signature.sh "${INPUT_IMAGE_REF:-ghcr.io/projectbluefin/dakota-nvidia:stable}")
+          REF="${INPUT_IMAGE_REF:-ghcr.io/projectbluefin/dakota-nvidia:stable}"
+          # The verified image is published as the production Dakota ISO.
+          if [[ "$REF" != "ghcr.io/projectbluefin/dakota-nvidia:stable" && \
+                ! "$REF" =~ ^ghcr\.io/projectbluefin/dakota-nvidia@sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: image_ref must be ghcr.io/projectbluefin/dakota-nvidia:stable or ghcr.io/projectbluefin/dakota-nvidia@sha256:<64 lowercase hex>" >&2
+            exit 1
+          fi
+          PINNED=$(scripts/verify-image-signature.sh "$REF")
           echo "pinned=${PINNED}" >> "$GITHUB_OUTPUT"
           echo "digest=@${PINNED##*@}" >> "$GITHUB_OUTPUT"
 
