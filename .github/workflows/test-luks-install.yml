@@ -128,18 +128,18 @@ jobs:
           go-version: '1.23'
           cache: false
 
-      # Track fisherman's active line. This used to pin the June branch
-      # fix/overlay-driver-for-ostree-bootc-install, which froze the gate on a
-      # six-week-old installer: every fisherman fix merged since — including the
-      # ENOSPC scratch-cache fix that this gate should have caught — was invisible
-      # to E2E. projectbluefin/fisherman is retired; tuna-os/fisherman has no
-      # `main`/`prod` split, `dev` is its default and active line.
-      - name: Clone fisherman (dev — tuna-os/fisherman's active line)
+      # Pinned to a commit on tuna-os/fisherman's `dev` branch (its default and
+      # active line; projectbluefin/fisherman is retired). This used to clone
+      # the June feature branch fix/overlay-driver-for-ostree-bootc-install,
+      # which froze the gate on a six-week-old installer and hid every fisherman
+      # fix merged since. Renovate's git-refs manager (renovate.json) bumps the
+      # SHA below to the tip of `dev` — keep the trailing `# dev` so it matches.
+      # tests/test_live_build_invariants.py checks the pin is on a long-lived
+      # branch.
+      - name: Clone fisherman (pinned dev commit)
         run: |
-          git clone https://github.com/tuna-os/fisherman.git \
-            --branch dev \
-            --depth 1 \
-            /tmp/fisherman
+          git clone https://github.com/tuna-os/fisherman.git /tmp/fisherman
+          git -C /tmp/fisherman checkout --detach 2aedba4e0494fab130de9ffe00f5d6142583e76c # dev
           git -C /tmp/fisherman --no-pager log --oneline -1
 
       - name: Build debug ISO

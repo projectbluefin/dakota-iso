@@ -1679,7 +1679,7 @@ class TestActionPinsResolve(unittest.TestCase):
                 f"{len(unverified)} action pin(s). Set GITHUB_TOKEN to enable."
             )
 class TestE2EFishermanRef(unittest.TestCase):
-    """The E2E gates must build fisherman from a long-lived branch.
+    """The E2E gates must build fisherman from a long-lived line.
 
     Both install workflows once cloned ``fix/overlay-driver-for-ostree-bootc-install``,
     whose last commit was 2026-06-17. The gate therefore built and tested a
@@ -1687,44 +1687,136 @@ class TestE2EFishermanRef(unittest.TestCase):
     invisible to E2E, including the scratch-cache ENOSPC fix that this gate is
     supposed to catch. A feature branch is a fossil the moment it stops moving,
     and nothing in CI notices.
+
+    A clone may either track a long-lived branch directly (``--branch dev``) or
+    pin an exact commit (``checkout --detach <sha>``) so the fetch is
+    reproducible. A pinned commit must be on a long-lived branch, never a
+    feature branch.
     """
 
     E2E_WORKFLOWS = ("test-plain-install.yml", "test-luks-install.yml")
+    FISHERMAN_REPO = "tuna-os/fisherman"
     # tuna-os/fisherman (the sole upstream after projectbluefin/fisherman was
     # retired) has no main/prod split — dev is both its default and active line.
     LONG_LIVED = {"main", "dev"}
 
-    CLONE_RE = re.compile(
+    BRANCH_CLONE_RE = re.compile(
         r"git clone\s+\S*github\.com/tuna-os/fisherman\.git\s*\\?\s*\n"
         r"\s*--branch\s+(?P<branch>\S+)",
     )
+    PINNED_CLONE_RE = re.compile(
+        r"git clone\s+\S*github\.com/tuna-os/fisherman\.git\s+(?P<dest>\S+)\s*\n"
+        r"\s*git -C\s+(?P=dest)\s+checkout\s+--detach\s+(?P<sha>\S+)",
+    )
 
-    def test_e2e_workflows_clone_a_long_lived_fisherman_branch(self):
-        checked = 0
+    def _clone_refs(self):
+        """Yield ``(workflow, kind, ref)`` for every E2E fisherman clone."""
         for name in self.E2E_WORKFLOWS:
             path = REPO / ".github" / "workflows" / name
             self.assertTrue(path.exists(), f"Missing {path}")
             text = path.read_text(encoding="utf-8")
-            match = self.CLONE_RE.search(text)
-            self.assertIsNotNone(
-                match,
+            branch = self.BRANCH_CLONE_RE.search(text)
+            pinned = self.PINNED_CLONE_RE.search(text)
+            self.assertTrue(
+                branch or pinned,
                 f"{name}: could not find the fisherman clone step — if the clone "
                 "moved, update this guard rather than deleting it.",
             )
-            branch = match.group("branch")
-            self.assertIn(
-                branch,
-                self.LONG_LIVED,
-                f"{name} clones fisherman branch {branch!r}. E2E must track a "
-                f"long-lived branch ({', '.join(sorted(self.LONG_LIVED))}); a feature "
-                "branch freezes the gate on whatever the installer looked like when "
-                "that branch stopped moving.",
-            )
+            if pinned:
+                yield name, "sha", pinned.group("sha")
+            else:
+                yield name, "branch", branch.group("branch")
+
+    def test_e2e_workflows_clone_a_long_lived_fisherman_branch(self):
+        checked = 0
+        for name, kind, ref in self._clone_refs():
+            if kind == "sha":
+                self.assertRegex(
+                    ref,
+                    r"^[0-9a-f]{40}$",
+                    f"{name} pins fisherman to {ref!r}; a pin must be a full "
+                    "40-character commit SHA.",
+                )
+            else:
+                self.assertIn(
+                    ref,
+                    self.LONG_LIVED,
+                    f"{name} clones fisherman branch {ref!r}. E2E must track a "
+                    f"long-lived branch ({', '.join(sorted(self.LONG_LIVED))}); a "
+                    "feature branch freezes the gate on whatever the installer "
+                    "looked like when that branch stopped moving.",
+                )
             checked += 1
         self.assertEqual(
             checked, len(self.E2E_WORKFLOWS),
             "not every E2E workflow was checked",
         )
+
+    @staticmethod
+    def _compare_status(repo, base, head):
+        """Return the GitHub compare status of ``base...head``.
+
+        Returns ``(status, None)`` on success and ``(None, reason)`` when the
+        check could not be performed (offline, unauthenticated, rate limited).
+        """
+        import json
+        import os
+        import urllib.error
+        import urllib.request
+
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/compare/{base}...{head}",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "dakota-iso-tests",
+            },
+        )
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
+
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.load(response).get("status"), None
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return "missing", None
+            return None, f"HTTP {exc.code} — cannot verify"
+        except Exception as exc:  # offline, DNS failure, timeout
+            return None, f"{type(exc).__name__}: {exc}"
+
+    def test_pinned_fisherman_commits_are_on_a_long_lived_branch(self):
+        pins = [(n, ref) for n, kind, ref in self._clone_refs() if kind == "sha"]
+        if not pins:
+            self.skipTest("no E2E workflow pins fisherman to a commit")
+        unverified = []
+        for name, sha in pins:
+            reasons = []
+            on_long_lived = False
+            for branch in sorted(self.LONG_LIVED):
+                status, reason = self._compare_status(
+                    self.FISHERMAN_REPO, branch, sha
+                )
+                if status is None:
+                    reasons.append(f"{branch}: {reason}")
+                elif status in ("behind", "identical"):
+                    on_long_lived = True
+                    break
+            if on_long_lived:
+                continue
+            if reasons:
+                unverified.append(f"{name}: {'; '.join(reasons)}")
+                continue
+            self.fail(
+                f"{name} pins fisherman to {sha}, which is not on any long-lived "
+                f"branch ({', '.join(sorted(self.LONG_LIVED))}). Pin a commit "
+                "from dev, not a feature branch."
+            )
+        if unverified:
+            self.skipTest(
+                "could not verify fisherman pin(s) against GitHub:\n  "
+                + "\n  ".join(unverified)
+            )
 
 
 class TestInstallerChannelURLs(unittest.TestCase):

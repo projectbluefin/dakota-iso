@@ -38,7 +38,7 @@ gh workflow run build-iso.yml --ref main
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
-| ShellCheck Lint | `lint.yml` | PRs to main, push to main |
+| ShellCheck Lint + Pinned fetches | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
 
 ## build-iso.yml
@@ -273,13 +273,32 @@ All workflow files go in `.github/workflows/`. Before adding:
   acceptance workflow is the explicit exception because it detects installer
   regressions before the stable bundle is published.
 
-## lint.yml — ShellCheck
+## lint.yml — ShellCheck and pinned fetches
 
 Runs ShellCheck on every `.sh` file in the repository. Severity threshold is `warning`
 (style/info is ignored). Uses `ludeeus/action-shellcheck@2.0.0`.
 
 Any new shell script must pass ShellCheck before merge. For intentional suppression,
 add an inline `# shellcheck disable=SCxxxx` comment with a justification.
+
+The `pinned-fetches` job calls the shared
+`projectbluefin/actions/.github/workflows/reusable-pinned-fetches.yml@v1` gate. It scans
+the repository for fetches pinned to a moving target: download URLs on `latest`/branches,
+`curl | sh`-style pipes, `git clone` with no commit SHA, container images by tag with no
+`@sha256` digest, and `bootc switch`/`ostree rebase` without a signature policy.
+Intentional exceptions go in `.github/pinned-fetches-allowlist.txt` — one rule id or
+substring per line, `#` comments allowed. Entries are bare substring matches, so keep them
+as narrow as possible (the current `localhost/` entry should be tightened before the
+flip below).
+
+The job runs in `mode: warn` (findings are reported, never blocking) pending the
+[#294](https://github.com/projectbluefin/dakota-iso/issues/294) follow-up that flips it
+to `mode: fail` once the findings are cleared or allowlisted.
+
+The E2E fisherman clones (`test-luks-install.yml`, `test-plain-install.yml`) are pinned to
+a commit on `tuna-os/fisherman`'s `dev` branch. A Renovate `git-refs` custom manager in
+`renovate.json` bumps that SHA; it matches `checkout --detach <sha> # dev`, so keep the
+trailing `# dev` comment when editing the line.
 
 ## test.yml — Python Unit Tests
 

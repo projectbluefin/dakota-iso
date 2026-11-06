@@ -21,3 +21,11 @@ jobs:
           scandir: '.'
           ignore_paths: >
             .git
+
+  pinned-fetches:
+    name: Pinned fetches
+    permissions:
+      contents: read
+    uses: projectbluefin/actions/.github/workflows/reusable-pinned-fetches.yml@v1
+    with:
+      mode: warn
