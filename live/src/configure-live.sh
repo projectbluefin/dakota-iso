@@ -11,8 +11,8 @@
 #
 # TARGET (set via ARG/ENV in the Containerfile) selects which Dakota variant
 # is being built: "dakota" (stock) or "dakota-nvidia".  It controls the
-# imgref and local_imgref written into recipe.json so each squashfs image on
-# the dual-env ISO knows which OCI image it carries for offline installation.
+# imgref (day-2 updates) and local_imgref (bound offline payload identity)
+# written into the live recipe.
 
 set -exo pipefail
 
@@ -346,29 +346,41 @@ WantedBy=local-fs.target
 UNITEOF
 systemctl enable var-tmp.mount || true
 
-# ── /run overlay expansion ────────────────────────────────────────────────────
-# The live root overlay's upper dir lives under /run (as /run/overlayfs).  The
-# VFS storage driver creates a full copy of the squashed image here when podman
-# creates a container from it — this copy can be 8–9 GB for large images like
-# bluefin-nvidia.  The default /run tmpfs is 20% of RAM (~5.6 GB on a 28 GB
-# machine), which is too small.  Expand it to 70% so offline installs succeed
-# on machines with 16 GB+ RAM (min recommended for bluefin).
-cat > /usr/lib/systemd/system/live-run-expand.service << 'UNITEOF'
+cat > /usr/lib/systemd/system/run-bootcmedia.mount << 'UNITEOF'
 [Unit]
-Description=Expand /run tmpfs for large VFS offline installs
-DefaultDependencies=no
-After=systemd-remount-fs.service
-Before=basic.target
+Description=Read-only installer media
+
+[Mount]
+What=/run/initramfs/live/LiveOS/squashfs.img
+Where=/run/bootcmedia
+Type=squashfs
+Options=ro,loop
+UNITEOF
+
+# Resolve the GUI's hardware-dependent update target before installation.
+install -Dm755 "$SCRIPT_DIR/bind-media-target.py" /usr/libexec/bind-media-target
+cat > /usr/lib/systemd/system/live-media-setup.service << 'UNITEOF'
+[Unit]
+Description=Bind offline media update target
+Requires=run-bootcmedia.mount
+After=systemd-udev-settle.service run-bootcmedia.mount
+Before=display-manager.service live-ready.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/mount -o remount,size=70% /run
+ExecStart=/usr/libexec/bind-media-target
 RemainAfterExit=yes
 
 [Install]
-WantedBy=sysinit.target
+WantedBy=multi-user.target
 UNITEOF
-systemctl enable live-run-expand.service || true
+systemctl enable live-media-setup.service
+mkdir -p /etc/systemd/system/display-manager.service.d
+cat > /etc/systemd/system/display-manager.service.d/media.conf << 'UNITEOF'
+[Unit]
+Requires=live-media-setup.service
+After=live-media-setup.service
+UNITEOF
 
 # ── Live-ready marker service ─────────────────────────────────────────────────
 # Prints DAKOTA_LIVE_READY to the serial console after display-manager.service
@@ -385,6 +397,8 @@ cat > /usr/lib/systemd/system/live-ready.service << 'LREOF'
 Description=Live environment ready marker
 After=display-manager.service
 Requires=display-manager.service
+Requires=live-media-setup.service
+After=live-media-setup.service
 
 [Service]
 Type=oneshot
@@ -400,7 +414,7 @@ LREOF
 # preset policy on these bases disables units it does not list, and
 # `systemctl preset-all` at first boot would otherwise drop the enable below.
 mkdir -p /etc/systemd/system-preset
-echo "enable live-ready.service" > /etc/systemd/system-preset/90-live.preset
+printf 'enable live-ready.service\nenable live-media-setup.service\n' > /etc/systemd/system-preset/90-live.preset
 systemctl enable live-ready.service || true
 
 # fisherman (tuna-installer backend) creates /var/fisherman-tmp and bind-mounts
@@ -429,9 +443,8 @@ install -Dm644 "$SCRIPT_DIR/images/dakotaraptor.png" /usr/share/bootc-installer/
 #   recipe.json — distro branding, tour slides, install steps, and the
 #                 local_imgref for offline installation
 #
-# TARGET controls which OCI image is embedded in this squashfs's VFS
-# containers-storage and therefore available for offline install.  The live
-# environment is always the NVIDIA variant (safe for all hardware).
+# TARGET identifies the single OCI layout embedded at ISO assembly time.
+# The live environment is always the NVIDIA variant (safe for all hardware).
 #
 # Per-variant config is read from /tmp/src/<TARGET>/ (bind-mounted from the
 # build context at container build time) when present, with sensible defaults
@@ -491,18 +504,9 @@ import json, sys
 with open("$RECIPE_SRC") as f:
     recipe = json.load(f)
 
-# image = source for fisherman/bootc install
-# For composefs (dakota): containers-storage: ref in the VFS store, podman-based
-#   install.
-# For non-composefs (bluefin, lts): empty image triggers bootcDirect — fisherman
-#   runs bootc install --source-imgref containers-storage:<ref> natively,
-#   into the squashfs at /usr/lib/containers/storage.  Mirrors projectbluefin/iso.
-if "$COMPOSEFS" == "true":
-    recipe["image"] = "containers-storage:$NVIDIA_IMGREF"
-    recipe["local_imgref"] = "containers-storage:$NVIDIA_IMGREF"
-else:
-    recipe["image"] = ""
-    recipe["local_imgref"] = "containers-storage:$NVIDIA_IMGREF"
+# The receipt binds this registry identity to a verified read-only OCI layout.
+recipe["image"] = "$NVIDIA_IMGREF"
+recipe["local_imgref"] = "$NVIDIA_IMGREF"
 recipe["targetImgref"] = "$BASE_IMGREF"
 recipe["imgref"] = "$BASE_IMGREF"
 # All variants default to btrfs. XFS is a UI option only, and only for
@@ -646,64 +650,18 @@ EOF
 mkdir -p /usr/lib/tmpfiles.d
 echo 'f /etc/hostname 0644 - - - dakota-live' > /usr/lib/tmpfiles.d/live-hostname.conf
 
-# ── containers-storage ──────────────────────────────────────────────────────
-# The OCI payload image is baked into the squashfs.
-# Strategy depends on composefs vs. bootcDirect (non-composefs):
-#
-#   composefs (dakota): VFS driver at /var/lib/containers/storage.
-#     Fisherman exports VFS → OCI at install time, podman-based install.
-#
-#   non-composefs (stable, lts): VFS driver at /var/lib/containers/storage
-#     with a VFS-format additionalimagestore at /usr/lib/containers/storage
-#     (read-only squashfs).  VFS driver is required — the live ISO rootfs is
-#     overlayfs (dmsquash-live) and el10 (LTS) lacks native overlay-on-overlay;
-#     an overlay-format additional store silently fails, causing bootc to write
-#     blobs to /var/tmp (RAM-backed tmpfs) → ENOSPC.
-#     bootcDirect runs bootc natively with containers-storage:<ref> resolving
-#     via the VFS additional store.  Mirrors projectbluefin/iso commit 34fe6659.
-
-mkdir -p /var/lib/containers/storage
-mkdir -p /etc/containers
-
-if [ "$COMPOSEFS" = "true" ]; then
-    # composefs: VFS driver for VFS-format layers baked into squashfs
-    cat > /etc/containers/storage.conf << 'STOREOF'
-[storage]
-driver = "vfs"
-runroot = "/run/containers/storage"
-graphroot = "/var/lib/containers/storage"
-STOREOF
-else
-    # non-composefs (bootcDirect): overlay driver with fuse-overlayfs, payload in overlay additional store.
-    # We must use fuse-overlayfs because the live ISO rootfs is overlayfs (dmsquash-live)
-    # and the el10 kernel (LTS) lacks native overlay-on-overlay support.
-    # Using fuse-overlayfs bypasses kernel restrictions and allows the overlay driver
-    # to be used, which avoids the VFS storage explosion of unsquashed images.
-    mkdir -p /usr/lib/containers/storage
-    cat > /etc/containers/storage.conf << 'STOREOF'
+# The payload is a bound OCI layout, not a containers-storage graphroot.
+# Keep container scratch storage separate from the immutable media source.
+mkdir -p /var/lib/containers/storage /etc/containers
+cat > /etc/containers/storage.conf << 'STOREOF'
 [storage]
 driver = "overlay"
 runroot = "/run/containers/storage"
 graphroot = "/var/lib/containers/storage"
 
-[storage.options]
-additionalimagestores = [
-  "/usr/lib/containers/storage"
-]
-
 [storage.options.overlay]
 mount_program = "/usr/bin/fuse-overlayfs"
 STOREOF
-
-    # Bind-mount the read-only squashfs payload into container namespaces
-    # so fisherman/podman can resolve containers-storage:<ref> offline.
-    cat > /etc/containers/mounts.conf << 'MOUNTSEOF'
-/usr/lib/containers/storage:/usr/lib/containers/storage
-MOUNTSEOF
-fi
-
-# fisherman handles scratch space, transport-prefix stripping, OCI export, and
-# GPT partition retagging natively — no host-side wrappers needed.
 
 # ── Per-variant hook ──────────────────────────────────────────────────────────
 # Variants with needs beyond the declarative files (e.g. Debian-based images)

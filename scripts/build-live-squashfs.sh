@@ -10,9 +10,8 @@
 #          [--oci-image ghcr.io/projectbluefin/dakota-nvidia:stable] \
 #          --output-dir <dir>
 #    Builds the live container from live/Containerfile for the given target,
-#    then exports it to squashfs.  When --oci-image is given, the referenced
-#    payload is embedded into VFS containers-storage for offline installs;
-#    otherwise fisherman pulls the payload from the network at install time.
+#    then exports it to squashfs. --oci-image supplies the required offline OCI
+#    payload; live-iso-mode refuses installation without its media receipt.
 #    Outputs: <dir>/<target>-live.squashfs  and  <dir>/<target>-boot-files.tar
 #
 # 2. Positional mode (used by build-iso.yml):
@@ -21,15 +20,9 @@
 #          localhost/dakota-nvidia-live:latest \
 #          /out/dakota-nvidia.rootfs.sfs \
 #          /out/dakota-nvidia-boot.tar
-#    Exports a pre-built container image as squashfs.  When --oci-image is
-#    given the referenced OCI image is squashed to a single layer and embedded
-#    into a VFS containers-storage tree at /var/lib/containers/storage inside
-#    the squashfs — the offline install store that fisherman reads at boot.
-#
-# The OCI image (positional mode + --oci-image) must already be present in
-# the local podman store.
-# skopeo runs inside the live container so the VFS tar-split metadata is
-# written in the JSON format that the live ISO expects.
+#    Exports a pre-built container image as squashfs. --oci-image embeds the
+#    prepared OCI layout once, bound by /etc/bootc-installer/media-input.json.
+#    The payload must already be present in the local podman store.
 #
 # Must run as root (sudo).
 
@@ -98,12 +91,9 @@ if [[ $(id -u) -ne 0 ]]; then
     exit 1
 fi
 
-# SUPERISO_TMPDIR lets CI redirect scratch space to a large disk-backed path
-# (e.g. /var/iso-build).  The squash+VFS embedding writes ~12 GB of
-# intermediates; /var/tmp on GitHub runners only has ~14 GB total.
+# SUPERISO_TMPDIR lets CI redirect scratch space to a large disk-backed path.
 WORK="$(mktemp -d "${SUPERISO_TMPDIR:-/var/tmp}/tbox-live-sfs.XXXXXX")"
 trap 'podman image unmount "${IMAGE}" 2>/dev/null || true
-      umount "${WORK}/squashfs-root/var/lib/containers/storage" 2>/dev/null || true
       umount "${WORK}/squashfs-root" 2>/dev/null || true
       chmod -R u+rwX "${WORK}" 2>/dev/null || true
       rm -rf "${WORK}"' EXIT
@@ -129,30 +119,8 @@ else
     cp -a "${MOUNT}/." "${SFS_ROOT}/"
 fi
 
-# ── Embed offline OCI store (VFS) ─────────────────────────────────────────────
-# When --oci-image is given, embed the payload image for offline installation.
-# Strategy depends on composefs vs. standard-ostree:
-#
-#   composefs (composeFsBackend=true, e.g. dakota):
-#     Squash all layers to one, import into VFS containers-storage.
-#     Fisherman exports VFS → OCI at install time and passes
-#     --source-imgref oci:... --composefs-backend to bootc.
-#
-#   standard-ostree / non-composefs (e.g. stable, lts):
-#     Embed into VFS containers-storage at /usr/lib/containers/storage
-#     (additionalimagestore).  VFS driver is required — the live ISO rootfs
-#     is an overlayfs and el10 (LTS) lacks native overlay-on-overlay; an
-#     overlay-format additional store silently fails, sending bootc to write
-#     large blobs to /var/tmp (RAM tmpfs) → ENOSPC.  VFS is driver-agnostic.
-#     bootcDirect resolves containers-storage:<ref> via the additional store.
-#     Mirrors projectbluefin/iso commit 34fe6659.
-#
-# In --target mode, variant-config.sh is the single authority for the variant.
-# In positional mode, detect composefs from the recipe.json baked into the live
-# container.  The probe fails closed: grep exit 1 (no match) means the recipe
-# says false; any other non-zero status (recipe.json missing, podman unable to
-# run the image) aborts, so an infrastructure error cannot silently produce a
-# non-composefs ISO layout.
+# The prepared OCI layout is shared by composefs and ostree installs. Preserve
+# all layers for ostree; only composefs payloads may be squashed.
 COMPOSEFS_BACKEND=false
 if [[ -n "${TARGET}" ]]; then
     COMPOSEFS_BACKEND=$(variant_composefs "${TARGET}")
@@ -172,86 +140,10 @@ else
 fi
 echo ">>> [live-squashfs] composeFsBackend=${COMPOSEFS_BACKEND}"
 if [[ -n "${OCI_IMAGE}" ]]; then
-    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
-        echo ">>> [live-squashfs] embedding OCI image ${OCI_IMAGE} into VFS store (composefs path) ..."
-
-        OCI_ARCHIVE="${WORK}/payload.oci.tar"
-        CS_STAGING="${WORK}/vfs-storage"
-        STORAGE_CONF="${WORK}/st.conf"
-
-        mkdir -p "${CS_STAGING}"
-
-        # Chunkified images have many layers; squash to 1 to keep VFS store compact.
-        # The payload ships verbatim to installed systems — never bake a
-        # storage.conf into it (installed podman would inherit VFS storage).
-        # VFS config for reading the embedded store lives in the live env
-        # (configure-live.sh) and the import step below (CONTAINERS_STORAGE_CONF).
-        echo ">>> [live-squashfs] squashing ${OCI_IMAGE} to single layer ..."
-        payload_to_oci_archive "${OCI_IMAGE}" "${OCI_ARCHIVE}" "${OCI_IMAGE}" true
-
-        printf '[storage]\ndriver = "vfs"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
-            > "${STORAGE_CONF}"
-
-        echo ">>> [live-squashfs] importing squashed OCI into VFS staging dir ..."
-        podman run --rm \
-            --privileged \
-            -v "${OCI_ARCHIVE}:/payload.oci.tar:ro" \
-            -v "${CS_STAGING}:/vfs-storage" \
-            -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
-            "${IMAGE}" \
-            sh -c "mkdir -p /tmp/cs-runroot /var/tmp && \
-                   CONTAINERS_STORAGE_CONF=/tmp/st.conf \
-                   skopeo copy \
-                   oci-archive:/payload.oci.tar:${OCI_IMAGE} \
-                   containers-storage:${OCI_IMAGE}"
-
-        rm -f "${OCI_ARCHIVE}" "${STORAGE_CONF}"
-
-        mkdir -p "${SFS_ROOT}/var/lib/containers/storage"
-        echo ">>> [live-squashfs] copying VFS store into squashfs root ($(du -sh "${CS_STAGING}" | cut -f1)) ..."
-        cp -a "${CS_STAGING}/." "${SFS_ROOT}/var/lib/containers/storage/"
-        rm -rf "${CS_STAGING}"
-        echo ">>> [live-squashfs] VFS store embedded: $(du -sh "${SFS_ROOT}/var/lib/containers/storage" | cut -f1)"
-    else
-        # Non-composefs (standard-ostree / bootcDirect): embed image into overlay
-        # containers-storage at /usr/lib/containers/storage (additionalimagestore).
-        echo ">>> [live-squashfs] non-composefs (bootcDirect) — embedding OCI image ${OCI_IMAGE} into overlay store ..."
-
-        OCI_ARCHIVE="${WORK}/payload.oci.tar"
-        CS_STAGING="${WORK}/overlay-storage"
-        STORAGE_CONF="${WORK}/st.conf"
-        mkdir -p "${CS_STAGING}"
-
-        echo ">>> [live-squashfs] committing payload without squash to preserve ostree commits ..."
-        payload_to_oci_archive "${OCI_IMAGE}" "${OCI_ARCHIVE}" "${OCI_IMAGE}" false
-
-        printf '[storage]\ndriver = "overlay"\nrunroot = "/tmp/cs-runroot"\ngraphroot = "/vfs-storage"\n' \
-            > "${STORAGE_CONF}"
-
-        echo ">>> [live-squashfs] importing OCI into overlay staging dir ..."
-        podman run --rm \
-            --privileged \
-            -v "${OCI_ARCHIVE}:/payload.oci.tar:ro" \
-            -v "${CS_STAGING}:/vfs-storage" \
-            -v "${STORAGE_CONF}:/tmp/st.conf:ro" \
-            "${IMAGE}" \
-            sh -c "mkdir -p /tmp/cs-runroot /var/tmp && \
-                   CONTAINERS_STORAGE_CONF=/tmp/st.conf \
-                   skopeo copy \
-                   oci-archive:/payload.oci.tar:${OCI_IMAGE} \
-                   containers-storage:${OCI_IMAGE}"
-
-        rm -f "${OCI_ARCHIVE}" "${STORAGE_CONF}"
-
-        mkdir -p "${SFS_ROOT}/usr/lib/containers/storage"
-        echo ">>> [live-squashfs] copying overlay store into squashfs root ($(du -sh "${CS_STAGING}" | cut -f1)) ..."
-        # Overlay containers-storage contains character-device whiteout files that
-        # cp -a cannot create without privileges.  Use rsync to skip them — they
-        # are write-layer artifacts not needed in the read-only additional store.
-        rsync -a --no-specials --no-devices "${CS_STAGING}/" "${SFS_ROOT}/usr/lib/containers/storage/"
-        rm -rf "${CS_STAGING}"
-        echo ">>> [live-squashfs] overlay store embedded: $(du -sh "${SFS_ROOT}/usr/lib/containers/storage" | cut -f1)"
-    fi
+    OCI_ARCHIVE="${WORK}/payload.oci.tar"
+    payload_to_oci_archive "${OCI_IMAGE}" "${OCI_ARCHIVE}" "${OCI_IMAGE}" "${COMPOSEFS_BACKEND}"
+    payload_embed_oci_archive "${OCI_ARCHIVE}" "${SFS_ROOT}"
+    rm -f "${OCI_ARCHIVE}"
 fi
 
 SFS_LEVEL=3; SFS_BLOCK=131072
@@ -269,7 +161,8 @@ mkdir -p "$(dirname "${OUTPUT_SFS}")"
 # NOTE: do not use "-e proc" — newer mksquashfs (4.7+) removes the directory
 # itself when given a bare "-e proc", while older versions kept an empty dir.
 # Same applies to sys and dev.
-mkdir -p "${SFS_ROOT}/proc" "${SFS_ROOT}/sys" "${SFS_ROOT}/dev"
+# dracut only carries /run across switch-root when the new root has that directory.
+mkdir -p "${SFS_ROOT}/proc" "${SFS_ROOT}/sys" "${SFS_ROOT}/dev" "${SFS_ROOT}/run" "${SFS_ROOT}/tmp"
 
 mksquashfs "${SFS_ROOT}" "${OUTPUT_SFS}" \
     -noappend -comp zstd \
@@ -277,7 +170,7 @@ mksquashfs "${SFS_ROOT}" "${OUTPUT_SFS}" \
     -b "${SFS_BLOCK}" \
     -processors 4 \
     -wildcards \
-    -e "proc/*" -e "sys/*" -e "dev/*" -e run -e tmp
+    -e "proc/*" -e "sys/*" -e "dev/*" -e "run/*" -e "tmp/*"
 echo ">>> [live-squashfs] squashfs: $(du -sh "${OUTPUT_SFS}" | cut -f1)"
 
 echo ">>> [live-squashfs] exporting boot files tar ..."

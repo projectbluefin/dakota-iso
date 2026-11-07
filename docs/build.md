@@ -4,16 +4,17 @@ How to build Dakota live ISOs locally and the key variables that control the bui
 
 ## Two variant types — understand this before changing anything
 
-This repo produces ISOs for two different OCI store layouts:
+All variants embed one OCI layout at `/usr/share/bootc-installer/oci`, bound to
+the explicitly mounted read-only squashfs at `/run/bootcmedia/usr/share/bootc-installer/oci`.
 
-| Variant | `composefs` | OCI store path | squash before embed? |
-|---|---|---|---|
-| `dakota` | `true` | `/var/lib/containers/storage` (VFS) | **yes** — squash to 1 layer |
-| `bluefin`, `bluefin-lts-hwe` | `false` | `/usr/lib/containers/storage` (overlay, additionalimagestore) | **no** — keep layers so ostree commit objects survive |
+| Variant | `composefs` | squash before embed? |
+|---|---|---|
+| `dakota` | `true` | **yes** — squash to 1 layer |
+| `utah` (active), `bluefin`, `bluefin-lts-hwe` (retired) | `false` | **no** — preserve ostree commit layers |
 
 Payload preparation lives in one place: `payload_to_oci_archive` in `scripts/payload-oci.sh`, called by both `scripts/iso-sd-boot.sh` and `scripts/build-live-squashfs.sh`. It uses `podman build` only (no buildah): composefs payloads are built with `--squash-all`; non-composefs payloads keep their layers so ostree commit objects survive.
 
-Any change to `justfile` or `scripts/build-live-squashfs.sh` must be tested on **both** a composefs variant (`dakota`) and a non-composefs variant (`bluefin`). The code paths diverge and bugs in one are invisible when testing only the other.
+Changes to the producer must cover both active backends: Dakota (composefs) and Utah (ostree).
 
 ## Quick start
 
@@ -22,9 +23,9 @@ Any change to `justfile` or `scripts/build-live-squashfs.sh` must be tested on *
 just debug=1 iso-sd-boot dakota
 just plain-test-qemu dakota          # must exit: ✅ Installed system boot verified
 
-# Build and test bluefin (non-composefs) — required when changing justfile/build-live-squashfs.sh
-just debug=1 iso-sd-boot bluefin
-just plain-test-qemu bluefin
+# Build and test utah (non-composefs)
+just debug=1 iso-sd-boot utah
+just plain-test-qemu utah
 ```
 
 Output: `output/<target>-live.iso`
@@ -44,11 +45,9 @@ Never use `installer_channel=dev` in production builds — see known regression 
 
 ## Disk space requirements
 
-The build needs ~22 GB free in `output_dir`:
-- Squashed OCI image: ~4 GB
-- VFS import (1 layer): ~6 GB
-- squashfs staging tree: ~6 GB
-- Final ISO: ~4.5 GB
+Allow space for the prepared OCI archive, its extracted layout, the exported
+live root, squashfs and ISO (at least 25 GB plus podman build storage). There
+is no VFS import. Delete intermediates only after successful assembly.
 
 ⚠️ Never build from `/tmp` — it is a 16 GB tmpfs. Always use a path on `/var` or another
 large filesystem.
@@ -105,20 +104,18 @@ just compression=release iso-sd-boot dakota   # production ISOs for R2
 
 Use `fast` for CI and local testing. Use `release` for ISOs that go to R2.
 
-## Why squashing matters for VFS import
+## Shared bound-media producer
 
-Dakota images are chunkified with ~120 OCI layers. Without squashing, VFS import
-creates ~6 GB × 120 layers = ~720 GB of intermediate directories, overflowing any
-standard CI runner or local disk.
+Both CI and local builds call `payload_to_oci_archive`, retaining composefs
+`--squash-all` and preserving all ostree layers for Utah. `payload_embed_oci_archive`
+extracts those exact bytes once, verifies descriptor hashes/sizes, and writes
+schema-v1 `/etc/bootc-installer/media-input.json` from the real manifest/config.
+No containers-storage import, second payload squashfs, or runtime export is used.
+See [architecture.md](architecture.md#bound-offline-oci-media) for the full binding
+and the native fisherman's mandatory read-only/hash preflight.
 
-**CI** avoids this with `scripts/build-live-squashfs.sh`, which uses `podman image mount`
-to get a single merged overlay view and runs `mksquashfs` directly on that mount.
-No per-layer VFS expansion — peak disk usage stays ~6 GB for the live squashfs.
-
-**Local builds** (via `just iso-sd-boot`) squash the payload to one layer before VFS
-import with `podman build --pull=never --squash-all` from a FROM-only Containerfile
-(`scripts/payload-oci.sh`) — NOT `podman create --entrypoint ... && podman commit`
-(the latter corrupts the Entrypoint config, breaking `bootc install`).
+Use `podman build` with the FROM-only Containerfile, never create/commit (which
+rewrites Entrypoint/config and breaks installed `bootc`).
 
 ## Source layout: `live/src/`
 
@@ -171,20 +168,14 @@ The live environment runs the nvidia image. At install time, `bootc-installer`'s
 `nvidia_imgref` mechanism auto-detects the GPU:
 
 - **NVIDIA GPU present:** installs `dakota-nvidia:stable`, `targetImgref=dakota-nvidia:stable`
-- **No NVIDIA GPU:** installs offline from the nvidia VFS store, `targetImgref=dakota:stable` —
+- **No NVIDIA GPU:** installs offline from the same OCI layout, `targetImgref=dakota:stable` —
   first `bootc upgrade` rebases to the correct non-nvidia variant automatically
 
-**Expected ISO sizes:**
-
-| Variant | fast compression | release compression |
-|---|---|---|
-| `dakota` (composefs) | ~5.5 GB | ~4.5 GB |
-| `bluefin` / `bluefin-lts-hwe` (non-composefs) | ~7 GB | ~6 GB |
-
-If a bluefin ISO is **~12 GB**: do not squash the non-composefs payload to shrink it —
-that path keeps its layers on purpose (squashing destroys the ostree commits). Check for
-the payload being embedded twice or a stale store in the squashfs staging tree.
-If a dakota ISO is **~8 GB**: double-embedded store — see `ci.md` lessons.
+The VFS-era size figures below are historical, not acceptance limits for bound
+OCI media: a compressed OCI blob cannot deduplicate per-file against the live
+OS in squashfs. Record the actual ISO byte size (`stat -c%s`) and confirm there
+is exactly one layout and no second archive/store; never restore a second store
+to shrink the ISO or squash Utah's required ostree layers.
 
 ### CI uses `SUPERISO_COMPRESSION=release` (2026-06)
 
@@ -580,11 +571,13 @@ Our consolidation of OSTree (GRUB) and ComposeFS (systemd-boot) installer flows 
 ```bash
 sudo mkdir -p /var/iso-build/debug-rootfs/proc \
               /var/iso-build/debug-rootfs/sys \
-              /var/iso-build/debug-rootfs/dev
-sudo mksquashfs ... -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e run -e tmp
+              /var/iso-build/debug-rootfs/dev \
+              /var/iso-build/debug-rootfs/run \
+              /var/iso-build/debug-rootfs/tmp
+sudo mksquashfs ... -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e "run/*" -e "tmp/*"
 ```
 
-**Rule:** Any squashfs rebuild step (debug ISO, test fixtures, etc.) must use the exact same `mkdir -p proc/ sys/ dev/` + `-e "proc/*" -e "sys/*" -e "dev/*"` pattern as `scripts/build-live-squashfs.sh`. Using `-e sys` or `-e dev` (bare names, even with or without `-wildcards`) is dangerous — it may remove the directory node on newer mksquashfs.
+**Rule:** Every squashfs packer must preserve empty `proc/`, `sys/`, `dev/`, `run/` and `tmp/`, excluding only their contents with `-wildcards -e "dir/*"`. Bare exclusions can remove directory nodes. Debian dracut `99base/init.sh` retains `/run/initramfs` under `/dev/.initramfs` if the new root lacks `/run`, breaking post-boot media paths. Both active variants used this Debian fallback in the 2026-11-07 failing runs.
 
 ### COMPOSEFS_BACKEND detection: never use `sh -c 'python3 -c "..."'` (2026-06-21)
 

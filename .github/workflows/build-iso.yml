@@ -123,21 +123,11 @@ jobs:
             /var/iso-build/dakota-nvidia.rootfs.sfs \
             /var/iso-build/dakota-nvidia-boot.tar
 
-      - name: Verify offline OCI store is embedded
+      - name: Verify bound OCI media receipt is embedded
         run: |
-          # Verify /var/lib/containers/storage contains VFS layer data.
-          # VFS storage uses content-addressed hash paths — image names like
-          # "ghcr.io/..." never appear in file paths.  Check for vfs-images/
-          # which containers/storage creates for every imported image.
-          COUNT=$(sudo unsquashfs -lc /var/iso-build/dakota-nvidia.rootfs.sfs \
-            var/lib/containers/storage/vfs-images 2>/dev/null | \
-            grep -c "squashfs-root" || true)
-          if [[ "${COUNT}" -eq 0 ]]; then
-            echo "ERROR: VFS containers-storage missing vfs-images — OCI embedding failed" >&2
-            echo "The ISO would ship without an offline install store (see issue #78)" >&2
-            exit 1
-          fi
-          echo ">>> OCI store assertion passed (vfs-images has ${COUNT} entries)"
+          sudo unsquashfs -cat /var/iso-build/dakota-nvidia.rootfs.sfs \
+            etc/bootc-installer/media-input.json | \
+            jq -e '.schemaVersion == 1 and .ociLayoutPath == "/run/bootcmedia/usr/share/bootc-installer/oci"'
 
       - name: Disk space before ISO assembly
         run: df -h /
@@ -167,56 +157,13 @@ jobs:
           sha256sum "$ISO" | sed "s|${ISO}|${LATEST_NAME}|" > "$LATEST_CHECKSUM_PATH"
           echo "latest_path=${LATEST_CHECKSUM_PATH}" >> "$GITHUB_OUTPUT"
 
-      # Patch production squashfs to enable sshd for E2E SSH access.
-      # The production ISO has sshd disabled; for the E2E test we need SSH.
-      # Unsquashfs → enable sshd → re-squashfs (zstd-1 for speed) → debug ISO.
-      # Production ISO is NOT modified and is still the one uploaded to R2.
+      # E2E uses the production OCI bytes in a debug-only SSH-enabled copy.
       - name: Build debug ISO for E2E test (production rootfs + sshd enabled)
         run: |
-          echo ">>> Unsquashing production rootfs..."
-          sudo unsquashfs -d /var/iso-build/debug-rootfs \
-            /var/iso-build/dakota-nvidia.rootfs.sfs
-
-          # Enable sshd.service
-          sudo mkdir -p \
-            /var/iso-build/debug-rootfs/etc/systemd/system/multi-user.target.wants
-          sudo ln -sf /usr/lib/systemd/system/sshd.service \
-            /var/iso-build/debug-rootfs/etc/systemd/system/multi-user.target.wants/sshd.service
-
-          # Allow password auth (liveuser / live)
-          sudo bash -c 'printf "\nPermitRootLogin yes\nPasswordAuthentication yes\nPermitEmptyPasswords yes\n" \
-            >> /var/iso-build/debug-rootfs/etc/ssh/sshd_config'
-
-          # Set liveuser password to 'live'
-          HASH=$(openssl passwd -6 'live')
-          if sudo grep -q '^liveuser:' /var/iso-build/debug-rootfs/etc/shadow 2>/dev/null; then
-            sudo sed -i "s|^liveuser:[^:]*:|liveuser:${HASH}:|" \
-              /var/iso-build/debug-rootfs/etc/shadow
-          fi
-
-          # Re-squashfs with fast compression (debug-only, not production)
-          echo ">>> Re-squashing debug rootfs (zstd-1)..."
-          # dracut's usable_root() requires proc/, sys/, and dev/ as empty dirs at
-          # the squashfs root. With -wildcards, "-e sys" removes the dir entry
-          # entirely on both mksquashfs 4.6.x and 4.7+; use "-e sys/*" to exclude
-          # only contents while preserving the empty directory node.
-          sudo mkdir -p /var/iso-build/debug-rootfs/proc \
-                        /var/iso-build/debug-rootfs/sys \
-                        /var/iso-build/debug-rootfs/dev
-          sudo mksquashfs /var/iso-build/debug-rootfs \
-            /var/iso-build/dakota-debug.rootfs.sfs \
-            -noappend -comp zstd -Xcompression-level 1 -b 1M -processors 4 \
-            -wildcards \
-            -e "proc/*" -e "sys/*" -e "dev/*" -e run -e tmp
-          sudo rm -rf /var/iso-build/debug-rootfs
-
-          # Assemble debug ISO (reuse boot tar from production build)
-          echo ">>> Assembling debug ISO..."
-          sudo bash live/src/build-iso.sh \
+          sudo bash scripts/build-debug-iso.sh \
+            /var/iso-build/dakota-nvidia.rootfs.sfs \
             /var/iso-build/dakota-nvidia-boot.tar \
-            /var/iso-build/dakota-debug.rootfs.sfs \
-            output/dakota-debug-live.iso
-          echo "Debug ISO: $(du -sh output/dakota-debug-live.iso | cut -f1)"
+            output/dakota-debug-live.iso "$(cat dakota/live_title)"
 
       - name: Install QEMU deps for E2E test
         run: sudo apt-get install -y qemu-system-x86 ovmf sshpass socat -qq
@@ -233,17 +180,14 @@ jobs:
         with:
           tool: just
 
-      # ── E2E Gate 1: ENOSPC regression guard (4 GiB RAM, tight overlay tmpfs) ──
-      # Runs at 4096 MiB so the dracut overlayfs is ~2 GiB — tight enough to
-      # reproduce ENOSPC-class bugs in the installer's blob staging path.
-      # Gate passes as soon as skopeo copies the blob — the slow bootc install
-      # is intentionally skipped here; it runs at 8 GiB in the next step.
+      # Strict media preflight streams all embedded blobs at 4 GiB without an
+      # OCI export or disk mutation; the full install follows at 8 GiB.
       - name: "E2E 1/4 — Boot live ISO (4 GiB)"
         id: e2e_boot_live
         timeout-minutes: 10
         run: sudo env PATH="$PATH" just qemu-mem=4096 plain-boot-qemu-live dakota
 
-      - name: "E2E 2/4 — ENOSPC gate: OCI export only (4 GiB)"
+      - name: "E2E 2/4 — Bound OCI media preflight (4 GiB)"
         id: e2e_enospc
         timeout-minutes: 10
         run: sudo env PATH="$PATH" just plain-enospc-gate dakota
@@ -266,7 +210,7 @@ jobs:
       # detects the hostname-only failure, re-mounts the btrfs root, and writes
       # /etc/hostname directly into the deployment directory.
       # Upstream bug: https://github.com/tuna-os/fisherman/issues
-      # ISO upload is gated on all three E2E checks: ENOSPC export, full install,
+      # ISO upload requires media preflight, full install,
       # and installed-boot verification. A final "E2E status" step below still
       # re-fails the job if the install truly fails.
       - name: "E2E 3/4 — Full install composefs (8 GiB)"

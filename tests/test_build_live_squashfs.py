@@ -23,12 +23,14 @@ Critical invariants:
 """
 
 import os
+import json
 import shutil
 import subprocess
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from tests.oci_fixture import make_oci_archive
 
 REPO = Path(__file__).parent.parent
 SCRIPT = REPO / "scripts" / "build-live-squashfs.sh"
@@ -75,6 +77,15 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
         (self.mount_dir / "usr" / "lib" / "modules").mkdir(parents=True, exist_ok=True)
         (self.mount_dir / "usr" / "lib" / "systemd" / "boot" / "efi").mkdir(parents=True, exist_ok=True)
 
+        self.fixture_archive = self.sandbox / "fixture.oci.tar"
+        make_oci_archive(self.fixture_archive)
+        config = self.mount_dir / "etc/bootc-installer"
+        config.mkdir(parents=True)
+        (config / "recipe.json").write_text(json.dumps({
+            "imgref": "ghcr.io/projectbluefin/dakota:stable",
+            "local_imgref": "ghcr.io/projectbluefin/dakota-nvidia:stable",
+        }))
+        self.receipt_capture = self.sandbox / "receipt.json"
     def _stub(self, name, body):
         path = self.bindir / name
         path.write_text("#!/usr/bin/bash\n" + textwrap.dedent(body))
@@ -94,6 +105,12 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
                     fi
                     _prev="$_arg"
                 done
+                exit 0
+            fi
+            if [ "$1" = "push" ]; then
+                archive="${{3#oci-archive:}}"
+                archive="${{archive%%:*}}"
+                cp "{self.fixture_archive}" "$archive"
                 exit 0
             fi
             if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
@@ -139,6 +156,9 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
 
         self._stub("mksquashfs", """
             echo "mksquashfs $*" >> "$STUB_CALLS"
+            if [ -f "$1/etc/bootc-installer/media-input.json" ]; then
+                cp "$1/etc/bootc-installer/media-input.json" "$STUB_RECEIPT"
+            fi
             touch "$2"
             exit 0
         """)
@@ -185,6 +205,7 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
         env = dict(os.environ)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["STUB_CALLS"] = str(self.calls_log)
+        env["STUB_RECEIPT"] = str(self.receipt_capture)
         # Point scratch dir to sandbox
         env["SUPERISO_TMPDIR"] = str(self.sandbox / "tmp")
         (self.sandbox / "tmp").mkdir(exist_ok=True)
@@ -268,6 +289,11 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
 
         self.assertFalse([c for c in calls if c.startswith("buildah")],
                          "build-live-squashfs.sh must not need buildah")
+        receipt = json.loads(self.receipt_capture.read_text())
+        self.assertEqual(receipt["ociLayoutPath"], "/run/bootcmedia/usr/share/bootc-installer/oci")
+        self.assertEqual(receipt["image"], "ghcr.io/projectbluefin/dakota-nvidia:stable")
+        self.assertEqual(receipt["targetImgref"], "ghcr.io/projectbluefin/dakota:stable")
+        self.assertFalse(any("skopeo copy" in call for call in calls))
 
     def test_non_composefs_mode_commits_without_squash(self):
         """When --oci-image is given and composeFsBackend is false, the payload is not squashed."""

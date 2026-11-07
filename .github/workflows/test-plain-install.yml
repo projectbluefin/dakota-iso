@@ -108,26 +108,6 @@ jobs:
       - name: Configure podman storage (intelligent driver selection)
         run: bash .github/scripts/configure_podman_storage.sh
 
-      - name: Set up Go
-        uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
-        with:
-          go-version: '1.23'
-          cache: false
-
-      # Pinned to a commit on tuna-os/fisherman's `dev` branch (its default and
-      # active line; projectbluefin/fisherman is retired). This used to clone
-      # the June feature branch fix/overlay-driver-for-ostree-bootc-install,
-      # which froze the gate on a six-week-old installer and hid every fisherman
-      # fix merged since. Renovate's git-refs manager (renovate.json) bumps the
-      # SHA below to the tip of `dev` — keep the trailing `# dev` so it matches.
-      # tests/test_live_build_invariants.py checks the pin is on a long-lived
-      # branch.
-      - name: Clone fisherman (pinned dev commit)
-        run: |
-          git clone https://github.com/tuna-os/fisherman.git /tmp/fisherman
-          git -C /tmp/fisherman checkout --detach 2aedba4e0494fab130de9ffe00f5d6142583e76c # dev
-          git -C /tmp/fisherman --no-pager log --oneline -1
-
       - name: Build ISO
         id: build
         env:
@@ -138,8 +118,7 @@ jobs:
             podman skopeo squashfs-tools xorriso dosfstools mtools
           sudo mkdir -p /var/iso-build
           mkdir -p output
-          # Pull the payload image so fisherman uses local containers-storage
-          # instead of pulling ~10 GB from the network during the E2E test.
+          # Prepare the single offline layout consumed by the shipped fisherman.
           PAYLOAD_IMAGE=$(cat ${{ matrix.variant }}/payload_ref | tr -d '[:space:]')
           sudo podman pull "$PAYLOAD_IMAGE"
           sudo -E bash scripts/build-live-squashfs.sh \
@@ -165,15 +144,10 @@ jobs:
         timeout-minutes: 60
         env:
           INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
-          FISHER_REPO: /tmp/fisherman/fisherman
         run: |
           START=$SECONDS
           # 4096 MiB: tight overlay tmpfs to expose ENOSPC-class bugs
-          # Run as the unprivileged runner user (not sudo): the bootcDirect path
-          # builds the patched fisherman with `go build`, which needs Go on PATH
-          # and runs VCS stamping against the user-owned /tmp/fisherman clone — both
-          # break under sudo. QEMU/KVM access uses an internal sudo fallback in the
-          # recipe, and all guest-side install steps run via ssh with guest sudo.
+          # Use the same pinned backend shipped in the live image.
           just qemu-mem=4096 installer_channel="$INSTALLER_CHANNEL" plain-test-qemu ${{ matrix.variant }}
           echo "duration=$((SECONDS - START))" >> "$GITHUB_OUTPUT"
 

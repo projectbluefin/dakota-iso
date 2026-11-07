@@ -72,11 +72,11 @@ assertion 3) and the new `luks-verify-qemu` recipe (encryption type
 > `luks-verify-qemu`) exits **0** on an assertion failure, printing a
 > `⚠️ ... NON-BLOCKING` line (and a GitHub `::warning::` annotation in
 > Actions). Set `STRICT_POST_BOOT=1` to make assertion failures exit 1 and
-> fail the recipe. If the installed system's SSH is never reachable the script
-> likewise warns and exits 0 by default (until the debug-SSH path has a green
-> E2E run on main); with `STRICT_POST_BOOT=1` it exits 2 and fails the recipe. CI (`test-luks-install.yml`,
-> `test-plain-install.yml`) does **not** set it, so a green CI run does not
-> prove these invariants — check the log for `✅ All post-boot assertions
+> fail those observations. SSH reachability and btrfs `compress=zstd[:1]` in
+> the mounted `/var` filesystem and persistent `rootflags=` are always hard
+> requirements. CI (`test-luks-install.yml`, `test-plain-install.yml`) does not
+> set `STRICT_POST_BOOT`, so green alone does not prove the older observations —
+> check the log for `✅ All post-boot assertions
 > passed`.
 
 ### Key paths
@@ -147,7 +147,7 @@ until grep -q DAKOTA_LIVE_READY /var/tmp/dakota-serial.log 2>/dev/null; do sleep
 sshpass -p live ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no \
   -o PreferredAuthentications=password -p 2222 liveuser@localhost '
 sudo /usr/local/bin/fisherman - << EOF
-{"disk":"/dev/vda","filesystem":"btrfs","image":"containers-storage:ghcr.io/projectbluefin/dakota:latest","composeFsBackend":true,"bootloader":"systemd","hostname":"test","encryption":{"type":"luks-passphrase","passphrase":"testpassphrase"},"flatpaks":[]}
+{"disk":"/dev/vda","filesystem":"btrfs","image":"","composeFsBackend":true,"bootloader":"systemd","hostname":"test","encryption":{"type":"luks-passphrase","passphrase":"testpassphrase"},"flatpaks":[]}
 EOF
 '
 ```
@@ -158,7 +158,7 @@ EOF
 {
   "disk": "/dev/vda",
   "filesystem": "btrfs",
-  "image": "containers-storage:ghcr.io/projectbluefin/dakota:latest",
+  "image": "",
   "composeFsBackend": true,
   "bootloader": "systemd",
   "hostname": "dakota-luks-test",
@@ -171,6 +171,13 @@ EOF
 ```
 
 `encryption: null` for unencrypted install.
+
+On bound live media, empty `image` and omitted `targetImgref` select the host's
+mandatory receipt; they do not enable a network fallback. The automated plain,
+LUKS and libvirt callers explicitly copy both fields from that same receipt and
+use the shipped pinned fisherman (no local replacement backend builds). The
+receipt identifies the canonical read-only OCI layout and hardware-selected
+update target; do not restore `containers-storage:` sources.
 
 ## LUKS passphrase unlock (luks-unlock.py)
 

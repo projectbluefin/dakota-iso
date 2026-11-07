@@ -59,17 +59,17 @@ gh workflow run build-iso.yml --ref main
 6. **Pull payload image** — removes any local `dakota-nvidia:stable` tag, pulls the verified digest, and re-tags it `dakota-nvidia:stable` for the later steps
 7. **Build live container** — `podman build --pull=always --no-cache live/ --build-arg TARGET=dakota-nvidia --build-arg BASE_DIGEST=@sha256:…` → `localhost/dakota-nvidia-live:latest`; `BASE_DIGEST` pins both `FROM` lines in `live/Containerfile` to the verified digest
 8. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `<target>.rootfs.sfs` + `<target>-boot.tar` (~4.5 GB dakota, ~6 GB bluefin/lts-hwe)
-9. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (no `--store` flag — OCI already embedded in squashfs as VFS)
+9. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (one OCI layout in the live squashfs; no `--store`)
 10. **Generate checksum** — latest variant
-11. **Plain-install E2E gates** — live boot, ENOSPC export gate, full install, installed-boot verification
+11. **Plain-install E2E gates** — live boot, strict bound-media preflight at 4 GiB, full offline install, installed boot and btrfs zstd/rootflags verification
 12. **Boot verification** — QEMU UEFI smoke boot on the production ISO
 13. **Sign checksum** — `cosign sign-blob` (keyless, GitHub OIDC; the job has `id-token: write`) writes `<CHECKSUM>.sig` and `<CHECKSUM>.pem` next to the checksum; runs under the upload's exact conditions and before it, so a signing failure publishes nothing
 14. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, production boot smoke, and signing all succeed
 
-> ⚠️ **Do not add `--store` back or re-add the offline store squashfs step.**
-> The OCI image is already embedded in the live squashfs via VFS containers-storage.
-> Building a separate `store.squashfs.img` doubles the OCI payload, producing an ~8 GB
-> ISO instead of ~5.3 GB. See lessons below.
+> **Do not add `--store`, a second OCI archive, or a containers-storage payload import.**
+> `payload_embed_oci_archive` embeds the prepared OCI bytes once and emits a v1
+> `media-input.json` binding. Missing or invalid media must fail closed, not pull
+> from the network. See [the actual contract](architecture.md#bound-offline-oci-media).
 
 ### ⚠️ installer_channel is locked to `stable` in CI
 
@@ -170,10 +170,13 @@ server-side copies via rclone for local promotion. See `docs/r2-promotion.md`.
 **Matrix:** `utah` (active); `bluefin` and `bluefin-lts-hwe` retired in #228.
 **Runner:** `ubuntu-24.04`
 
-This workflow builds the Utah live ISO, runs a QEMU smoke boot,
-and uploads to R2 only when that smoke boot succeeds. It does **not** run the full
-Dakota install/verify E2E sequence because those workflows are Dakota-specific.
-Bluefin and Bluefin LTS matrix entries are retired (#228) and kept commented out.
+This workflow uses the same bound-media producer and shipped fisherman consumer
+as Dakota. A debug-only copy of the exact production squashfs enables SSH via
+`scripts/build-debug-iso.sh`; production media and payload bytes remain unchanged.
+It requires strict media preflight at 4 GiB, a complete offline install at 8 GiB,
+installed-system boot and btrfs compression/rootflags verification, plus the
+production ISO smoke boot, before signing or publishing. Bluefin and Bluefin LTS
+matrix entries remain retired and commented out.
 
 ### Boot verification: use AHCI, not SCSI CD (2026-06)
 
@@ -334,12 +337,44 @@ release-significant gate for that artifact — not before it. In practice:
 
 - `build-iso.yml` must wait for ENOSPC, full install, installed-boot verification,
   **and** the final production ISO smoke boot before updating `dakota-live-latest.iso`
-- `build-iso-utah.yml` must wait for its QEMU smoke boot before updating
-  `utah-live-latest.iso`
+- `build-iso-utah.yml` requires the same media-preflight/install/installed-boot
+  sequence plus production QEMU smoke boot before updating `utah-live-latest.iso`
 - Publish workflows define workflow-level `concurrency` so overlapping manual/scheduled
   runs cannot race each other on the `latest` pointers
 - Expensive E2E jobs (`plain-e2e`, `luks-e2e`) depend on `unit-tests` so cheap failures
   stop before QEMU burns runner time
+
+### Bound OCI media replaces runtime export (2026-11-06)
+
+Fisherman v0.5.3 makes `media-input.json` mandatory when `live-iso-mode` exists.
+The older producer only embedded containers-storage and therefore failed before
+installation. Both producers now embed the existing prepared archive as one OCI
+layout; the native consumer verifies all SHA-256 blobs on the canonical read-only
+squashfs before any disk operation. Do not remove the marker or weaken validation.
+
+`plain-enospc-gate` no longer watches `OCI export complete` (there is no export).
+It executes `scripts/check-live-media.sh` using shipped fisherman with a deliberately
+nonexistent `/never-a-device` target. Only exit 1 with the exact disk-stat refusal
+is accepted, proving strict media preflight completed without a tmpfs export;
+EOF, missing receipt, writable media, corruption and every other failure fail.
+This is not installation proof: full install and installed boot are separate gates.
+
+Fixture-backed producer and hardware-target tests run in the unit suite. To test
+the real pinned consumer without disks before a production build:
+
+```bash
+FISHERMAN_TEST_BINARY=/absolute/path/to/verified-v0.5.3/fisherman \
+  pytest tests/test_bound_media_consumer.py -v
+```
+
+Use the release asset and SHA-256 in `installer-bundle.lock`; `bwrap` with user
+namespaces is required. Cases cover valid/missing/corrupt/writable media and
+source/target mismatch. Passing this proves receipt preflight, not a full install.
+Then run fresh Dakota and Utah install/installed-boot gates (including LUKS for
+encryption) locally before dispatching publish workflows. Record actual ISO byte
+sizes: compressed OCI blobs no longer deduplicate per-file against the live OS.
+The VFS lessons below describe the historical implementation, not today's layout.
+
 
 ### Double-embedded OCI store inflates ISO to 8 GB (2026-06)
 
