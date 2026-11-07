@@ -111,11 +111,11 @@ config SHA-256 digests and config-derived `platform`. The producer verifies ever
 descriptor's size and hash. Fisherman v0.5.3 independently streams and validates
 all blobs before disk mutation, including per-file read-only and no-symlink checks.
 
-The layout path is **`/run/rootfsbase/usr/share/bootc-installer/oci`**, not the
-writable live `/usr` overlay. dracut's `90dmsquash-live/dmsquash-live-root.sh`
-(059, also the bookworm 057 path) selects `FSIMG=$SQUASHED` for a flat squashfs
-containing `proc/`, and uses `mkdir /run/rootfsbase; mount -r $FSIMG /run/rootfsbase`
-for the overlayfs lower root. This is a real read-only mount, not a path alias.
+The layout path is **`/run/bootcmedia/usr/share/bootc-installer/oci`**, not the
+writable live `/usr` overlay. `run-bootcmedia.mount` mounts the original
+`/run/initramfs/live/LiveOS/squashfs.img` read-only before media setup and the GUI.
+dracut's `/run/rootfsbase` is initramfs-private and is not a stable post-pivot path
+(confirmed by the Utah fresh-boot gate on 2026-11-07). No second payload is embedded.
 
 `live-media-setup.service` binds the receipt target before display-manager and
 `live-ready.service`. `bind-media-target.py` follows the GUI's PCI display-class

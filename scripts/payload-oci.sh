@@ -147,7 +147,7 @@ if not image or not target or image.startswith(("containers-storage:", "oci:", "
     raise SystemExit("recipe requires registry source and update target")
 receipt = dict(schemaVersion=1, kind="dakota-live", image=image,
                platformManifestDigest=selected["digest"], configDigest=manifest["config"]["digest"],
-               ociLayoutPath="/run/rootfsbase/" + relative, targetImgref=target,
+               ociLayoutPath="/run/bootcmedia/" + relative, targetImgref=target,
                platform=config["os"] + "/" + config["architecture"])
 (root / "etc/bootc-installer/media-input.json").write_text(json.dumps(receipt, indent=2) + "\n")
 PY

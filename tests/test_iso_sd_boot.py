@@ -474,7 +474,7 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
                 ref = (self.sandbox / target / "payload_ref").read_text().strip()
                 self.assertEqual(receipt["image"], ref)
                 self.assertEqual(receipt["targetImgref"], ref)
-                self.assertEqual(receipt["ociLayoutPath"], "/run/rootfsbase/usr/share/bootc-installer/oci")
+                self.assertEqual(receipt["ociLayoutPath"], "/run/bootcmedia/usr/share/bootc-installer/oci")
                 self.assertTrue((self.media_capture / "layout-copy/index.json").exists())
                 self.assertEqual(self.embed_run_calls(), [])
                 self.assertEqual(self.storage_conf_lines(), [])

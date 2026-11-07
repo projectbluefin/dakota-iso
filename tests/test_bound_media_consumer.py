@@ -28,6 +28,7 @@ pytestmark = pytest.mark.skipif(not BINARY or not shutil.which("bwrap"),
     ("writable", "not on a read-only filesystem"),
     ("target", "does not match media target"),
     ("source", "does not match embedded source"),
+    ("unmounted", "opening bound path"),
 ])
 def test_produced_media_against_shipped_consumer(tmp_path, case, expected):
     root = tmp_path / "root"
@@ -58,9 +59,10 @@ def test_produced_media_against_shipped_consumer(tmp_path, case, expected):
         recipe["image"] = "ghcr.io/example/unbound:stable"
     command = ["bwrap", "--unshare-all", "--die-with-parent", "--ro-bind", "/", "/",
                "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/etc", "--tmpfs", "/run",
-               "--dir", "/run/rootfsbase", "--ro-bind", str(config), "/etc/bootc-installer",
-               "--bind" if case == "writable" else "--ro-bind", str(root), "/run/rootfsbase",
-               str(Path(BINARY).resolve()), "-"]
+               "--dir", "/run/bootcmedia", "--ro-bind", str(config), "/etc/bootc-installer"]
+    if case != "unmounted":
+        command += ["--bind" if case == "writable" else "--ro-bind", str(root), "/run/bootcmedia"]
+    command += [str(Path(BINARY).resolve()), "-"]
     result = subprocess.run(command, input=json.dumps(recipe), text=True, capture_output=True, timeout=30)
     assert result.returncode == 1, result.stdout + result.stderr
     assert expected in result.stderr, result.stdout + result.stderr

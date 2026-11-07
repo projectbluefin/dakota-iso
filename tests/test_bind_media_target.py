@@ -25,7 +25,7 @@ def test_gpu_selection_preserves_source_and_gui_update_target(tmp_path):
         nvidia = "ghcr.io/projectbluefin/dakota-nvidia:stable"
         recipe = dict(imgref=base, targetImgref=base, image=nvidia, local_imgref=nvidia)
         receipt = dict(image=nvidia, targetImgref=base, platformManifestDigest="sha256:" + "a" * 64,
-                       ociLayoutPath="/run/rootfsbase/usr/share/bootc-installer/oci")
+                       ociLayoutPath="/run/bootcmedia/usr/share/bootc-installer/oci")
         (config / "recipe.json").write_text(json.dumps(recipe))
         (config / "media-input.json").write_text(json.dumps(receipt))
         (config / "images.json").write_text(json.dumps({"images": [dict(imgref=base, nvidia_imgref=nvidia)]}))

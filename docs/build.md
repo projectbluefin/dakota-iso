@@ -5,7 +5,7 @@ How to build Dakota live ISOs locally and the key variables that control the bui
 ## Two variant types — understand this before changing anything
 
 All variants embed one OCI layout at `/usr/share/bootc-installer/oci`, bound to
-the actual read-only squashfs at `/run/rootfsbase/usr/share/bootc-installer/oci`.
+the explicitly mounted read-only squashfs at `/run/bootcmedia/usr/share/bootc-installer/oci`.
 
 | Variant | `composefs` | squash before embed? |
 |---|---|---|

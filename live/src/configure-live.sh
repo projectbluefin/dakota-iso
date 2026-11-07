@@ -346,12 +346,25 @@ WantedBy=local-fs.target
 UNITEOF
 systemctl enable var-tmp.mount || true
 
+# /run/rootfsbase is initramfs-private; retain an explicit original-media mount.
+cat > /usr/lib/systemd/system/run-bootcmedia.mount << 'UNITEOF'
+[Unit]
+Description=Read-only installer media
+
+[Mount]
+What=/run/initramfs/live/LiveOS/squashfs.img
+Where=/run/bootcmedia
+Type=squashfs
+Options=ro,loop
+UNITEOF
+
 # Resolve the GUI's hardware-dependent update target before installation.
 install -Dm755 "$SCRIPT_DIR/bind-media-target.py" /usr/libexec/bind-media-target
 cat > /usr/lib/systemd/system/live-media-setup.service << 'UNITEOF'
 [Unit]
 Description=Bind offline media update target
-After=systemd-udev-settle.service
+Requires=run-bootcmedia.mount
+After=systemd-udev-settle.service run-bootcmedia.mount
 Before=display-manager.service live-ready.service
 
 [Service]

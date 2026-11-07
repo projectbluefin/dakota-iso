@@ -71,7 +71,7 @@ class TestEmbeddedMedia(unittest.TestCase):
         self.assertEqual(receipt["platform"], "linux/amd64")
         self.assertEqual(receipt["image"], "ghcr.io/projectbluefin/dakota-nvidia:stable")
         self.assertEqual(receipt["targetImgref"], "ghcr.io/projectbluefin/dakota:stable")
-        self.assertEqual(receipt["ociLayoutPath"], "/run/rootfsbase/usr/share/bootc-installer/oci")
+        self.assertEqual(receipt["ociLayoutPath"], "/run/bootcmedia/usr/share/bootc-installer/oci")
         layout = self.root / "usr/share/bootc-installer/oci"
         for name, data in self.files.items():
             self.assertEqual((layout / name).read_bytes(), data)

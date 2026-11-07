@@ -236,7 +236,7 @@ The `skill-drift.yml` CI check warns when a PR changes implementation files with
 - Both active variants embed **one OCI layout**, never a second archive/store,
   via `payload_embed_oci_archive` in `scripts/payload-oci.sh`. Its schema-v1
   `/etc/bootc-installer/media-input.json` binds the actual manifest/config to
-  `/run/rootfsbase/usr/share/bootc-installer/oci` on the read-only squashfs.
+  `/run/bootcmedia/usr/share/bootc-installer/oci` on the read-only squashfs.
 - Keep `live-iso-mode` and fisherman's strict digest/read-only/no-symlink gate.
   Missing receipt or corrupt media is an installation refusal, not a network fallback.
 - Composefs (Dakota) retains `podman build --squash-all`; non-composefs (Utah and

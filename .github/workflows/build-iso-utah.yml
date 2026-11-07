@@ -155,7 +155,7 @@ jobs:
         run: |
           sudo unsquashfs -cat /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
             etc/bootc-installer/media-input.json | \
-            jq -e '.schemaVersion == 1 and .ociLayoutPath == "/run/rootfsbase/usr/share/bootc-installer/oci"'
+            jq -e '.schemaVersion == 1 and .ociLayoutPath == "/run/bootcmedia/usr/share/bootc-installer/oci"'
 
       - name: Assemble ISO
         if: steps.should_build.outputs.build == 'true'

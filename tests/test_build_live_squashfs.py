@@ -290,7 +290,7 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         self.assertFalse([c for c in calls if c.startswith("buildah")],
                          "build-live-squashfs.sh must not need buildah")
         receipt = json.loads(self.receipt_capture.read_text())
-        self.assertEqual(receipt["ociLayoutPath"], "/run/rootfsbase/usr/share/bootc-installer/oci")
+        self.assertEqual(receipt["ociLayoutPath"], "/run/bootcmedia/usr/share/bootc-installer/oci")
         self.assertEqual(receipt["image"], "ghcr.io/projectbluefin/dakota-nvidia:stable")
         self.assertEqual(receipt["targetImgref"], "ghcr.io/projectbluefin/dakota:stable")
         self.assertFalse(any("skopeo copy" in call for call in calls))

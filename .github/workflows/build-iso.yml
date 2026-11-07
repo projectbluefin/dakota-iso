@@ -127,7 +127,7 @@ jobs:
         run: |
           sudo unsquashfs -cat /var/iso-build/dakota-nvidia.rootfs.sfs \
             etc/bootc-installer/media-input.json | \
-            jq -e '.schemaVersion == 1 and .ociLayoutPath == "/run/rootfsbase/usr/share/bootc-installer/oci"'
+            jq -e '.schemaVersion == 1 and .ociLayoutPath == "/run/bootcmedia/usr/share/bootc-installer/oci"'
 
       - name: Disk space before ISO assembly
         run: df -h /
