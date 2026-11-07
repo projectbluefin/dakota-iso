@@ -585,6 +585,7 @@ luks-install target:
     RECIPE_TMP=$(mktemp /tmp/luks-recipe-XXXXXX.json)
     trap "rm -f '${RECIPE_TMP}'" EXIT
     BOOTLOADER=$(variant_bootloader_recipe "{{target}}")
+    $SSH liveuser@"$GUEST_IP" '! systemctl is-failed --quiet run-bootcmedia.mount live-media-setup.service && sudo systemctl start live-media-setup.service'
     $SSH liveuser@"$GUEST_IP" 'sudo cat /etc/bootc-installer/media-input.json' > "${RECIPE_TMP}"
     python3 -c 'import json,sys; p,d,c,b,s=sys.argv[1:]; m=json.load(open(p)); r=dict(disk=d,filesystem="btrfs",image=m["image"],targetImgref=m["targetImgref"],composeFsBackend=c=="true",bootloader=b,hostname="dakota-luks-test",encryption={"type":"luks-passphrase","passphrase":s},flatpaks=[]); open(p,"w").write(json.dumps(r)+"\n")' "${RECIPE_TMP}" "${DISK}" "$(variant_composefs_json "{{target}}")" "${BOOTLOADER}" "${PASSPHRASE}"
     $SCP "${RECIPE_TMP}" liveuser@"$GUEST_IP":/tmp/luks-recipe.json
@@ -896,7 +897,7 @@ luks-boot-qemu-live target:
     done
     # SSH can start before the media mount and hardware target binding.
     if ! sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} \
-        'sudo systemctl start live-media-setup.service'; then
+        '! systemctl is-failed --quiet run-bootcmedia.mount live-media-setup.service && sudo systemctl start live-media-setup.service'; then
         sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} \
             'sudo journalctl -b -u run-bootcmedia.mount -u live-media-setup.service --no-pager' || true
         cat "{{luks-qemu-serial-live}}" >&2
@@ -1318,7 +1319,7 @@ plain-boot-qemu-live target:
     done
     # SSH can start before the media mount and hardware target binding.
     if ! sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}} \
-        'sudo systemctl start live-media-setup.service'; then
+        '! systemctl is-failed --quiet run-bootcmedia.mount live-media-setup.service && sudo systemctl start live-media-setup.service'; then
         sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}} \
             'sudo journalctl -b -u run-bootcmedia.mount -u live-media-setup.service --no-pager' || true
         cat "{{plain-qemu-serial-live}}" >&2
