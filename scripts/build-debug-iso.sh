@@ -32,9 +32,9 @@ ln -sf /usr/lib/systemd/system/live-debug-passwords.service \
     "${ROOT}/etc/systemd/system/multi-user.target.wants/live-debug-passwords.service"
 printf 'enable %s\nenable live-debug-passwords.service\n' "${SSH_UNIT}" \
     > "${ROOT}/etc/systemd/system-preset/90-live-debug.preset"
-mkdir -p "${ROOT}/proc" "${ROOT}/sys" "${ROOT}/dev"
+mkdir -p "${ROOT}/proc" "${ROOT}/sys" "${ROOT}/dev" "${ROOT}/run" "${ROOT}/tmp"
 mksquashfs "${ROOT}" "${WORK}/debug.sfs" -noappend -comp zstd \
     -Xcompression-level 1 -b 1M -processors 4 -wildcards \
-    -e 'proc/*' -e 'sys/*' -e 'dev/*' -e run -e tmp
+    -e 'proc/*' -e 'sys/*' -e 'dev/*' -e 'run/*' -e 'tmp/*'
 bash "$(dirname "${BASH_SOURCE[0]}")/../live/src/build-iso.sh" \
     --title "${TITLE}" "${BOOT_TAR}" "${WORK}/debug.sfs" "${OUTPUT}"

@@ -95,6 +95,9 @@ SSH readiness is not media readiness: the plain/LUKS launchers must wait for
 `live-media-setup.service` before consuming the receipt. A pre-marker SSH response
 can precede the read-only mount and hardware target binding; print the mount/setup
 journal if their startup fails rather than treating an SSH login as a ready ISO.
+The production and debug squashfs must retain an empty `/run`: dracut cannot carry
+its runtime tree to the normal path otherwise. Test the actual packed directory
+and excluded runtime contents with squashfs tools, not a stub that only copies staging.
 
 ---
 

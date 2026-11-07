@@ -571,11 +571,13 @@ Our consolidation of OSTree (GRUB) and ComposeFS (systemd-boot) installer flows 
 ```bash
 sudo mkdir -p /var/iso-build/debug-rootfs/proc \
               /var/iso-build/debug-rootfs/sys \
-              /var/iso-build/debug-rootfs/dev
-sudo mksquashfs ... -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e run -e tmp
+              /var/iso-build/debug-rootfs/dev \
+              /var/iso-build/debug-rootfs/run \
+              /var/iso-build/debug-rootfs/tmp
+sudo mksquashfs ... -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e "run/*" -e "tmp/*"
 ```
 
-**Rule:** Any squashfs rebuild step (debug ISO, test fixtures, etc.) must use the exact same `mkdir -p proc/ sys/ dev/` + `-e "proc/*" -e "sys/*" -e "dev/*"` pattern as `scripts/build-live-squashfs.sh`. Using `-e sys` or `-e dev` (bare names, even with or without `-wildcards`) is dangerous — it may remove the directory node on newer mksquashfs.
+**Rule:** Every squashfs packer must preserve empty `proc/`, `sys/`, `dev/`, `run/` and `tmp/`, excluding only their contents with `-wildcards -e "dir/*"`. Bare exclusions can remove directory nodes. Debian dracut `99base/init.sh` retains `/run/initramfs` under `/dev/.initramfs` if the new root lacks `/run`, breaking post-boot media paths. Both active variants used this Debian fallback in the 2026-11-07 failing runs.
 
 ### COMPOSEFS_BACKEND detection: never use `sh -c 'python3 -c "..."'` (2026-06-21)
 

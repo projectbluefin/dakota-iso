@@ -312,11 +312,11 @@ GNOME OS (glibc ≥2.38) ships `ld-linux-x86-64.so.2` — this does NOT match th
 
 **mksquashfs 4.7+ removes bare-excluded directories.** Using `-e sys` removes the `sys/` dir entirely. The fix — applied in `justfile` and `scripts/build-live-squashfs.sh`:
 ```bash
-mkdir -p "${SFS_ROOT}/proc" "${SFS_ROOT}/sys" "${SFS_ROOT}/dev"
-mksquashfs ... -wildcards -e "proc/*" -e "sys/*" -e "dev/*" ...
+mkdir -p "${SFS_ROOT}/proc" "${SFS_ROOT}/sys" "${SFS_ROOT}/dev" "${SFS_ROOT}/run" "${SFS_ROOT}/tmp"
+mksquashfs ... -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e "run/*" -e "tmp/*"
 ```
 
-**Never use bare `-e sys -e dev -e proc`** on mksquashfs 4.7+. Always exclude with `-wildcards -e "dir/*"` to keep the empty directory.
+**Never bare-exclude `proc`, `sys`, `dev`, `run` or `tmp`.** Keep empty directories and exclude only their contents. Without `/run`, Debian dracut `99base/init.sh` 353–356 retains initramfs state under `/dev/.initramfs`, so `/run/initramfs/live` is lost after switch-root. A real squashfs regression must verify directory nodes and absent runtime contents; a staging-copy stub misses this failure.
 
 ---
 
@@ -364,7 +364,7 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 - Claiming "tests pass" without specifying which gate (`plain-e2e`, `luks-test-qemu`, or unit tests)
 - Testing with a QEMU instance that predates the current build
 - Using `-smp 4 -m 4096` in a QEMU command (too slow; use `{{qemu-smp}}` / `{{qemu-mem}}` justfile vars)
-- Using bare `-e sys` or `-e dev` in mksquashfs (4.7+ removes the dir; use `-wildcards -e "sys/*"`)
+- Bare-excluding runtime directories in mksquashfs: preserve `proc sys dev run tmp` with `-wildcards -e "dir/*"`
 - Declaring an install verified without booting the installed disk
 - Using `installer_channel=dev` in production builds; the scheduled GUI
   acceptance matrix deliberately tests both dev and stable

@@ -346,7 +346,6 @@ WantedBy=local-fs.target
 UNITEOF
 systemctl enable var-tmp.mount || true
 
-# /run/rootfsbase is initramfs-private; retain an explicit original-media mount.
 cat > /usr/lib/systemd/system/run-bootcmedia.mount << 'UNITEOF'
 [Unit]
 Description=Read-only installer media

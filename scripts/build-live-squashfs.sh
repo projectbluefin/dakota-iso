@@ -161,7 +161,8 @@ mkdir -p "$(dirname "${OUTPUT_SFS}")"
 # NOTE: do not use "-e proc" — newer mksquashfs (4.7+) removes the directory
 # itself when given a bare "-e proc", while older versions kept an empty dir.
 # Same applies to sys and dev.
-mkdir -p "${SFS_ROOT}/proc" "${SFS_ROOT}/sys" "${SFS_ROOT}/dev"
+# dracut only carries /run across switch-root when the new root has that directory.
+mkdir -p "${SFS_ROOT}/proc" "${SFS_ROOT}/sys" "${SFS_ROOT}/dev" "${SFS_ROOT}/run" "${SFS_ROOT}/tmp"
 
 mksquashfs "${SFS_ROOT}" "${OUTPUT_SFS}" \
     -noappend -comp zstd \
@@ -169,7 +170,7 @@ mksquashfs "${SFS_ROOT}" "${OUTPUT_SFS}" \
     -b "${SFS_BLOCK}" \
     -processors 4 \
     -wildcards \
-    -e "proc/*" -e "sys/*" -e "dev/*" -e run -e tmp
+    -e "proc/*" -e "sys/*" -e "dev/*" -e "run/*" -e "tmp/*"
 echo ">>> [live-squashfs] squashfs: $(du -sh "${OUTPUT_SFS}" | cut -f1)"
 
 echo ">>> [live-squashfs] exporting boot files tar ..."

@@ -171,13 +171,14 @@ _ns_build_squashfs() {
     [[ "${WORKDIR}" != "${OUTPUT_DIR}" ]] && df -h "${WORKDIR}"
     du -sh "${SQUASHFS_ROOT}" 2>/dev/null || true
 
-    mkdir -p "${SQUASHFS_ROOT}/proc" "${SQUASHFS_ROOT}/sys" "${SQUASHFS_ROOT}/dev"
+    mkdir -p "${SQUASHFS_ROOT}/proc" "${SQUASHFS_ROOT}/sys" "${SQUASHFS_ROOT}/dev" \
+        "${SQUASHFS_ROOT}/run" "${SQUASHFS_ROOT}/tmp"
     SFS_LEVEL=3; SFS_BLOCK=131072
     [[ "${COMPRESSION}" == "release" ]] && { SFS_LEVEL=15; SFS_BLOCK=1048576; }
     mksquashfs "${SQUASHFS_ROOT}" "${SQUASHFS}" \
         -noappend -comp zstd -Xcompression-level "${SFS_LEVEL}" -b "${SFS_BLOCK}" \
         -processors 4 \
-        -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e run -e tmp
+        -wildcards -e "proc/*" -e "sys/*" -e "dev/*" -e "run/*" -e "tmp/*"
 
     tar -C "${MOUNT}" \
         -cf "${BOOT_TAR}" \
