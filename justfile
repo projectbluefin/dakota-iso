@@ -894,6 +894,14 @@ luks-boot-qemu-live target:
         [[ "$i" -eq 150 ]] && { echo "ERROR: live env not ready after ~25m"; tail -30 "{{luks-qemu-serial-live}}" || true; exit 1; }
         sleep 5
     done
+    # SSH can start before the media mount and hardware target binding.
+    if ! sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} \
+        'sudo systemctl start live-media-setup.service'; then
+        sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{luks-qemu-ssh-port}} \
+            'sudo journalctl -b -u run-bootcmedia.mount -u live-media-setup.service --no-pager' || true
+        cat "{{luks-qemu-serial-live}}" >&2
+        exit 1
+    fi
 
     # Wait for the live boot GUI to render and stabilize before taking screenshot
     sudo python3 "live/src/luks-unlock.py" wait-live \
@@ -1308,6 +1316,14 @@ plain-boot-qemu-live target:
         [[ $i -eq 60 ]] && { echo "Timeout waiting for live environment" >&2; cat "{{plain-qemu-serial-live}}" >&2; exit 1; }
         sleep 5
     done
+    # SSH can start before the media mount and hardware target binding.
+    if ! sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}} \
+        'sudo systemctl start live-media-setup.service'; then
+        sshpass -p live ssh $SSH_OPTS liveuser@127.0.0.1 -p {{plain-qemu-ssh-port}} \
+            'sudo journalctl -b -u run-bootcmedia.mount -u live-media-setup.service --no-pager' || true
+        cat "{{plain-qemu-serial-live}}" >&2
+        exit 1
+    fi
 
 # Run fisherman plain (no-encryption) composefs install via SSH.
 plain-install-qemu target:

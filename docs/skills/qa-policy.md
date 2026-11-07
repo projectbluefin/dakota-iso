@@ -91,6 +91,11 @@ and boot the installed disks. The installed `/var` btrfs mount must show
 `rootflags=`. These checks and SSH reachability are hard gates even when older
 UEFI/Flatpak observations are non-blocking.
 
+SSH readiness is not media readiness: the plain/LUKS launchers must wait for
+`live-media-setup.service` before consuming the receipt. A pre-marker SSH response
+can precede the read-only mount and hardware target binding; print the mount/setup
+journal if their startup fails rather than treating an SSH login as a ready ISO.
+
 ---
 
 ## ISO payload and size invariant
