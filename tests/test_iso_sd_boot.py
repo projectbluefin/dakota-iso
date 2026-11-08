@@ -477,6 +477,24 @@ class TestIsoSdBootArgumentsAndDefaults(IsoSdBootHarness):
         self.assertEqual(just_calls[0], "just debug=1 installer_channel=dev container dakota")
 
 
+class TestIsoSdBootExitTrapCleanup(unittest.TestCase):
+    """The EXIT trap must never fail a completed build: the vfs store keeps
+    root-owned device nodes and restrictive modes from the image, so a bare
+    `rm -rf` fails and `set -e` would turn a good ISO into exit 1."""
+
+    def test_payload_store_cleanup_is_failure_tolerant(self):
+        text = SCRIPT.read_text()
+        trap = next(
+            line for line in text.splitlines()
+            if line.startswith("trap ") and "PAYLOAD_STORE" in line
+        )
+        store_cleanup = trap.split("podman rmi")[0].rstrip().rstrip(";").rstrip()
+        self.assertIn("podman unshare rm -rf", store_cleanup,
+                      "trap must fall back to a user-namespace rm for root-owned store files")
+        self.assertTrue(store_cleanup.endswith("|| true"),
+                        "trap store cleanup must end failure-tolerant so leftovers never fail the build")
+
+
 class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
     """Verify composefs squashing vs non-composefs commit and compression flags."""
 

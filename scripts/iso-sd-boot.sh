@@ -98,7 +98,7 @@ PAYLOAD_OCI="${OUTPUT_DIR}/${TARGET}-payload.oci.tar"
 PAYLOAD_STORE="${WORKDIR}/${TARGET}-payload-store"
 PAYLOAD_DIGEST=""; PAYLOAD_CONFIGDIGEST=""; PAYLOAD_PLATFORM=""
 
-trap 'rm -f "${SQUASHFS}" "${BOOT_TAR}" "${PAYLOAD_OCI}" 2>/dev/null; rm -rf "${PAYLOAD_STORE:-}" "${PAYLOAD_STORE:-}-storage.conf" 2>/dev/null; podman rmi "localhost/iso-payload-work:base-$$" "localhost/iso-payload-work:final-$$" >/dev/null 2>&1 || true' EXIT
+trap 'rm -f "${SQUASHFS}" "${BOOT_TAR}" "${PAYLOAD_OCI}" 2>/dev/null; rm -rf "${PAYLOAD_STORE:-}" "${PAYLOAD_STORE:-}-storage.conf" 2>/dev/null || podman unshare rm -rf "${PAYLOAD_STORE:-}" "${PAYLOAD_STORE:-}-storage.conf" 2>/dev/null || true; podman rmi "localhost/iso-payload-work:base-$$" "localhost/iso-payload-work:final-$$" >/dev/null 2>&1 || true' EXIT
 
 echo "=== Disk space before squashfs assembly ==="
 df -h "${OUTPUT_DIR}"
