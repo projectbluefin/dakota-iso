@@ -1,2 +1,8 @@
-# localhost/ images are built and consumed inside the same job; never pulled.
-localhost/
+# Local images are built and consumed inside a single job and never pulled, so
+# they carry a mutable build tag (…:latest) instead of a digest. The
+# pinned-fetches check suppresses a finding only when its printed text contains
+# one of these entries, so each name is listed individually: a bare "localhost/"
+# prefix would also silence any URL whose path merely contains "localhost/"
+# (for example https://evil.example/localhost/x), hiding a real, unpinned fetch.
+localhost/dakota-nvidia-live
+localhost/${{ matrix.live_target }}-live
