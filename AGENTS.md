@@ -233,19 +233,25 @@ The `skill-drift.yml` CI check warns when a PR changes implementation files with
 
 ### ISO payload and size invariant
 
-- Both active variants embed **one OCI layout**, never a second archive/store,
-  via `payload_embed_oci_archive` in `scripts/payload-oci.sh`. Its schema-v1
-  `/etc/bootc-installer/media-input.json` binds the actual manifest/config to
-  `/run/bootcmedia/usr/share/bootc-installer/oci` on the read-only squashfs.
-- Keep `live-iso-mode` and fisherman's strict digest/read-only/no-symlink gate.
-  Missing receipt or corrupt media is an installation refusal, not a network fallback.
+- Each active variant embeds exactly one offline source, never two:
+  composefs (Dakota) embeds an **unpacked containers-storage graphroot** via
+  `payload_export_store` + `payload_bind_store`; non-composefs (Utah) embeds
+  **one OCI layout** via `payload_embed_oci_archive`, all in
+  `scripts/payload-oci.sh`. Its schema-v1 `/etc/bootc-installer/media-input.json`
+  binds the actual manifest/config to the read-only squashfs
+  (`/run/bootcmedia/var/lib/containers/storage` for the store form,
+  `/run/bootcmedia/usr/share/bootc-installer/oci` for the layout form).
+- Keep `live-iso-mode` and fisherman's strict digest/read-only/no-symlink gate
+  for both forms. Missing receipt or corrupt media is an installation refusal,
+  not a network fallback.
 - Composefs (Dakota) retains `podman build --squash-all`; non-composefs (Utah and
   retired variants) must retain all layers to preserve ostree commit objects.
-- Do not pass `--store` to `build-iso.sh` or restore a VFS/overlay payload import.
-- Record actual ISO bytes with `stat -c%s`. VFS-era 4.5–5.5 GB expectations do not
-  apply mechanically: compressed OCI blobs cannot deduplicate per-file against
-  the live OS. A size change needs measured contents and installation evidence,
-  not a second embedded payload or deletion of required layers.
+- Do not pass `--store` to `build-iso.sh`; do not restore an OCI archive blob
+  alongside the store. The store files must share squashfs blocks with the live
+  root (single-copy media) — an opaque second copy of the payload fails the size gate.
+- Record actual ISO bytes with `stat -c%s`. Dakota single-copy target: ≤6.5 GB.
+  A size change needs measured contents and installation evidence, not a second
+  embedded payload or deletion of required layers.
 
 ### Sensitive paths (require maintainer review)
 

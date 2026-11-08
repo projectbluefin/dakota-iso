@@ -650,9 +650,22 @@ EOF
 mkdir -p /usr/lib/tmpfiles.d
 echo 'f /etc/hostname 0644 - - - dakota-live' > /usr/lib/tmpfiles.d/live-hostname.conf
 
-# The payload is a bound OCI layout, not a containers-storage graphroot.
+# Composefs variants embed the payload as an unpacked containers-storage
+# graphroot (single-copy media: the store files dedup against the live root
+# in squashfs). The store is created with the vfs driver, so the live env
+# must read it with the same driver — overlay would write a fresh db.sql
+# over the embedded metadata. Non-composefs variants keep the bound OCI
+# layout and the overlay driver.
 # Keep container scratch storage separate from the immutable media source.
 mkdir -p /var/lib/containers/storage /etc/containers
+if [ "$COMPOSEFS" = "true" ]; then
+cat > /etc/containers/storage.conf << 'STOREOF'
+[storage]
+driver = "vfs"
+runroot = "/run/containers/storage"
+graphroot = "/var/lib/containers/storage"
+STOREOF
+else
 cat > /etc/containers/storage.conf << 'STOREOF'
 [storage]
 driver = "overlay"
@@ -662,6 +675,7 @@ graphroot = "/var/lib/containers/storage"
 [storage.options.overlay]
 mount_program = "/usr/bin/fuse-overlayfs"
 STOREOF
+fi
 
 # ── Per-variant hook ──────────────────────────────────────────────────────────
 # Variants with needs beyond the declarative files (e.g. Debian-based images)

@@ -140,10 +140,36 @@ else
 fi
 echo ">>> [live-squashfs] composeFsBackend=${COMPOSEFS_BACKEND}"
 if [[ -n "${OCI_IMAGE}" ]]; then
-    OCI_ARCHIVE="${WORK}/payload.oci.tar"
-    payload_to_oci_archive "${OCI_IMAGE}" "${OCI_ARCHIVE}" "${OCI_IMAGE}" "${COMPOSEFS_BACKEND}"
-    payload_embed_oci_archive "${OCI_ARCHIVE}" "${SFS_ROOT}"
-    rm -f "${OCI_ARCHIVE}"
+    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
+        # Single-copy media: unpacked store files share squashfs blocks with
+        # the live root instead of duplicating it as an opaque OCI blob.
+        echo "=== Preparing bound store media (single-copy) for ${OCI_IMAGE} ==="
+        PAYLOAD_TAG=""; PAYLOAD_BASE=""
+        payload_build_final "${OCI_IMAGE}" "true" PAYLOAD_TAG PAYLOAD_BASE
+        PAYLOAD_INFO="$(payload_export_store "${PAYLOAD_TAG}" "${WORK}/payload-store" "${OCI_IMAGE}")" || {
+            echo "ERROR: payload store export failed; refusing to build unverifiable media" >&2
+            exit 1
+        }
+        read -r PAYLOAD_DIGEST PAYLOAD_CONFIGDIGEST PAYLOAD_PLATFORM <<< "${PAYLOAD_INFO}" || {
+            echo "ERROR: payload store export produced no receipt values" >&2
+            exit 1
+        }
+        [[ -n "${PAYLOAD_DIGEST}" && -n "${PAYLOAD_CONFIGDIGEST}" && -n "${PAYLOAD_PLATFORM}" ]] || {
+            echo "ERROR: payload store export produced empty receipt values; refusing to build unverifiable media" >&2
+            exit 1
+        }
+        payload_bind_store "${WORK}/payload-store" "${SFS_ROOT}" "${OCI_IMAGE}" "" \
+            "${PAYLOAD_DIGEST}" "${PAYLOAD_CONFIGDIGEST}" "${PAYLOAD_PLATFORM}"
+        podman rmi "${PAYLOAD_TAG}" >/dev/null 2>&1 || true
+        if [[ -n "${PAYLOAD_BASE}" ]]; then
+            podman rmi "${PAYLOAD_BASE}" >/dev/null 2>&1 || true
+        fi
+    else
+        OCI_ARCHIVE="${WORK}/payload.oci.tar"
+        payload_to_oci_archive "${OCI_IMAGE}" "${OCI_ARCHIVE}" "${OCI_IMAGE}" "${COMPOSEFS_BACKEND}"
+        payload_embed_oci_archive "${OCI_ARCHIVE}" "${SFS_ROOT}"
+        rm -f "${OCI_ARCHIVE}"
+    fi
 fi
 
 SFS_LEVEL=3; SFS_BLOCK=131072

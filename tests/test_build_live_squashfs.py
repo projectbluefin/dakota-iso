@@ -30,7 +30,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
-from tests.oci_fixture import make_oci_archive
+from tests.oci_fixture import make_oci_archive, make_save_tar
 
 REPO = Path(__file__).parent.parent
 SCRIPT = REPO / "scripts" / "build-live-squashfs.sh"
@@ -76,9 +76,15 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
         self.mount_dir.mkdir(parents=True, exist_ok=True)
         (self.mount_dir / "usr" / "lib" / "modules").mkdir(parents=True, exist_ok=True)
         (self.mount_dir / "usr" / "lib" / "systemd" / "boot" / "efi").mkdir(parents=True, exist_ok=True)
+        # The live image ships an empty storage placeholder: configure-live.sh
+        # mkdirs /var/lib/containers/storage alongside storage.conf. Binding
+        # must take it over, not refuse it as stale.
+        (self.mount_dir / "var" / "lib" / "containers" / "storage").mkdir(parents=True, exist_ok=True)
 
         self.fixture_archive = self.sandbox / "fixture.oci.tar"
         make_oci_archive(self.fixture_archive)
+        self.fixture_save_tar = self.sandbox / "fixture.save.tar"
+        make_save_tar(self.fixture_save_tar, "ef" * 32)
         config = self.mount_dir / "etc/bootc-installer"
         config.mkdir(parents=True)
         (config / "recipe.json").write_text(json.dumps({
@@ -97,6 +103,34 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
             probe_exit = 0 if composefs else 1
         self._stub("podman", f"""
             echo "podman $*" >> "$STUB_CALLS"
+            _graphroot=""
+            _prev=""
+            for _arg in "$@"; do
+                if [ "$_prev" = "--root" ]; then _graphroot="$_arg"; fi
+                _prev="$_arg"
+            done
+            while :; do
+                case "${{1:-}}" in
+                --root|--runroot|--storage-driver) shift 2;;
+                --root=*|--runroot=*|--storage-driver=*) shift;;
+                *) break;;
+                esac
+            done
+            if [ "$1" = "load" ]; then
+                if [ -n "$_graphroot" ]; then
+                    mkdir -p "$_graphroot/vfs/dir"
+                    echo "fixture layer" > "$_graphroot/vfs/dir/fixture-layer"
+                fi
+                cat >/dev/null
+                exit 0
+            fi
+            if [ "$1" = "tag" ]; then
+                exit 0
+            fi
+            if [ "$1" = "save" ]; then
+                cat "{self.fixture_save_tar}"
+                exit 0
+            fi
             if [ "$1" = "build" ]; then
                 _prev=""
                 for _arg in "$@"; do
@@ -114,7 +148,19 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
                 exit 0
             fi
             if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
-                echo "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+                case "${4:-}" in
+                *Architecture*)
+                    echo "linux/amd64"
+                    ;;
+                *Digest*)
+                    printf 'sha256:'
+                    printf 'c%.0s' {{1..64}}
+                    printf '\\n'
+                    ;;
+                *)
+                    echo "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+                    ;;
+                esac
                 exit 0
             fi
             if [ "$1" = "image" ] && [ "$2" = "mount" ]; then
@@ -147,6 +193,30 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
 
         self._stub("skopeo", """
             echo "skopeo $*" >> "$STUB_CALLS"
+            if [ "$1" = "copy" ]; then
+                _graphroot="$(sed -n 's/^graphroot = "\\(.*\\)"$/\\1/p' "${CONTAINERS_STORAGE_CONF:-/nonexistent}" 2>/dev/null | head -1)"
+                if [ -n "$_graphroot" ]; then
+                    mkdir -p "$_graphroot/vfs/dir"
+                    echo "fixture layer" > "$_graphroot/vfs/dir/fixture-layer"
+                fi
+                exit 0
+            fi
+            if [ "$1" = "inspect" ] && [ "$2" = "--format" ]; then
+                printf 'sha256:'
+                printf 'c%.0s' {1..64}
+                printf '\\n'
+                exit 0
+            fi
+            if [ "$1" = "inspect" ] && [ "$2" = "--raw" ]; then
+                printf '{"schemaVersion":2,"config":{"digest":"sha256:'
+                printf 'ef%.0s' {1..64}
+                printf '","size":1},"layers":[]}\\n'
+                exit 0
+            fi
+            if [ "$1" = "inspect" ] && [ "$2" = "--config" ]; then
+                printf '{"architecture":"amd64","os":"linux"}\\n'
+                exit 0
+            fi
             if [ "$1" = "inspect" ]; then
                 printf '{"rootfs": {"diff_ids": ["sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"]}}\\n'
                 exit 0
@@ -278,22 +348,34 @@ class TestBuildLiveSquashfsExecution(BuildLiveSquashfsHarness):
         self.assertIn(f"--label ostree.final-diffid={diffid}", builds[1])
         self.assertIn(f"--annotation ostree.final-diffid={diffid}", builds[1])
 
-        # Only the relabelled image is pushed (each push gzips the squashed
-        # layer), under the payload's own name.
+        # The relabelled image is exported to a vfs store under the payload's
+        # own name — no OCI archive blob is written for composefs media.
         pushes = [c for c in calls if c.startswith("podman push ")]
-        self.assertEqual(len(pushes), 1, calls)
-        self.assertIn("localhost/iso-payload-work:final-", pushes[0])
+        self.assertEqual(pushes, [], f"composefs mode must not push an OCI archive: {calls!r}")
+        self.assertFalse([c for c in calls if "oci-archive:" in c])
+        saves = [c for c in calls
+                 if c.startswith("podman save localhost/iso-payload-work:final-")]
+        self.assertEqual(len(saves), 1, calls)
+        loads = [c for c in calls if " load " in c]
+        self.assertEqual(len(loads), 1, calls)
+        self.assertIn("--storage-driver vfs", loads[0])
+        tags = [c for c in calls
+                if " tag localhost/iso-payload-work:final-" in c]
+        self.assertEqual(len(tags), 1, calls)
         self.assertTrue(
-            pushes[0].endswith(":ghcr.io/projectbluefin/dakota-nvidia:stable"), pushes[0])
-        self.assertIn("oci-archive:", pushes[0])
+            tags[0].endswith(" ghcr.io/projectbluefin/dakota-nvidia:stable"),
+            tags[0])
 
         self.assertFalse([c for c in calls if c.startswith("buildah")],
                          "build-live-squashfs.sh must not need buildah")
         receipt = json.loads(self.receipt_capture.read_text())
-        self.assertEqual(receipt["ociLayoutPath"], "/run/bootcmedia/usr/share/bootc-installer/oci")
+        self.assertEqual(receipt["containersStoragePath"], "/var/lib/containers/storage")
+        self.assertNotIn("ociLayoutPath", receipt)
         self.assertEqual(receipt["image"], "ghcr.io/projectbluefin/dakota-nvidia:stable")
         self.assertEqual(receipt["targetImgref"], "ghcr.io/projectbluefin/dakota:stable")
-        self.assertFalse(any("skopeo copy" in call for call in calls))
+        self.assertEqual(receipt["platformManifestDigest"],
+                         "sha256:" + "c" * 64)
+        self.assertEqual(receipt["configDigest"], "sha256:" + "ef" * 32)
 
     def test_non_composefs_mode_commits_without_squash(self):
         """When --oci-image is given and composeFsBackend is false, the payload is not squashed."""

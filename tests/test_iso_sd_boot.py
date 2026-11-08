@@ -45,7 +45,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
-from tests.oci_fixture import make_oci_archive
+from tests.oci_fixture import make_oci_archive, make_save_tar
 
 REPO = Path(__file__).parent.parent
 SCRIPT = REPO / "scripts" / "iso-sd-boot.sh"
@@ -64,6 +64,11 @@ class IsoSdBootHarness(unittest.TestCase):
         self.calls_log.touch()
         self.fixture_archive = self.sandbox / "fixture.oci.tar"
         make_oci_archive(self.fixture_archive)
+        self.fixture_save_tar = self.sandbox / "fixture.save.tar"
+        make_save_tar(
+            self.fixture_save_tar,
+            self.SKOPEO_CONFIG_DIGEST.removeprefix("sha256:"),
+        )
         self.media_capture = self.sandbox / "media-capture"
         self.media_capture.mkdir()
 
@@ -172,6 +177,10 @@ class IsoSdBootHarness(unittest.TestCase):
             mount_dir.mkdir(parents=True, exist_ok=True)
             (mount_dir / "usr" / "lib" / "modules").mkdir(parents=True, exist_ok=True)
             (mount_dir / "usr" / "lib" / "systemd" / "boot" / "efi").mkdir(parents=True, exist_ok=True)
+            # The live image ships an empty storage placeholder: configure-live.sh
+            # mkdirs /var/lib/containers/storage alongside storage.conf. Binding
+            # must take it over, not refuse it as stale.
+            (mount_dir / "var" / "lib" / "containers" / "storage").mkdir(parents=True, exist_ok=True)
 
         self._stub("just", """
             echo "just $*" >> "$STUB_CALLS"
@@ -181,6 +190,34 @@ class IsoSdBootHarness(unittest.TestCase):
         # The producer consumes real OCI bytes; podman only supplies the archive.
         self._stub("podman", f"""
             echo "podman $*" >> "$STUB_CALLS"
+            _graphroot=""
+            _prev=""
+            for _arg in "$@"; do
+                if [ "$_prev" = "--root" ]; then _graphroot="$_arg"; fi
+                _prev="$_arg"
+            done
+            while :; do
+                case "${{1:-}}" in
+                --root|--runroot|--storage-driver) shift 2;;
+                --root=*|--runroot=*|--storage-driver=*) shift;;
+                *) break;;
+                esac
+            done
+            if [ "$1" = "load" ]; then
+                if [ -n "$_graphroot" ]; then
+                    mkdir -p "$_graphroot/vfs/dir"
+                    echo "fixture layer" > "$_graphroot/vfs/dir/fixture-layer"
+                fi
+                cat >/dev/null
+                exit 0
+            fi
+            if [ "$1" = "tag" ]; then
+                exit 0
+            fi
+            if [ "$1" = "save" ]; then
+                cat "{self.fixture_save_tar}"
+                exit 0
+            fi
             if [ "$1" = "build" ]; then
                 _prev=""
                 for _arg in "$@"; do
@@ -198,7 +235,17 @@ class IsoSdBootHarness(unittest.TestCase):
                 exit 0
             fi
             if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
-                echo "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+                case "${4:-}" in
+                *Architecture*)
+                    echo "linux/amd64"
+                    ;;
+                *Digest*)
+                    echo "{self.SKOPEO_DIGEST}"
+                    ;;
+                *)
+                    echo "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+                    ;;
+                esac
                 exit 0
             fi
             if [ "$1" = "image" ] && [ "$2" = "mount" ]; then
@@ -207,6 +254,10 @@ class IsoSdBootHarness(unittest.TestCase):
             fi
             if [ "$1" = "image" ] && [ "$2" = "unmount" ]; then
                 exit 0
+            fi
+            if [ "$1" = "unshare" ] && [ -n "${{STUB_UNSHARE_FAIL:-}}" ]; then
+                echo "Error during unshare(...): Operation not permitted" >&2
+                exit 125
             fi
             if [ "$1" = "unshare" ]; then
                 shift
@@ -224,10 +275,30 @@ class IsoSdBootHarness(unittest.TestCase):
             exit 0
         """)
 
-        self._stub("skopeo", """
+        self._stub("skopeo", f"""
             echo "skopeo $*" >> "$STUB_CALLS"
+            if [ "$1" = "copy" ]; then
+                _graphroot="$(sed -n 's/^graphroot = "\\(.*\\)"$/\\1/p' "${{CONTAINERS_STORAGE_CONF:-/nonexistent}}" 2>/dev/null | head -1)"
+                if [ -n "$_graphroot" ]; then
+                    mkdir -p "$_graphroot/vfs/dir"
+                    echo "fixture layer" > "$_graphroot/vfs/dir/fixture-layer"
+                fi
+                exit 0
+            fi
+            if [ "$1" = "inspect" ] && [ "$2" = "--format" ]; then
+                echo "{self.SKOPEO_DIGEST}"
+                exit 0
+            fi
+            if [ "$1" = "inspect" ] && [ "$2" = "--raw" ]; then
+                printf '{{"schemaVersion":2,"config":{{"digest":"{self.SKOPEO_CONFIG_DIGEST}","size":1}},"layers":[]}}\\n'
+                exit 0
+            fi
+            if [ "$1" = "inspect" ] && [ "$2" = "--config" ]; then
+                printf '{{"architecture":"amd64","os":"linux"}}\\n'
+                exit 0
+            fi
             if [ "$1" = "inspect" ]; then
-                printf '{"rootfs": {"diff_ids": ["sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"]}}\\n'
+                printf '{{"rootfs": {{"diff_ids": ["sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"]}}}}\\n'
                 exit 0
             fi
             exit 0
@@ -236,7 +307,12 @@ class IsoSdBootHarness(unittest.TestCase):
         self._stub("mksquashfs", """
             echo "mksquashfs $*" >> "$STUB_CALLS"
             cp "$1/etc/bootc-installer/media-input.json" "$STUB_MEDIA/receipt.json"
-            cp -a "$1/usr/share/bootc-installer/oci" "$STUB_MEDIA/layout-copy"
+            if [ -d "$1/usr/share/bootc-installer/oci" ]; then
+                cp -a "$1/usr/share/bootc-installer/oci" "$STUB_MEDIA/layout-copy"
+            fi
+            if [ -d "$1/var/lib/containers/storage" ]; then
+                cp -a "$1/var/lib/containers/storage" "$STUB_MEDIA/store-copy"
+            fi
             touch "$2"
             exit 0
         """)
@@ -269,6 +345,8 @@ class IsoSdBootHarness(unittest.TestCase):
                        "VERIFY_FAIL")
 
     PINNED_DIGEST = "sha256:" + "ab" * 32
+    SKOPEO_DIGEST = "sha256:" + "cd" * 32
+    SKOPEO_CONFIG_DIGEST = "sha256:" + "ef" * 32
 
     def run_script(self, env_vars=None):
         self._install_stubs()
@@ -403,7 +481,7 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
     """Verify composefs squashing vs non-composefs commit and compression flags."""
 
     def test_composefs_true_mode(self):
-        """Composefs mode (dakota) squashes payload, updates final-diffid, and uses VFS."""
+        """Composefs mode (dakota) squashes payload, updates final-diffid, embeds a store."""
         out_dir = self.sandbox / "output"
         res = self.run_script(env_vars={
             "TARGET": "dakota",
@@ -424,6 +502,31 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
         # Second pass records the squashed diff_id as label and annotation
         self.assertIn("--label ostree.final-diffid=", builds[1])
         self.assertIn("--annotation ostree.final-diffid=", builds[1])
+
+        # The squashed image is streamed to a vfs store, not an OCI archive
+        saves = [c for c in calls
+                 if c.startswith("podman save localhost/iso-payload-work:final-")]
+        self.assertEqual(len(saves), 1, f"expected one store transfer: {calls!r}")
+        loads = [c for c in calls if " load " in c]
+        self.assertEqual(len(loads), 1, f"expected one store load: {calls!r}")
+        self.assertIn("--storage-driver vfs", loads[0])
+        tags = [c for c in calls
+                if " tag localhost/iso-payload-work:final-" in c]
+        self.assertEqual(len(tags), 1, f"expected one store tag: {calls!r}")
+        self.assertTrue(
+            tags[0].endswith(" ghcr.io/projectbluefin/dakota:stable"),
+            tags[0],
+        )
+        self.assertFalse([c for c in calls if "oci-archive:" in c],
+                         "composefs mode must not write an OCI archive blob")
+
+        # The bound receipt names the store and the store files reach the squashfs
+        receipt = json.loads((self.media_capture / "receipt.json").read_text())
+        self.assertEqual(receipt["containersStoragePath"], "/var/lib/containers/storage")
+        self.assertNotIn("ociLayoutPath", receipt)
+        self.assertEqual(receipt["platformManifestDigest"], self.SKOPEO_DIGEST)
+        self.assertEqual(receipt["configDigest"], self.SKOPEO_CONFIG_DIGEST)
+        self.assertTrue((self.media_capture / "store-copy" / "vfs" / "dir" / "fixture-layer").exists())
 
         # Delegate build-iso receives --title as ONE argument, then the boot-files tar,
         # the rootfs squashfs and the output ISO path, in that order. Asserting the full
@@ -465,20 +568,60 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
             self.expected_delegate_argv("lts", "Bluefin LTS Live", out_dir),
         )
 
-    def test_both_backends_embed_exactly_one_bound_oci_layout(self):
-        for target in ("dakota", "lts"):
-            with self.subTest(target=target):
-                res = self.run_script(env_vars={"TARGET": target})
-                self.assertEqual(res.returncode, 0, res.stderr)
-                receipt = json.loads((self.media_capture / "receipt.json").read_text())
-                ref = (self.sandbox / target / "payload_ref").read_text().strip()
-                self.assertEqual(receipt["image"], ref)
-                self.assertEqual(receipt["targetImgref"], ref)
-                self.assertEqual(receipt["ociLayoutPath"], "/run/bootcmedia/usr/share/bootc-installer/oci")
-                self.assertTrue((self.media_capture / "layout-copy/index.json").exists())
-                self.assertEqual(self.embed_run_calls(), [])
-                self.assertEqual(self.storage_conf_lines(), [])
-                shutil.rmtree(self.media_capture / "layout-copy")
+    def test_backends_embed_exactly_one_bound_media(self):
+        """Composefs embeds a store, non-composefs embeds an OCI layout — never both."""
+        res = self.run_script(env_vars={"TARGET": "dakota"})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        receipt = json.loads((self.media_capture / "receipt.json").read_text())
+        ref = (self.sandbox / "dakota" / "payload_ref").read_text().strip()
+        self.assertEqual(receipt["image"], ref)
+        self.assertEqual(receipt["targetImgref"], ref)
+        self.assertEqual(receipt["containersStoragePath"], "/var/lib/containers/storage")
+        self.assertNotIn("ociLayoutPath", receipt)
+        self.assertTrue((self.media_capture / "store-copy/vfs/dir/fixture-layer").exists())
+        self.assertFalse((self.media_capture / "layout-copy").exists())
+        self.assertEqual(self.embed_run_calls(), [])
+        self.assertEqual(self.storage_conf_lines(), [])
+        shutil.rmtree(self.media_capture / "store-copy")
+
+        res = self.run_script(env_vars={"TARGET": "lts"})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        receipt = json.loads((self.media_capture / "receipt.json").read_text())
+        ref = (self.sandbox / "lts" / "payload_ref").read_text().strip()
+        self.assertEqual(receipt["image"], ref)
+        self.assertEqual(receipt["targetImgref"], ref)
+        self.assertEqual(receipt["ociLayoutPath"], "/run/bootcmedia/usr/share/bootc-installer/oci")
+        self.assertNotIn("containersStoragePath", receipt)
+        self.assertTrue((self.media_capture / "layout-copy/index.json").exists())
+        # The live root's empty storage placeholder may ride along, but no
+        # bound store content may be embedded for non-composefs media.
+        store_copy = self.media_capture / "store-copy"
+        bound_files = [p for p in store_copy.rglob("*") if p.is_file()] if store_copy.exists() else []
+        self.assertEqual(bound_files, [], "non-composefs media must not embed store content")
+        self.assertEqual(self.embed_run_calls(), [])
+        self.assertEqual(self.storage_conf_lines(), [])
+        shutil.rmtree(self.media_capture / "layout-copy")
+
+    def test_unshare_failure_falls_back_to_direct_assembly(self):
+        """A failing `podman unshare` wrapper falls back to a direct run, same output."""
+        out_dir = self.sandbox / "output"
+        res = self.run_script(env_vars={
+            "TARGET": "dakota",
+            "OUTPUT_DIR": str(out_dir),
+            "STUB_UNSHARE_FAIL": "1",
+        })
+        self.assertEqual(res.returncode, 0, f"stdout: {res.stdout}\nstderr: {res.stderr}")
+        self.assertIn("podman unshare is unavailable", res.stderr)
+        self.assertIn("=== Disk space inside _ns block ===", res.stdout)
+        receipt = json.loads((self.media_capture / "receipt.json").read_text())
+        self.assertEqual(receipt["containersStoragePath"], "/var/lib/containers/storage")
+        self.assertTrue((self.media_capture / "store-copy/vfs/dir/fixture-layer").exists())
+        invocations = self.delegate_invocations()
+        self.assertEqual(len(invocations), 1)
+        self.assertEqual(
+            invocations[0],
+            self.expected_delegate_argv("dakota", "Dakota Live", out_dir),
+        )
 
     def test_compression_fast_vs_release(self):
         """COMPRESSION=fast uses level 3 and 128K block; release uses level 15 and 1M block."""

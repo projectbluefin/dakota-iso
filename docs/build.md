@@ -4,8 +4,12 @@ How to build Dakota live ISOs locally and the key variables that control the bui
 
 ## Two variant types — understand this before changing anything
 
-All variants embed one OCI layout at `/usr/share/bootc-installer/oci`, bound to
-the explicitly mounted read-only squashfs at `/run/bootcmedia/usr/share/bootc-installer/oci`.
+Composefs variants embed an unpacked containers-storage graphroot at
+`/var/lib/containers/storage`, bound to the explicitly mounted read-only
+squashfs at `/run/bootcmedia/var/lib/containers/storage` — the store files
+share squashfs blocks with the live root (single-copy media). Non-composefs
+variants embed one OCI layout at `/usr/share/bootc-installer/oci`, bound at
+`/run/bootcmedia/usr/share/bootc-installer/oci`.
 
 | Variant | `composefs` | squash before embed? |
 |---|---|---|
@@ -106,13 +110,15 @@ Use `fast` for CI and local testing. Use `release` for ISOs that go to R2.
 
 ## Shared bound-media producer
 
-Both CI and local builds call `payload_to_oci_archive`, retaining composefs
-`--squash-all` and preserving all ostree layers for Utah. `payload_embed_oci_archive`
-extracts those exact bytes once, verifies descriptor hashes/sizes, and writes
-schema-v1 `/etc/bootc-installer/media-input.json` from the real manifest/config.
-No containers-storage import, second payload squashfs, or runtime export is used.
-See [architecture.md](architecture.md#bound-offline-oci-media) for the full binding
-and the native fisherman's mandatory read-only/hash preflight.
+Both CI and local builds share the payload builder (`payload_build_final`,
+retaining composefs `--squash-all` and preserving all ostree layers for Utah).
+Composefs payloads are exported to a vfs containers-storage (`payload_export_store`)
+and bound into the squashfs root (`payload_bind_store`), which writes schema-v1
+`/etc/bootc-installer/media-input.json` from the installer-observed digests.
+Non-composefs payloads keep the OCI archive path (`payload_to_oci_archive` +
+`payload_embed_oci_archive`). No second archive, second squashfs, or runtime
+export is used. See [architecture.md](architecture.md#bound-offline-media)
+for the full binding and the native fisherman's mandatory read-only/hash preflight.
 
 Use `podman build` with the FROM-only Containerfile, never create/commit (which
 rewrites Entrypoint/config and breaks installed `bootc`).
@@ -171,11 +177,12 @@ The live environment runs the nvidia image. At install time, `bootc-installer`'s
 - **No NVIDIA GPU:** installs offline from the same OCI layout, `targetImgref=dakota:stable` —
   first `bootc upgrade` rebases to the correct non-nvidia variant automatically
 
-The VFS-era size figures below are historical, not acceptance limits for bound
-OCI media: a compressed OCI blob cannot deduplicate per-file against the live
-OS in squashfs. Record the actual ISO byte size (`stat -c%s`) and confirm there
-is exactly one layout and no second archive/store; never restore a second store
-to shrink the ISO or squash Utah's required ostree layers.
+Dakota single-copy target: ≤6.5 GB. The unpacked store shares squashfs blocks
+with the live root, so the ISO carries the payload (plus Flatpaks) once —
+measured: an opaque layer blob adds +100% overhead, unpacked files add ~0%.
+Record the actual ISO byte size (`stat -c%s`) and confirm there is exactly one
+offline source and no OCI archive blob; never restore a second copy to shrink
+the ISO or squash Utah's required ostree layers.
 
 ### CI uses `SUPERISO_COMPRESSION=release` (2026-06)
 
@@ -439,16 +446,23 @@ fisherman: fatal: bootc install: pulling image: podman pull oci:/var/lib/contain
 > for the payload squash". The composefs branching itself still applies.
 
 **Fix:** `iso-sd-boot` now reads `live/src/<target>/composefs` and branches **before** squash:
-- `composefs=true` → squash to 1 layer → VFS import via skopeo inside installer container
-- `composefs=false` → **squash to 1 layer** → `buildah commit --squash --format oci` →
-  `skopeo copy oci:... oci:<oci-store-dir>`
-
-**Both paths squash.** Never use `--format oci` without `--squash` for embedded OCI stores.
-bluefin-nvidia has ~120 OCI layers; without `--squash`, all layer blobs land in the squashfs
-OCI layout → ~8 GB OCI store → 12 GB ISO. With `--squash`: ~4 GB OCI store → ~6 GB ISO.
+- `composefs=true` → squash to 1 layer → single-copy VFS store via
+  `payload_export_store` (podman-only: `save` streams the tag from the default
+  store into `load` on a custom `--root/--runroot/--storage-driver vfs` store —
+  a `pull containers-storage:<tag>` against the empty custom store cannot
+  resolve it — then `tag` to the target identity, `image inspect` for
+  digest/platform, `save` → manifest.json for the config digest). Skopeo is
+  not in this path: `skopeo copy` into a custom store needs a mount namespace
+  the build host denies (`unshare(CLONE_NEWNS)` → EPERM), while podman brings
+  a working namespace setup. The runroot is a fixed short scratch dir
+  (`/tmp/pstore-run.XXXXXX`): podman caps runroot at 50 chars. The receipt
+  binds `containersStoragePath: /var/lib/containers/storage` — no second OCI
+  blob.
+- `composefs=false` → keep all layers (squashing destroys ostree commits) →
+  `podman push` to an OCI layout bound at `ociLayoutPath`.
 
 **Critical: branch before squash.** The composefs flag must be read before any squash
-operation, and both paths must squash.
+operation. Dakota (composefs) squashes; Utah/non-composefs must NOT squash.
 
 This mirrors `scripts/build-live-squashfs.sh` exactly.
 `live/src/<target>/composefs` is the single source of truth — both scripts read it.
@@ -474,6 +488,36 @@ To verify installer version: the metainfo XML in the flatpak may say an old vers
 updated by upstream). The real check is the fisherman binary at
 `var/lib/flatpak/app/org.bootcinstaller.Installer/.../files/bin/fisherman` — v3.x is a
 Go binary containing `[fisherman] version:` strings and LUKS/flatpak/composefs logic.
+
+### Podman runroot 50-char limit + empty-placeholder bind gate (2026-11)
+
+Two failures combined to produce an ISO whose `media-input.json` carried empty
+digests and then refused to assemble:
+
+1. `podman --runroot` longer than **50 characters** fails every command
+   (`Error: the specified runroot is longer than 50 characters`). A staging dir
+   under a repo checkout (`output/dakota-payload-store-run`, 76 chars) exceeds
+   it — and so does `mktemp` under a long `TMPDIR`. `payload_export_store`
+   therefore uses a fixed short scratch runroot (`/tmp/pstore-run.XXXXXX`,
+   removed before returning) and asserts the length in unit tests.
+2. The failure was **silent**: the caller captures the export in `$(...)`
+   inside an `||` guard, where `set -e` is suppressed, so failed
+   `inspect`/`save` calls produced an empty receipt with exit 0. Every export
+   step now fails loudly (`|| return 1` with an `ERROR:` line), the function
+   refuses empty receipt values, `payload_bind_store` refuses empty inputs,
+   and both callers validate the receipt after `read`.
+3. The live image ships an **empty** `/var/lib/containers/storage`
+   placeholder (`configure-live.sh` mkdirs it alongside `storage.conf`), so
+   the squashfs root already contains that path after the overlay/cp step and
+   the old "refuse if exists" bind gate false-positived. The gate now takes
+   over an empty dir (rmdir + copytree) and still refuses symlinks, files,
+   and populated dirs. Unit harnesses replicate the placeholder in their
+   mount fixtures so the regression is covered.
+
+**Never edit a script while a build is running it.** Bash reads the file
+incrementally from a saved offset; changing bytes before the current offset
+shifts everything after it, so the resumed read lands mid-line. Stage the
+fix and apply it after the build finishes.
 
 ### Flatpak remote descriptors are checked in (2026-10)
 
@@ -516,9 +560,11 @@ Fixed to check `var/lib/containers/oci-store/index.json` instead.
 buildah commit --squash --format oci "${INJECT_CTR}" "oci:${OCI_DIR}:${OCI_IMAGE}"
 ```
 
-Squashing reduces the OCI store to a single ~4 GB layer → ~6 GB final ISO.
+Squashing reduces the embedded store to a single ~4 GB layer → ~6 GB final ISO.
 
-**NEVER remove `--squash` from this path.** The dakota (composefs) path squashes for VFS import; the bluefin (non-composefs) path squashes before OCI layout copy. Both paths squash.
+**NEVER remove `--squash` from the composefs path.** Dakota (composefs) squashes
+for the single-copy VFS store; non-composefs targets (Utah) must NOT squash —
+squashing destroys the ostree commit objects the OCI layout must preserve.
 
 ### VFS additionalimagestore requires squashing to prevent storage explosion (2026-06-23)
 
