@@ -120,6 +120,7 @@ class BuildLiveSquashfsHarness(unittest.TestCase):
                 if [ -n "$_graphroot" ]; then
                     mkdir -p "$_graphroot/vfs/dir"
                     echo "fixture layer" > "$_graphroot/vfs/dir/fixture-layer"
+                    echo "lock" > "$_graphroot/storage.lock"
                 fi
                 cat >/dev/null
                 exit 0

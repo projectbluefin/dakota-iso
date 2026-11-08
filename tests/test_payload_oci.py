@@ -114,6 +114,13 @@ class TestEmbeddedMedia(unittest.TestCase):
 # `rmi` so the helper's `|| true` cleanup is exercised.
 PODMAN_STUB = r"""
 printf '%q ' "$@" >>"$STUB_CALLS"; echo >>"$STUB_CALLS"
+# Remember the custom graphroot for branches that fabricate store content.
+_graphroot=""
+_prev=""
+for _a in "$@"; do
+    if [[ "$_prev" == "--root" ]]; then _graphroot="$_a"; fi
+    _prev="$_a"
+done
 # Strip podman global flags (--root/--runroot/--storage-driver) so $1 is the
 # verb whether or not the caller used a custom store via PODMAN=(...).
 stripped=()
@@ -174,6 +181,9 @@ save)
     ;;
 load)
     cat >/dev/null
+    if [[ -n "$_graphroot" ]]; then
+        echo "lock" > "$_graphroot/storage.lock"
+    fi
     ;;
 tag)
     :
@@ -480,6 +490,16 @@ class TestPayloadExportStore(PayloadOciHarness):
             calls,
         )
         self.assertIn(["save", identity], [c[:2] for c in calls])
+
+    def test_store_lockfiles_redirect_to_run(self):
+        # Containers/storage locks the graphroot even for reads, so the live
+        # session's read-only bind needs the locks redirected to /run.
+        result, staging = self.export()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        link = staging / "storage.lock"
+        self.assertTrue(link.is_symlink(), "export did not redirect store locks")
+        self.assertTrue(str(os.readlink(link)).startswith("/run/"), os.readlink(link))
+        self.assertEqual(result.stdout.strip(), f"{DIGEST} {CONFIG_DIGEST} linux/amd64")
 
     def test_failed_transfer_stops_before_receipt_values(self):
         result, _ = self.export(STUB_SAVE_RC="1")

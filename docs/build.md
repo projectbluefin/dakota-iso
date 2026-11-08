@@ -519,6 +519,23 @@ incrementally from a saved offset; changing bytes before the current offset
 shifts everything after it, so the resumed read lands mid-line. Stage the
 fix and apply it after the build finishes.
 
+### Bound store must be read-only at live boot (2026-11)
+
+Fisherman's store preflight requires the store dir on a read-only
+filesystem, but the live root is an always-writable overlay — CI E2E proved
+every install refuses without it. Two-part fix, both required:
+
+1. `payload_export_store` redirects every `*.lock` in the vfs store to
+   symlinks under `/run/bootc-installer-media-locks/` (containers/storage
+   locks the graphroot even for reads; verified with skopeo inspect through
+   a read-only bind). Image bytes — what the receipt digest covers — are
+   untouched.
+2. `configure-live.sh` installs `var-lib-containers-storage.mount`, which
+   bind-mounts `/run/bootcmedia/var/lib/containers/storage` read-only over
+   the placeholder before `live-media-setup.service`, plus a tmpfiles entry
+   for the lock dir. Skipped when no store is embedded
+   (`ConditionPathExists`), so non-composefs variants are unaffected.
+
 ### Flatpak remote descriptors are checked in (2026-10)
 
 `install-flatpaks.sh` registers Flathub (and any `remote:app-id` remote a variant

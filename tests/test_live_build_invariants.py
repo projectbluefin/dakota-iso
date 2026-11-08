@@ -382,6 +382,33 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
             self.assertIn("isofs", line)
 
 
+class TestStoreReadOnlyBind(unittest.TestCase):
+    """The embedded store must be bind-mounted read-only at live boot.
+
+    Fisherman's bound-store preflight requires the store on a read-only
+    filesystem, but the live overlay is always writable. Without the
+    read-only bind the installer refuses every offline install (proven by
+    CI E2E). The unit only activates when a store is embedded, so
+    non-composefs variants are unaffected.
+    """
+
+    def test_store_mount_unit_is_read_only_bind(self):
+        text = CONFIGURE_LIVE.read_text()
+        self.assertIn("Where=/var/lib/containers/storage", text)
+        self.assertIn("What=/run/bootcmedia/var/lib/containers/storage", text)
+        self.assertIn("Options=bind,ro", text)
+        self.assertIn(
+            "ConditionPathExists=/run/bootcmedia/var/lib/containers/storage",
+            text,
+        )
+        self.assertIn("Before=live-media-setup.service", text)
+
+    def test_store_lock_dir_created_via_tmpfiles(self):
+        text = CONFIGURE_LIVE.read_text()
+        self.assertIn("bootc-media-locks.conf", text)
+        self.assertIn("d /run/bootc-installer-media-locks ", text)
+
+
 class TestConfigureLiveSyntax(unittest.TestCase):
     """configure-live.sh must have valid bash syntax."""
 

@@ -145,6 +145,26 @@ payload_export_store() {
         || { echo "ERROR: payload store config digest parse failed for ${identity}" >&2; rm -rf "${runroot}"; return 1; }
     [[ -n "${digest}" && -n "${configdigest#sha256:}" && -n "${platform}" ]] \
         || { echo "ERROR: payload store export produced empty receipt values for ${identity}" >&2; rm -rf "${runroot}"; return 1; }
+    # Containers/storage opens lockfiles inside the graphroot even for reads,
+    # so a read-only bind of the store (which the live session needs for the
+    # offline preflight) would refuse every operation. Redirect every
+    # lockfile the export left behind to a runtime-writable dir; image
+    # content (what the receipt digest covers) is untouched. The live session
+    # creates the target dir via tmpfiles before the store is bound.
+    local lock rel target
+    while IFS= read -r -d '' lock; do
+        rel="${lock#"${staging}"/}"
+        target="/run/bootc-installer-media-locks/${rel//\//_}"
+        ln -sfn "${target}" "${lock}" || {
+            echo "ERROR: payload store lock redirect failed for ${lock}" >&2
+            rm -rf "${runroot}"
+            return 1
+        }
+    done < <(find "${staging}" -name '*.lock' -type f -print0) || {
+        echo "ERROR: payload store lock inventory failed" >&2
+        rm -rf "${runroot}"
+        return 1
+    }
     rm -rf "${runroot}"
     printf '%s %s %s\n' "${digest}" "${configdigest}" "${platform}"
 }

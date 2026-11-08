@@ -207,6 +207,7 @@ class IsoSdBootHarness(unittest.TestCase):
                 if [ -n "$_graphroot" ]; then
                     mkdir -p "$_graphroot/vfs/dir"
                     echo "fixture layer" > "$_graphroot/vfs/dir/fixture-layer"
+                    echo "lock" > "$_graphroot/storage.lock"
                 fi
                 cat >/dev/null
                 exit 0
@@ -545,6 +546,11 @@ class TestIsoSdBootComposefsAndCompression(IsoSdBootHarness):
         self.assertEqual(receipt["platformManifestDigest"], self.SKOPEO_DIGEST)
         self.assertEqual(receipt["configDigest"], self.SKOPEO_CONFIG_DIGEST)
         self.assertTrue((self.media_capture / "store-copy" / "vfs" / "dir" / "fixture-layer").exists())
+        # Store lockfiles ship as symlinks to /run so the live session can
+        # bind the store read-only and still open it.
+        lock = self.media_capture / "store-copy" / "storage.lock"
+        self.assertTrue(lock.is_symlink(), "export did not redirect store locks")
+        self.assertTrue(str(os.readlink(lock)).startswith("/run/"), os.readlink(lock))
 
         # Delegate build-iso receives --title as ONE argument, then the boot-files tar,
         # the rootfs squashfs and the output ISO path, in that order. Asserting the full
