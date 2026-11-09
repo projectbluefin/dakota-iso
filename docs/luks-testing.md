@@ -278,6 +278,19 @@ This fixes every LUKS E2E run since composefs was enabled (all had been silently
 timing out at the 90-minute job ceiling before the fisherman wrapper surfaced
 the real error).
 
+### Silent debug-SSH miss: shadow without a `root:` line (2026-11-09)
+
+`scripts/fisherman-install.sh --enable-debug-ssh` sets the installed system's
+root password with `sed s|^root:[^:]*:|...|` on the deployed `etc/shadow`.
+When the deployed shadow has no `root:` line (image drift — e.g. before the
+`root:!unprovisioned:` convention), `sed` is a silent no-op: the install
+reports success and E2E 4/4 burns 5 minutes on `Failed password for root`
+before failing SSH-unreachable. The wrapper now prints every deployment-`etc`
+candidate, the selected `DEPLOY_ETC`, and the pre-patch `root:` field, and
+exits 1 via `grep -qF` when the replacement does not land (or `shadow` is
+absent) so the install step fails fast with the cause in the log instead of
+timing out on SSH.
+
 ### LUKS emergency shell: missing `rd.luks.name=` kernel arg (2026-06-23)
 
 After the ISO build was fixed, all 6 LUKS E2E variants (dakota dev/stable, lts
