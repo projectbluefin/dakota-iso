@@ -291,14 +291,16 @@ class TestJustfileWiring(unittest.TestCase):
             self.assertNotIn("STRICT_POST_BOOT:-0", body, header)
             self.assertNotIn("exit 0", body, header)
 
-    def test_installed_boot_can_reuse_live_nvram(self):
-        # LUKS always carries the live NVRAM over; plain only behind
-        # PLAIN_CARRY_LIVE_NVRAM=1 (see the pristine-default test below).
-        for header, prefix in (
-            ("luks-boot-qemu-installed target:", "dakota-qemu"),
-            ("plain-boot-qemu-installed target:", "dakota-plain-qemu"),
+    def test_installed_boot_carry_over_is_opt_in(self):
+        # Both installed-boot recipes gate the live-NVRAM carry-over behind an
+        # env var and default to pristine NVRAM (see the pristine-default
+        # tests below).
+        for header, var, prefix in (
+            ("luks-boot-qemu-installed target:", "LUKS_CARRY_LIVE_NVRAM", "dakota-qemu"),
+            ("plain-boot-qemu-installed target:", "PLAIN_CARRY_LIVE_NVRAM", "dakota-plain-qemu"),
         ):
             body = self._recipe_body(header)
+            self.assertIn(f'"${{{var}:-0}}" == "1"', body, header)
             self.assertIn(
                 f"cp /var/tmp/{prefix}-live-vars.fd \"$OVMF_VARS\"", body, header
             )
@@ -309,6 +311,16 @@ class TestJustfileWiring(unittest.TestCase):
         # E2E failed from 2026-10-25). The carry-over is opt-in only.
         body = self._recipe_body("plain-boot-qemu-installed target:")
         self.assertIn('"${PLAIN_CARRY_LIVE_NVRAM:-0}" == "1"', body)
+        self.assertIn('cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"', body)
+
+    def test_luks_installed_boot_defaults_to_pristine_nvram(self):
+        # Same #267 mode as plain: the carried-over live NVRAM's stale
+        # BootOrder (pointing at the detached live ISO) dropped OVMF to the
+        # EFI shell, and the unlock automation typed the passphrase into the
+        # shell (both LUKS E2E cells failed 2026-11-09). Pristine NVRAM lets
+        # OVMF find the EFI/BOOT/BOOTX64.EFI fallback fisherman guarantees.
+        body = self._recipe_body("luks-boot-qemu-installed target:")
+        self.assertIn('"${LUKS_CARRY_LIVE_NVRAM:-0}" == "1"', body)
         self.assertIn('cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"', body)
 
     def test_installed_ssh_hostfwd_bound_to_loopback(self):
