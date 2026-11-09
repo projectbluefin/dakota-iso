@@ -125,9 +125,16 @@ jobs:
 
       - name: Verify bound OCI media receipt is embedded
         run: |
+          # Dakota is composefs: payload_bind_store emits a v1 receipt with
+          # containersStoragePath (no ociLayoutPath); non-composefs media uses
+          # payload_embed_oci_archive with ociLayoutPath. Accept either form —
+          # missing receipt or missing digests must fail closed, never pull.
           sudo unsquashfs -cat /var/iso-build/dakota-nvidia.rootfs.sfs \
             etc/bootc-installer/media-input.json | \
-            jq -e '.schemaVersion == 1 and .ociLayoutPath == "/run/bootcmedia/usr/share/bootc-installer/oci"'
+            jq -e '.schemaVersion == 1 and .kind == "dakota-live"
+              and .platformManifestDigest != "" and .configDigest != ""
+              and (.ociLayoutPath == "/run/bootcmedia/usr/share/bootc-installer/oci"
+                or .containersStoragePath == "/var/lib/containers/storage")'
 
       - name: Disk space before ISO assembly
         run: df -h /
