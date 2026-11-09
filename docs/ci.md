@@ -59,17 +59,18 @@ gh workflow run build-iso.yml --ref main
 6. **Pull payload image** — removes any local `dakota-nvidia:stable` tag, pulls the verified digest, and re-tags it `dakota-nvidia:stable` for the later steps
 7. **Build live container** — `podman build --pull=always --no-cache live/ --build-arg TARGET=dakota-nvidia --build-arg BASE_DIGEST=@sha256:…` → `localhost/dakota-nvidia-live:latest`; `BASE_DIGEST` pins both `FROM` lines in `live/Containerfile` to the verified digest
 8. **Build live squashfs** — `scripts/build-live-squashfs.sh` with `SUPERISO_COMPRESSION=release` → `<target>.rootfs.sfs` + `<target>-boot.tar` (~4.5 GB dakota, ~6 GB bluefin/lts-hwe)
-9. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (one OCI layout in the live squashfs; no `--store`)
+9. **Assemble ISO** — `live/src/build-iso.sh` → `dakota-live.iso` (unpacked store in the live squashfs, deduped against the live root; no OCI archive blob, no `--store`)
 10. **Generate checksum** — latest variant
 11. **Plain-install E2E gates** — live boot, strict bound-media preflight at 4 GiB, full offline install, installed boot and btrfs zstd/rootflags verification
 12. **Boot verification** — QEMU UEFI smoke boot on the production ISO
 13. **Sign checksum** — `cosign sign-blob` (keyless, GitHub OIDC; the job has `id-token: write`) writes `<CHECKSUM>.sig` and `<CHECKSUM>.pem` next to the checksum; runs under the upload's exact conditions and before it, so a signing failure publishes nothing
 14. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, production boot smoke, and signing all succeed
 
-> **Do not add `--store`, a second OCI archive, or a containers-storage payload import.**
-> `payload_embed_oci_archive` embeds the prepared OCI bytes once and emits a v1
-> `media-input.json` binding. Missing or invalid media must fail closed, not pull
-> from the network. See [the actual contract](architecture.md#bound-offline-oci-media).
+> **Do not add `--store`, a second OCI archive, or an opaque payload blob alongside the store.**
+> Composefs media embeds the unpacked store once (`payload_export_store` +
+> `payload_bind_store`) and emits a v1 `media-input.json` binding; non-composefs
+> media embeds one OCI layout (`payload_embed_oci_archive`). Missing or invalid
+> media must fail closed, not pull from the network. See [the actual contract](architecture.md#bound-offline-media).
 
 ### ⚠️ installer_channel is locked to `stable` in CI
 

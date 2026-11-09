@@ -357,6 +357,36 @@ Type=squashfs
 Options=ro,loop
 UNITEOF
 
+# Fisherman's bound-store preflight requires the store on a read-only
+# filesystem, but the live overlay is always writable. Bind the embedded
+# store from the read-only squashfs over the placeholder; lockfiles inside
+# the store are symlinks to /run (see payload_export_store), so reads work
+# while image bytes stay immutable. Skipped when no store is embedded
+# (non-composefs variants) via the path condition.
+cat > /usr/lib/systemd/system/var-lib-containers-storage.mount << 'UNITEOF'
+[Unit]
+Description=Read-only bound offline image store
+Requires=run-bootcmedia.mount
+After=run-bootcmedia.mount
+Before=live-media-setup.service display-manager.service live-ready.service
+ConditionPathExists=/run/bootcmedia/var/lib/containers/storage
+
+[Mount]
+What=/run/bootcmedia/var/lib/containers/storage
+Where=/var/lib/containers/storage
+Type=none
+Options=bind,ro
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+systemctl enable var-lib-containers-storage.mount
+# Writable home for the store's redirected lockfiles (see payload_export_store).
+mkdir -p /usr/lib/tmpfiles.d
+cat > /usr/lib/tmpfiles.d/bootc-media-locks.conf << 'UNITEOF'
+d /run/bootc-installer-media-locks 0755 root root -
+UNITEOF
+
 # Resolve the GUI's hardware-dependent update target before installation.
 install -Dm755 "$SCRIPT_DIR/bind-media-target.py" /usr/libexec/bind-media-target
 cat > /usr/lib/systemd/system/live-media-setup.service << 'UNITEOF'
@@ -650,9 +680,22 @@ EOF
 mkdir -p /usr/lib/tmpfiles.d
 echo 'f /etc/hostname 0644 - - - dakota-live' > /usr/lib/tmpfiles.d/live-hostname.conf
 
-# The payload is a bound OCI layout, not a containers-storage graphroot.
+# Composefs variants embed the payload as an unpacked containers-storage
+# graphroot (single-copy media: the store files dedup against the live root
+# in squashfs). The store is created with the vfs driver, so the live env
+# must read it with the same driver — overlay would write a fresh db.sql
+# over the embedded metadata. Non-composefs variants keep the bound OCI
+# layout and the overlay driver.
 # Keep container scratch storage separate from the immutable media source.
 mkdir -p /var/lib/containers/storage /etc/containers
+if [ "$COMPOSEFS" = "true" ]; then
+cat > /etc/containers/storage.conf << 'STOREOF'
+[storage]
+driver = "vfs"
+runroot = "/run/containers/storage"
+graphroot = "/var/lib/containers/storage"
+STOREOF
+else
 cat > /etc/containers/storage.conf << 'STOREOF'
 [storage]
 driver = "overlay"
@@ -662,6 +705,7 @@ graphroot = "/var/lib/containers/storage"
 [storage.options.overlay]
 mount_program = "/usr/bin/fuse-overlayfs"
 STOREOF
+fi
 
 # ── Per-variant hook ──────────────────────────────────────────────────────────
 # Variants with needs beyond the declarative files (e.g. Debian-based images)

@@ -10,7 +10,7 @@ just iso-sd-boot dakota
   └─ iso-sd-boot (assembly)          → embeds bound OCI layout, runs build-iso.sh on host
 
 CI (build-iso.yml / build-iso-utah.yml) uses the same payload-oci.sh producer:
-  └─ build-live-squashfs.sh → one OCI layout + media receipt + squashfs + ISO
+  └─ build-live-squashfs.sh → one offline source (store or OCI layout) + media receipt + squashfs + ISO
 ```
 
 ### Container: `<target>-installer` (`live/Containerfile` — 4 stages)
@@ -95,15 +95,18 @@ xorriso -indev output/dakota-live.iso -report_system_area plain 2>/dev/null | gr
 Note: `fdisk -l` shows `Disklabel type: dos` on hybrid layouts — this is expected and
 does NOT mean GPT is missing. `gdisk`, `parted`, and UEFI firmware see GPT correctly.
 
-## Bound offline OCI media
+## Bound offline media
 
-Both build entry points source `scripts/payload-oci.sh`. They prepare the payload
-with `payload_to_oci_archive`, then `payload_embed_oci_archive <archive> <root>`
-extracts those exact bytes once under `/usr/share/bootc-installer/oci` and writes
-`/etc/bootc-installer/media-input.json`. The temporary archive is deleted; there
-is no VFS/overlay payload import, additional image store, or runtime OCI export.
-Composefs payloads retain the existing single-layer squash and diff-id annotation;
-Utah and retained non-composefs variants keep all ostree commit layers.
+Both build entry points source `scripts/payload-oci.sh`. Composefs payloads are
+exported to a vfs containers-storage (`payload_export_store`) and bound into the
+squashfs root (`payload_bind_store`) at `var/lib/containers/storage`, with
+schema-v1 `/etc/bootc-installer/media-input.json` naming the store — the unpacked
+files share squashfs blocks with the live root (single-copy media). Non-composefs
+payloads keep the OCI path: `payload_to_oci_archive`, then
+`payload_embed_oci_archive <archive> <root>` extracts those exact bytes once under
+`/usr/share/bootc-installer/oci`. There is no second archive, second squashfs, or
+runtime OCI export. Composefs payloads retain the existing single-layer squash and
+diff-id annotation; Utah and retained non-composefs variants keep all ostree commit layers.
 
 The schema-v1 receipt binds registry source identity (`image`) separately from
 the installed update ref (`targetImgref`), plus the actual platform manifest and

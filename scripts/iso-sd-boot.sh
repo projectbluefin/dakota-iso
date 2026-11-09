@@ -92,8 +92,13 @@ SQUASHFS="${OUTPUT_DIR}/${TARGET}-rootfs.sfs"
 BOOT_TAR="${OUTPUT_DIR}/${TARGET}-boot-files.tar"
 SQUASHFS_ROOT="${WORKDIR}/${TARGET}-sfs-root"
 PAYLOAD_OCI="${OUTPUT_DIR}/${TARGET}-payload.oci.tar"
+# Unpacked store staging for composefs variants (single-copy media): the
+# store files share squashfs blocks with the live root instead of
+# duplicating it as an opaque OCI blob.
+PAYLOAD_STORE="${WORKDIR}/${TARGET}-payload-store"
+PAYLOAD_DIGEST=""; PAYLOAD_CONFIGDIGEST=""; PAYLOAD_PLATFORM=""
 
-trap 'rm -f "${SQUASHFS}" "${BOOT_TAR}" "${PAYLOAD_OCI}" 2>/dev/null || true' EXIT
+trap 'rm -f "${SQUASHFS}" "${BOOT_TAR}" "${PAYLOAD_OCI}" 2>/dev/null; rm -rf "${PAYLOAD_STORE:-}" "${PAYLOAD_STORE:-}-storage.conf" 2>/dev/null || podman unshare rm -rf "${PAYLOAD_STORE:-}" "${PAYLOAD_STORE:-}-storage.conf" 2>/dev/null || true; podman rmi "localhost/iso-payload-work:base-$$" "localhost/iso-payload-work:final-$$" >/dev/null 2>&1 || true' EXIT
 
 echo "=== Disk space before squashfs assembly ==="
 df -h "${OUTPUT_DIR}"
@@ -110,7 +115,31 @@ if [[ "${PAYLOAD_SOURCE}" != "${PAYLOAD_IMAGE}" ]]; then
     podman pull "${PAYLOAD_SOURCE}"
 fi
 
-payload_to_oci_archive "${PAYLOAD_SOURCE}" "${PAYLOAD_OCI}" "${PAYLOAD_IMAGE}" "${COMPOSEFS_BACKEND}"
+if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
+    echo "=== Preparing bound store media (single-copy) for ${PAYLOAD_IMAGE} ==="
+    set -x
+    payload_build_final "${PAYLOAD_SOURCE}" "true" PAYLOAD_TAG PAYLOAD_BASE
+    # Capture the export output explicitly: a bare `read` from a process
+    # substitution trips `set -e` on subshell failure with no diagnostic.
+    PAYLOAD_INFO="$(payload_export_store "${PAYLOAD_TAG}" "${PAYLOAD_STORE}" "${PAYLOAD_IMAGE}")" || {
+        echo "ERROR: payload store export failed; refusing to build unverifiable media" >&2
+        exit 1
+    }
+    read -r PAYLOAD_DIGEST PAYLOAD_CONFIGDIGEST PAYLOAD_PLATFORM <<< "${PAYLOAD_INFO}" || {
+        echo "ERROR: payload store export produced no receipt values" >&2
+        exit 1
+    }
+    [[ -n "${PAYLOAD_DIGEST}" && -n "${PAYLOAD_CONFIGDIGEST}" && -n "${PAYLOAD_PLATFORM}" ]] || {
+        echo "ERROR: payload store export produced empty receipt values; refusing to build unverifiable media" >&2
+        exit 1
+    }
+    podman rmi "${PAYLOAD_TAG}" >/dev/null 2>&1 || true
+    if [[ -n "${PAYLOAD_BASE}" ]]; then
+        podman rmi "${PAYLOAD_BASE}" >/dev/null 2>&1 || true
+    fi
+else
+    payload_to_oci_archive "${PAYLOAD_SOURCE}" "${PAYLOAD_OCI}" "${PAYLOAD_IMAGE}" "${COMPOSEFS_BACKEND}"
+fi
 
 podman rmi "${PAYLOAD_SOURCE}" || true
 
@@ -121,9 +150,14 @@ podman rmi "${PAYLOAD_SOURCE}" || true
 # and the inner bash inherits them directly.
 export OUTPUT_DIR WORKDIR TARGET PAYLOAD_IMAGE COMPOSEFS_BACKEND COMPRESSION SCRIPT_DIR
 export SQUASHFS_ROOT SQUASHFS BOOT_TAR PAYLOAD_OCI
+export PAYLOAD_STORE PAYLOAD_DIGEST PAYLOAD_CONFIGDIGEST PAYLOAD_PLATFORM
+# Marker proving the namespace block started: only a failure of `podman
+# unshare` itself (before any assembly) may fall back to a direct run.
+export NS_STARTED="${WORKDIR}/.ns-started"
 
 _ns_build_squashfs() {
     set -euo pipefail
+    : > "${NS_STARTED}"
 
     echo "=== Disk space inside _ns block ==="
     df -h "${OUTPUT_DIR}"
@@ -163,8 +197,13 @@ _ns_build_squashfs() {
         cp -a "${MOUNT}/." "${SQUASHFS_ROOT}/"
     fi
 
-    payload_embed_oci_archive "${PAYLOAD_OCI}" "${SQUASHFS_ROOT}"
-    rm -f "${PAYLOAD_OCI}"
+    if [[ "${COMPOSEFS_BACKEND}" == "true" ]]; then
+        payload_bind_store "${PAYLOAD_STORE}" "${SQUASHFS_ROOT}" "${PAYLOAD_IMAGE}" "" \
+            "${PAYLOAD_DIGEST}" "${PAYLOAD_CONFIGDIGEST}" "${PAYLOAD_PLATFORM}"
+    else
+        payload_embed_oci_archive "${PAYLOAD_OCI}" "${SQUASHFS_ROOT}"
+        rm -f "${PAYLOAD_OCI}"
+    fi
 
     echo "=== Disk space after creation of squashfs root ==="
     df -h "${OUTPUT_DIR}"
@@ -187,11 +226,37 @@ _ns_build_squashfs() {
 }
 export -f _ns_build_squashfs
 
+set +x
+rm -f "${NS_STARTED}"
+echo "=== launching squashfs assembly (uid $(id -u)) ==="
+NS_RC=0
 if [[ $(id -u) -eq 0 ]]; then
     bash -c '_ns_build_squashfs'
+    NS_RC=$?
 else
+    # Capture the status explicitly: a bare failing command inside a branch
+    # body trips `set -e` immediately, so test the code instead of chaining it.
+    set +e
     podman unshare bash -c '_ns_build_squashfs'
+    NS_RC=$?
+    set -e
 fi
+if [[ -e "${NS_STARTED}" ]]; then
+    NS_STARTED_STATE=yes
+else
+    NS_STARTED_STATE=no
+fi
+echo "=== assembly wrapper exit: ${NS_RC}; block started: ${NS_STARTED_STATE} ==="
+if [[ ${NS_RC} -ne 0 && "${NS_STARTED_STATE}" == "no" ]]; then
+    echo "WARNING: podman unshare is unavailable in this environment;" >&2
+    echo "WARNING: running squashfs assembly without a user namespace." >&2
+    echo "WARNING: overlay mounts fall back to cp -a; output is unchanged." >&2
+    bash -c '_ns_build_squashfs'
+elif [[ ${NS_RC} -ne 0 ]]; then
+    echo "ERROR: squashfs assembly failed inside the user namespace; not retrying." >&2
+    exit 1
+fi
+rm -f "${NS_STARTED}"
 
 echo "=== Disk space after squashfs, before ISO assembly ==="
 df -h "${OUTPUT_DIR}"

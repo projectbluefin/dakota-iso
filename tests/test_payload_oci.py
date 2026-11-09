@@ -114,6 +114,27 @@ class TestEmbeddedMedia(unittest.TestCase):
 # `rmi` so the helper's `|| true` cleanup is exercised.
 PODMAN_STUB = r"""
 printf '%q ' "$@" >>"$STUB_CALLS"; echo >>"$STUB_CALLS"
+# Remember the custom graphroot for branches that fabricate store content.
+_graphroot=""
+_prev=""
+for _a in "$@"; do
+    if [[ "$_prev" == "--root" ]]; then _graphroot="$_a"; fi
+    _prev="$_a"
+done
+# Strip podman global flags (--root/--runroot/--storage-driver) so $1 is the
+# verb whether or not the caller used a custom store via PODMAN=(...).
+stripped=()
+skip_next=0
+for _a in "$@"; do
+    if (( skip_next )); then skip_next=0; continue; fi
+    case "$_a" in
+    --root|--runroot) skip_next=1 ;;
+    --root=*|--runroot=*|--storage-driver=*) ;;
+    --storage-driver) skip_next=1 ;;
+    *) stripped+=("$_a") ;;
+    esac
+done
+set -- "${stripped[@]}"
 case "$1" in
 build)
     n=$(find "$STUB_CAPTURE" -mindepth 1 -maxdepth 1 -type d | wc -l)
@@ -132,8 +153,40 @@ build)
     fi
     ;;
 image)
+    if [[ "$2" == "inspect" && "$3" == "--format" ]]; then
+        case "$4" in
+        "{{index .RootFS.Layers 0}}")
+            [[ -n "${STUB_DIFFID:-}" ]] || exit 125
+            echo "$STUB_DIFFID"
+            ;;
+        "{{.Digest}}")
+            printf '%s\n' "${STUB_DIGEST:?missing digest}"
+            ;;
+        "{{.Os}}/{{.Architecture}}")
+            printf 'linux/amd64\n'
+            ;;
+        *)
+            echo "unexpected inspect format: $4" >&2
+            exit 9
+            ;;
+        esac
+        exit 0
+    fi
     [[ -n "${STUB_DIFFID:-}" ]] || exit 125
     echo "$STUB_DIFFID"
+    ;;
+save)
+    if [[ -n "${STUB_SAVE_RC:-}" ]]; then exit "${STUB_SAVE_RC}"; fi
+    cat "${STUB_SAVE_TAR:?missing save fixture}"
+    ;;
+load)
+    cat >/dev/null
+    if [[ -n "$_graphroot" ]]; then
+        echo "lock" > "$_graphroot/storage.lock"
+    fi
+    ;;
+tag)
+    :
     ;;
 push)
     archive="${3#oci-archive:}"
@@ -373,6 +426,180 @@ class TestPayloadToOciArchive(PayloadOciHarness):
         self.assertEqual([c[0] for c in self.podman_calls()], ["build", "image", "build"])
         self.assertEqual(self.archive.read_text(), "previous archive")
         self.assertNoBuildContextLeft()
+
+
+DIGEST = "sha256:" + "ab" * 32
+CONFIG_DIGEST = "sha256:" + "cd" * 32
+
+
+class TestPayloadExportStore(PayloadOciHarness):
+    def export(self, config_hex=CONFIG_DIGEST.removeprefix("sha256:"), **stub_env):
+        from tests.oci_fixture import make_save_tar
+        staging = self.sandbox / "store-staging"
+        save_tar = self.sandbox / "save.tar"
+        make_save_tar(save_tar, config_hex)
+        env = {"STUB_DIGEST": DIGEST, "STUB_SAVE_TAR": str(save_tar)}
+        env.update(stub_env)
+        result = self.run_helper(
+            "payload_export_store", "localhost/iso-payload-work:final-1",
+            str(staging), "ghcr.io/projectbluefin/dakota-nvidia:stable",
+            **env,
+        )
+        return result, staging
+
+    @staticmethod
+    def verbs(calls):
+        """Strip podman global flags so the verb is first."""
+        out = []
+        for c in calls:
+            c = list(c)
+            while c[:1] == ["--root"] or c[:1] == ["--runroot"]:
+                c = c[2:]
+            if c[:1] == ["--storage-driver"]:
+                c = c[2:]
+            out.append(c)
+        return out
+
+    def test_export_transfers_tags_and_prints_receipt_values(self):
+        result, staging = self.export()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), f"{DIGEST} {CONFIG_DIGEST} linux/amd64")
+        self.assertTrue(staging.is_dir())
+        full = self.podman_calls()
+        calls = self.verbs(full)
+        identity = "ghcr.io/projectbluefin/dakota-nvidia:stable"
+        # The tag lives in the default store; the export streams it across
+        # with save (default store) piped into load (custom store).
+        default_saves = [c for c in full
+                         if c[:2] == ["save", "localhost/iso-payload-work:final-1"]]
+        self.assertEqual(len(default_saves), 1, full)
+        [logged_load] = [c for c in full if "load" in c]
+        self.assertIn(str(staging), logged_load)
+        self.assertIn("vfs", logged_load)
+        # Podman caps runroot at 50 chars; the export must use a short
+        # scratch runroot even when staging lives under a long checkout path.
+        runroot = logged_load[logged_load.index("--runroot") + 1]
+        self.assertLessEqual(len(runroot), 50, logged_load)
+        # The scratch runroot is removed before returning.
+        self.assertFalse(Path(runroot).exists(), "runroot not cleaned up")
+        tags = [c for c in calls if c[0] == "tag"]
+        self.assertEqual(len(tags), 1, full)
+        self.assertEqual(tags[0][-2:], ["localhost/iso-payload-work:final-1", identity])
+        self.assertIn(
+            ["image", "inspect", "--format", "{{.Digest}}", identity],
+            calls,
+        )
+        self.assertIn(["save", identity], [c[:2] for c in calls])
+
+    def test_store_lockfiles_redirect_to_run(self):
+        # Containers/storage locks the graphroot even for reads, so the live
+        # session's read-only bind needs the locks redirected to /run.
+        result, staging = self.export()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        link = staging / "storage.lock"
+        self.assertTrue(link.is_symlink(), "export did not redirect store locks")
+        self.assertTrue(str(os.readlink(link)).startswith("/run/"), os.readlink(link))
+        self.assertEqual(result.stdout.strip(), f"{DIGEST} {CONFIG_DIGEST} linux/amd64")
+
+    def test_failed_transfer_stops_before_receipt_values(self):
+        result, _ = self.export(STUB_SAVE_RC="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+        self.assertIn("transfer failed", result.stderr)
+
+    def test_empty_config_digest_is_refused(self):
+        result, _ = self.export(config_hex="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+        self.assertIn("empty receipt values", result.stderr)
+
+
+class TestPayloadBindStore(PayloadOciHarness):
+    def make_root(self):
+        root = Path(tempfile.mkdtemp(prefix="payload-bind-test-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        config = root / "etc/bootc-installer"
+        config.mkdir(parents=True)
+        (config / "recipe.json").write_text(json.dumps({
+            "imgref": "ghcr.io/projectbluefin/dakota:stable",
+            "local_imgref": "ghcr.io/projectbluefin/dakota-nvidia:stable",
+        }))
+        return root
+
+    def bind(self, root, staging, identity, target="ghcr.io/projectbluefin/dakota:stable"):
+        return self.run_helper(
+            "payload_bind_store", str(staging), str(root), identity, target,
+            DIGEST, CONFIG_DIGEST, "linux/amd64",
+        )
+
+    def test_bind_copies_store_and_writes_store_receipt(self):
+        root = self.make_root()
+        staging = self.sandbox / "store-staging"
+        staging.mkdir()
+        (staging / "vfs-images").mkdir()
+        (staging / "vfs-images" / "image-id").write_text("x")
+        result = self.bind(root, staging, "ghcr.io/projectbluefin/dakota-nvidia:stable")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((root / "var/lib/containers/storage/vfs-images/image-id").exists())
+        receipt = json.loads((root / "etc/bootc-installer/media-input.json").read_text())
+        self.assertEqual(receipt["schemaVersion"], 1)
+        self.assertNotIn("ociLayoutPath", receipt)
+        self.assertEqual(receipt["containersStoragePath"], "/var/lib/containers/storage")
+        self.assertEqual(receipt["image"], "ghcr.io/projectbluefin/dakota-nvidia:stable")
+        self.assertEqual(receipt["targetImgref"], "ghcr.io/projectbluefin/dakota:stable")
+        self.assertEqual(receipt["platformManifestDigest"], DIGEST)
+        self.assertEqual(receipt["configDigest"], CONFIG_DIGEST)
+        self.assertEqual(receipt["platform"], "linux/amd64")
+
+    def test_empty_placeholder_dir_is_taken_over(self):
+        # The live root ships an empty /var/lib/containers/storage placeholder
+        # (configure-live.sh mkdirs it alongside storage.conf); binding takes
+        # it over instead of refusing.
+        root = self.make_root()
+        store = root / "var/lib/containers/storage"
+        store.mkdir(parents=True)
+        staging = self.sandbox / "store-staging"
+        staging.mkdir()
+        (staging / "vfs-images").mkdir()
+        result = self.bind(root, staging, "ghcr.io/projectbluefin/dakota-nvidia:stable")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((root / "var/lib/containers/storage/vfs-images").is_dir())
+        receipt = json.loads((root / "etc/bootc-installer/media-input.json").read_text())
+        self.assertEqual(receipt["containersStoragePath"], "/var/lib/containers/storage")
+
+    def test_populated_store_is_refused(self):
+        root = self.make_root()
+        store = root / "var/lib/containers/storage"
+        store.mkdir(parents=True)
+        (store / "vfs").mkdir()
+        (store / "vfs" / "leftover").write_text("stale")
+        staging = self.sandbox / "store-staging"
+        staging.mkdir()
+        result = self.bind(root, staging, "ghcr.io/projectbluefin/dakota-nvidia:stable")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stale", result.stderr)
+        self.assertFalse((root / "etc/bootc-installer/media-input.json").exists())
+
+    def test_empty_receipt_values_are_refused(self):
+        root = self.make_root()
+        staging = self.sandbox / "store-staging"
+        staging.mkdir()
+        result = self.run_helper(
+            "payload_bind_store", str(staging), str(root),
+            "ghcr.io/projectbluefin/dakota-nvidia:stable",
+            "ghcr.io/projectbluefin/dakota:stable", "", CONFIG_DIGEST, "linux/amd64",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("empty receipt values", result.stderr)
+        self.assertFalse((root / "etc/bootc-installer/media-input.json").exists())
+
+    def test_identity_mismatch_is_refused(self):
+        root = self.make_root()
+        staging = self.sandbox / "store-staging"
+        staging.mkdir()
+        result = self.bind(root, staging, "ghcr.io/projectbluefin/other:stable")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match", result.stderr)
 
 
 if __name__ == "__main__":

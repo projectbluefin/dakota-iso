@@ -35,3 +35,13 @@ def make_oci_archive(path):
             entry.size = len(data)
             tar.addfile(entry, io.BytesIO(data))
     return files, manifest, config
+
+
+def make_save_tar(path, config_hex):
+    """Minimal `podman save` stream: manifest.json referencing <hex>.json."""
+    manifest = json.dumps([dict(Config=f"{config_hex}.json", RepoTags=[], Layers=[])]).encode()
+    with tarfile.open(path, "w") as tar:
+        entry = tarfile.TarInfo("manifest.json")
+        entry.size = len(manifest)
+        tar.addfile(entry, io.BytesIO(manifest))
+    return manifest

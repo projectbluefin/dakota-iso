@@ -958,11 +958,16 @@ luks-boot-qemu-installed target:
         echo "Waiting for live QEMU to exit (attempt $i)..."
         sleep 2
     done
-    # Carry over the live VM's NVRAM so Boot#### entries written by the
-    # installer (efibootmgr) survive into the installed boot; fall back to
-    # the pristine template if the live vars file is missing.
+    # Boot the installed disk from pristine NVRAM so OVMF enumerates the disk
+    # and finds its EFI fallback loader (EFI/BOOT/BOOTX64.EFI, which fisherman's
+    # InstallSystemdBoot guarantees). Carrying over the live VM's NVRAM leaves
+    # a stale BootOrder pointing at the detached live ISO, so the firmware
+    # goes straight to "EFI Internal Shell" and the unlock automation types
+    # the passphrase into the shell (LUKS E2E failure 2026-11-09). This is the
+    # same #267 failure mode the plain recipe already avoids; LUKS_CARRY_LIVE_NVRAM=1
+    # restores the carry-over for debugging installer-written Boot#### entries.
     OVMF_VARS=/var/tmp/dakota-qemu-installed-vars.fd
-    if [[ -f /var/tmp/dakota-qemu-live-vars.fd ]]; then
+    if [[ "${LUKS_CARRY_LIVE_NVRAM:-0}" == "1" && -f /var/tmp/dakota-qemu-live-vars.fd ]]; then
         cp /var/tmp/dakota-qemu-live-vars.fd "$OVMF_VARS"
     elif [[ -n "$OVMF_VARS_TEMPLATE" ]]; then
         cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"

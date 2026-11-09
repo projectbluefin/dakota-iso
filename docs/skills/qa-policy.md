@@ -103,10 +103,11 @@ and excluded runtime contents with squashfs tools, not a stub that only copies s
 
 ## ISO payload and size invariant
 
-Bound media embeds one OCI layout plus its schema-v1 receipt. Do not infer a
-missing/double store from VFS-era byte thresholds: compressed OCI blobs no longer
-deduplicate per-file against the live OS. Record actual ISO bytes and inspect for
-exactly one `usr/share/bootc-installer/oci` layout with no extra archive/store.
+Bound media embeds exactly one offline source plus its schema-v1 receipt:
+an unpacked containers-storage graphroot for composefs (Dakota), one OCI layout
+at `usr/share/bootc-installer/oci` for non-composefs. The store must share
+squashfs blocks with the live root (single-copy); an opaque second copy of the
+payload fails the ≤6.5 GB size gate. Record actual ISO bytes with `stat -c%s`.
 Keep production squashfs compression at `release` and never squash ostree layers.
 
 The build log prints the size as `du -sh` (allocated blocks). The real size is `stat -c%s`. On XFS with sparse files these can diverge significantly — use `stat` for the definitive number.

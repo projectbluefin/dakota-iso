@@ -2,6 +2,6 @@
 # install-flatpaks.sh downloads releases/download/<tag>/<file> and refuses a
 # bundle whose SHA-256 differs from the value listed here.
 # Refresh with: scripts/bump-installer-bundle.sh
-tag=v2026.11.06-4e299562
-org.bootcinstaller.Installer.flatpak=aaaaedfeaf2d67f4d739eab5adf396ad5e2a2a0bb8bbc4cf89f9e435453c16b0
-org.bootcinstaller.Installer.Devel.flatpak=1c036ddd5b086689693db333a0f66899e8920675c582b9fe6d65731e57202f44
+tag=v2026.11.08-c7ce8a8a
+org.bootcinstaller.Installer.flatpak=4501729760d51901af51faf64fba46a4f913fb11d9c2d243a2bf05a1870b3461
+org.bootcinstaller.Installer.Devel.flatpak=43b20d267b30d058c6fcab2739642b37d8fa452a17632d4eea5a63fa6261ffd3
