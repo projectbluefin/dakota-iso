@@ -95,13 +95,14 @@ class FishermanInstallHarness(unittest.TestCase):
 
     def _install_stubs(self, *, fish_rc=0, fish_log="install complete\n",
                        lsblk=LSBLK_PLAIN, layout="ostree/bootc/deploy/default/abcdef/etc",
-                       mount_rc=0, luks_open_rc=0):
+                       mount_rc=0, luks_open_rc=0, files=None):
         """Install recording shims for every external command the script calls.
 
         ``layout`` is the directory tree the stub ``mount`` materialises under
         the mount point, standing in for the deployment on the installed disk
         (space-separated for several directories).  Pass ``None`` to mount an
-        empty filesystem (no deployment found).
+        empty filesystem (no deployment found).  ``files`` maps a path relative
+        to the mount point to its content, for fixtures like etc/shadow.
         """
         self._stub("fisherman", f"""
             printf '%s' {shlex.quote(fish_log)}
@@ -112,12 +113,18 @@ class FishermanInstallHarness(unittest.TestCase):
             echo "lsblk $*" >> "$STUB_CALLS"
             printf '%s' {shlex.quote(lsblk)}
         """)
+        file_cmds = ' '.join(
+            f'mkdir -p "$target"/{shlex.quote(str(Path(rel).parent))} && '
+            f'printf %s {shlex.quote(content)} > "$target"/{shlex.quote(rel)};'
+            for rel, content in (files or {}).items()
+        )
         self._stub("mount", f"""
             echo "mount $*" >> "$STUB_CALLS"
             [ {mount_rc} -eq 0 ] || exit {mount_rc}
             target="${{@: -1}}"
             echo "$target" > "$STUB_MNT"
             {' '.join('mkdir -p "$target"/' + shlex.quote(d) + ';' for d in layout.split()) if layout else ':'}
+            {file_cmds if file_cmds else ':'}
         """)
         self._stub("umount", """
             echo "umount $*" >> "$STUB_CALLS"
@@ -326,15 +333,45 @@ class TestPostInstallPatching(FishermanInstallHarness):
         proc = self.run_script(
             recipe, "--enable-debug-ssh", fish_rc=0,
             layout="state/deploy/0123abcd/etc",
+            files={"state/deploy/0123abcd/etc/shadow": "root:*:20000:0:::::\n"},
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("root password set on installed system", proc.stdout)
         self.assertIn("debug SSH override written", proc.stdout)
         etc = self.deployed_etc()
+        shadow = (etc / "shadow").read_text()
+        self.assertRegex(shadow, r"^root:\$6\$[^:]+:")
         dropin = etc / "ssh/sshd_config.d/00-e2e-debug.conf"
         self.assertIn("PermitRootLogin yes", dropin.read_text())
         self.assertTrue(
             (etc / "systemd/system/multi-user.target.wants/sshd.service").is_symlink()
         )
+
+    def test_debug_ssh_missing_root_line_fails_fast(self):
+        """A shadow without root: must fail here, not after a 5-minute SSH wait.
+
+        Regression for the release E2E 4/4 failure (2026-11-09): sed is a
+        silent no-op when the root: line is absent, and the install then
+        reports success while the installed system rejects the debug login.
+        """
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(
+            recipe, "--enable-debug-ssh", fish_rc=0,
+            layout="state/deploy/0123abcd/etc",
+            files={"state/deploy/0123abcd/etc/shadow": "daemon:*:20000:0:::::\n"},
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("did not land", proc.stdout)
+
+    def test_debug_ssh_missing_shadow_fails_fast(self):
+        """No shadow file must fail here, not after a 5-minute SSH wait."""
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(
+            recipe, "--enable-debug-ssh", fish_rc=0,
+            layout="state/deploy/0123abcd/etc",
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("could not set root password", proc.stdout)
 
     def test_debug_ssh_is_opt_in(self):
         """Without --enable-debug-ssh nothing SSH-related is written."""

@@ -135,8 +135,11 @@ if [[ $MOUNTED -eq 1 ]]; then
     #   composefs/bootc layout:  ostree/bootc/deploy/<stateroot>/<checksum>/etc
     #   classic ostree layout:   ostree/deploy/<stateroot>/deploy/<checksum>/etc
     DEPLOY_ETC=""
-    DEPLOY_ETC=$(find "$MNT/state/deploy" -mindepth 2 -maxdepth 2 -name etc -type d 2>/dev/null | head -1) \
+    echo "==> deployment etc candidates under $MNT/state/deploy:"
+    find "$MNT/state/deploy" -mindepth 2 -maxdepth 2 -name etc 2>/dev/null | sort || true
+    DEPLOY_ETC=$(find "$MNT/state/deploy" -mindepth 2 -maxdepth 2 -name etc -type d 2>/dev/null | sort | head -1) \
         || true
+    echo "==> selected DEPLOY_ETC=$DEPLOY_ETC"
     if [[ -z "$DEPLOY_ETC" ]]; then
         DEPLOY_ETC=$(find "$MNT/ostree/bootc/deploy" -maxdepth 3 -name etc -type d 2>/dev/null | head -1) \
             || true
@@ -180,10 +183,19 @@ EOF
             echo "==> Enabling debug SSH on installed system for E2E post-boot assertions"
             ROOT_HASH=$(openssl passwd -6 root 2>/dev/null || echo "")
             if [[ -n "$ROOT_HASH" && -f "$DEPLOY_ETC/shadow" ]]; then
+                echo "==> shadow root field before patch: $(grep -o '^root:[^:]*:' "$DEPLOY_ETC/shadow" | head -1)"
                 sed -i "s|^root:[^:]*:|root:${ROOT_HASH}:|" "$DEPLOY_ETC/shadow"
-                echo "==> root password set on installed system (shadow patched)"
+                # A missing root: line would make sed a silent no-op and waste
+                # 5 minutes on unreachable SSH — fail fast instead.
+                if grep -qF "root:${ROOT_HASH}:" "$DEPLOY_ETC/shadow"; then
+                    echo "==> root password set on installed system (shadow patched)"
+                else
+                    echo "ERROR: root password replacement did not land in $DEPLOY_ETC/shadow — debug SSH would be unreachable"
+                    exit 1
+                fi
             else
-                echo "WARNING: could not set root password (openssl missing or no $DEPLOY_ETC/shadow) — debug SSH may not be reachable"
+                echo "ERROR: could not set root password (openssl missing or no $DEPLOY_ETC/shadow) — debug SSH would be unreachable"
+                exit 1
             fi
             # sshd keeps the FIRST value per keyword and reads sshd_config.d
             # drop-ins in name order, so use 00- to sort before any image
