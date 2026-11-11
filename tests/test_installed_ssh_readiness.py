@@ -9,7 +9,8 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/verify-post-install.sh"
 
 
-def run_gate(tmp_path, message, status, ready_after=999, mount="btrfs rw,compress=zstd:1"):
+def run_gate(tmp_path, message, status, ready_after=999, mount="btrfs rw,compress=zstd:1",
+             extra_env=None):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     transport = bin_dir / "sshpass"
@@ -40,9 +41,11 @@ esac
         "ERROR_MESSAGE": message, "ERROR_STATUS": str(status), "MOUNT": mount,
         "TMPDIR": str(tmp_path), "STRICT_POST_BOOT": "0",
     }
+    env.update(extra_env or {})
     result = subprocess.run(["bash", str(SCRIPT), "2225", "none"],
                             env=env, capture_output=True, text=True, timeout=10)
-    return result, int((tmp_path / "count").read_text())
+    count = tmp_path / "count"
+    return result, int(count.read_text()) if count.exists() else 0
 
 
 @pytest.mark.parametrize(("message", "status"), [
@@ -77,3 +80,12 @@ def test_reachable_guest_without_compression_still_fails(tmp_path):
     result, _ = run_gate(tmp_path, "", 255, ready_after=1, mount="btrfs rw")
     assert result.returncode == 1
     assert "persistent rootflags are required" in result.stderr
+
+
+def test_unwritable_tmpdir_fails_immediately_without_ssh(tmp_path):
+    result, attempts = run_gate(tmp_path, "", 0, ready_after=1,
+                                extra_env={"TMPDIR": str(tmp_path / "missing")})
+    assert result.returncode == 1
+    assert attempts == 0
+    assert "Cannot create temporary file" in result.stderr
+    assert "could not reach installed system" not in result.stderr

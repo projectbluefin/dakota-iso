@@ -102,7 +102,10 @@ SSH="sshpass -p root ssh $SSH_OPTS root@127.0.0.1 -p ${SSH_PORT}"
 
 echo "Waiting for installed system SSH on port ${SSH_PORT}..."
 READY=0
-SSH_ERROR=$(mktemp "${TMPDIR:-/tmp}/installed-ssh.XXXXXX")
+if ! SSH_ERROR=$(mktemp "${TMPDIR:-/tmp}/installed-ssh.XXXXXX"); then
+    echo "❌ Cannot create temporary file for SSH diagnostics in ${TMPDIR:-/tmp}" >&2
+    exit 1
+fi
 trap 'rm -f "$SSH_ERROR"' EXIT
 START_SECONDS=$SECONDS
 SSH_RC=0
