@@ -113,7 +113,7 @@ class TestEmbeddedMedia(unittest.TestCase):
 # whose -t tag matches $STUB_FAIL_TAG_GLOB with $STUB_FAIL_RC, and fails every
 # `rmi` so the helper's `|| true` cleanup is exercised.
 PODMAN_STUB = r"""
-printf '%q ' "$@" >>"$STUB_CALLS"; echo >>"$STUB_CALLS"
+printf '%s\n' "$(printf '%q ' "$@")" >>"$STUB_CALLS"
 # Remember the custom graphroot for branches that fabricate store content.
 _graphroot=""
 _prev=""
@@ -251,6 +251,59 @@ class PayloadOciHarness(unittest.TestCase):
 
     def assertNoBuildContextLeft(self):
         self.assertEqual(list(self.tmpdir.iterdir()), [], "build context not removed")
+
+
+class TestPodmanRecording(PayloadOciHarness):
+    def test_overlapping_commands_keep_complete_records(self):
+        barrier = self.sandbox / "barrier"
+        barrier.mkdir()
+        commands = [
+            ["tag", "source one", "destination'one", ""],
+            ["tag", "source two", 'destination"two', ""],
+        ]
+        # Pause both processes after formatting the arguments. With the old
+        # split logger, both argument lists reach the log before either newline.
+        # With a single append, formatting happens before either record is written.
+        script = r"""
+set -euo pipefail
+printf() {
+    builtin printf "$@"
+    if [[ "$1" == '%q ' ]]; then
+        touch "$STUB_BARRIER/$BASHPID"
+        for ((attempt = 0; attempt < 500; attempt++)); do
+            markers=("$STUB_BARRIER"/*)
+            if (( ${#markers[@]} == 2 )); then return 0; fi
+            sleep 0.01
+        done
+        echo 'timed out waiting for both log writers' >&2
+        return 1
+    fi
+}
+export -f printf
+podman "$1" "$2" "$3" "$4" &
+first=$!
+podman "$5" "$6" "$7" "$8" &
+second=$!
+status=0
+wait "$first" || status=$?
+wait "$second" || status=$?
+exit "$status"
+"""
+        result = subprocess.run(
+            ["bash", "-c", script, "bash", *commands[0], *commands[1]],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PATH": f"{self.bindir}:{os.environ['PATH']}",
+                "STUB_CALLS": str(self.calls),
+                "STUB_BARRIER": str(barrier),
+            },
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(list(barrier.iterdir())), 2)
+        self.assertCountEqual(self.podman_calls(), commands)
 
 
 class TestPayloadBuild(PayloadOciHarness):
