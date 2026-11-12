@@ -143,6 +143,24 @@ Adapted from [addyosmani/agent-skills — test-driven-development](https://githu
 
 ---
 
+### Concurrent recording stubs need complete appends (2026-11-11)
+
+The payload export unit tests run simulated image-save and image-load commands
+concurrently. Appending their quoted arguments and newlines separately allowed
+two commands to merge into one log record, followed by an empty record. Format
+first, then append the complete record with one `printf`:
+
+```bash
+printf '%s\n' "$(printf '%q ' "$@")" >>"$STUB_CALLS"
+```
+
+`TestPodmanRecording` in `tests/test_payload_oci.py` forces both writers to finish
+formatting before either can continue, using an exported `printf` wrapper and
+bounded marker-file barrier. This reliably exposes the old split-write race
+without relying on repeated runs or a scheduling delay alone. Keep the parser
+strict: dropping empty records would hide corruption rather than prevent it.
+This is unit-test infrastructure evidence, not an installation or boot proof.
+
 ## Diagnosing E2E failures
 
 ### SSH timeout ("Timeout waiting for live environment")
