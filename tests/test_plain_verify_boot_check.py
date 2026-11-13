@@ -97,10 +97,12 @@ class TestPlainVerifyBootCheck(unittest.TestCase):
     def test_no_echo_var_pipe_into_grep_q_in_justfile(self):
         # Every recipe in the justfile runs under pipefail; piping a variable
         # into `grep -q` is a false negative once the variable is large.
+        # Comment lines are skipped: the recipe documents the old form.
         offenders = [
             line.strip()
             for line in JUSTFILE.read_text().splitlines()
-            if re.search(r'echo\s+"\$\{?\w+\}?"\s*\|\s*grep\s+-\w*q', line)
+            if not line.lstrip().startswith("#")
+            and re.search(r'echo\s+"\$\{?\w+\}?"\s*\|\s*grep\s+-\w*q', line)
         ]
         self.assertEqual(offenders, [], "use grep -q PATTERN <<<\"$VAR\" instead")
 
