@@ -222,6 +222,37 @@ EOF
                 echo "ERROR: could not set root password (openssl missing or no $DEPLOY_ETC/shadow) — debug SSH would be unreachable"
                 exit 1
             fi
+            # Compare the patched entry with the booted system without logging
+            # password hashes. This diagnostic is confined to debug installs.
+            mkdir -p "$DEPLOY_ETC/e2e-debug" "$DEPLOY_ETC/systemd/system/multi-user.target.wants"
+            grep '^root:' "$DEPLOY_ETC/shadow" | sha256sum | cut -d ' ' -f1 > "$DEPLOY_ETC/e2e-debug/root-shadow.sha256"
+            cat > "$DEPLOY_ETC/e2e-debug/check-root-shadow.sh" <<'DIAGEOF'
+#!/bin/sh
+shadow="${1:-/etc/shadow}"
+expected="${2:-/etc/e2e-debug/root-shadow.sha256}"
+actual=$(grep '^root:' "$shadow" | sha256sum | cut -d ' ' -f1)
+if [ "$actual" = "$(cat "$expected")" ]; then
+    echo "E2E root shadow entry unchanged since install"
+else
+    echo "E2E root shadow entry changed since install"
+fi
+DIAGEOF
+            cat > "$DEPLOY_ETC/systemd/system/e2e-root-shadow-diagnostic.service" <<'UNITEOF'
+[Unit]
+Description=Compare E2E root shadow entry after boot
+After=sshd.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /etc/e2e-debug/check-root-shadow.sh
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+            ln -sf ../e2e-root-shadow-diagnostic.service \
+                "$DEPLOY_ETC/systemd/system/multi-user.target.wants/e2e-root-shadow-diagnostic.service"
             # sshd keeps the FIRST value per keyword and reads sshd_config.d
             # drop-ins in name order, so use 00- to sort before any image
             # drop-in (e.g. 50-*.conf with PasswordAuthentication no), and
