@@ -357,6 +357,16 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 
 **Note:** `state/deploy/<hash>/` holds only `etc` (and state), not `usr` — the `ssh.service` vs `sshd.service` probe there falls back to `sshd.service`, which is what dakota ships.
 
+### Boot check missed `login:` in a large serial log — SIGPIPE under pipefail (2026-11-13, #313)
+
+**Symptom:** plain E2E reports `❌ Timeout: installed system did not reach graphical target in 5 minutes` while the serial log tail shows `<hostname> login:`. Small logs pass; large logs (lots of boot noise, e.g. the dev channel) fail.
+
+**Root cause:** `plain-verify-qemu` runs under `set -euo pipefail` and tested the log with `echo "$LOG" | grep -q PATTERN`. `grep -q` exits at the first match; `echo` is still writing, dies of SIGPIPE, and the pipeline returns 141, which `if` treats as "no match".
+
+**Fix:** both serial-log checks use a here-string, `grep -q PATTERN <<<"$LOG"`, so there is no pipeline to fail. `tests/test_plain_verify_boot_check.py` runs the shipped conditions against a 2 MB+ log and fails on any `echo "$VAR" | grep -q` in the justfile.
+
+**Rule:** in a `pipefail` script never pipe a variable or a command with unbounded output into `grep -q` (or `head`); grep a file or a here-string instead.
+
 ---
 
 ## Red Flags

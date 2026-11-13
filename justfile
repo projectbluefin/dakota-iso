@@ -1429,7 +1429,10 @@ plain-verify-qemu target:
     DEADLINE=$((SECONDS + 300))
     while [[ $SECONDS -lt $DEADLINE ]]; do
         LOG=$(cat "$SERIAL" 2>/dev/null || true)
-        if echo "$LOG" | grep -q "Reached target.*Graphical\|Reached target.*Multi-User\|login:"; then
+        # Here-strings, not echo "$LOG" | grep -q: under pipefail a large log
+        # makes echo die of SIGPIPE once grep -q matches, the pipeline returns
+        # 141, and the if reads a real match as "no match" (#313).
+        if grep -q "Reached target.*Graphical\|Reached target.*Multi-User\|login:" <<<"$LOG"; then
             echo "✅ Installed system boot verified — plain composefs install succeeded"
             SOCAT_PREFIX=""
             if ! test -w "$MONITOR" 2>/dev/null; then SOCAT_PREFIX="sudo"; fi
@@ -1447,7 +1450,7 @@ plain-verify-qemu target:
             exit "$POST_BOOT_RC"
         fi
         # Detect emergency shell / kernel panic — fast-fail
-        if echo "$LOG" | grep -q "Emergency mode\|You are in emergency mode\|Kernel panic"; then
+        if grep -q "Emergency mode\|You are in emergency mode\|Kernel panic" <<<"$LOG"; then
             echo "❌ Emergency shell or kernel panic detected" >&2
             echo "--- last 30 lines of serial log ---" >&2
             echo "$LOG" | tail -30 >&2
