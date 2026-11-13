@@ -291,6 +291,21 @@ exits 1 via `grep -qF` when the replacement does not land (or `shadow` is
 absent) so the install step fails fast with the cause in the log instead of
 timing out on SSH.
 
+### Leftover `fisherman-root` mapping skips the post-install patch (2026-11-12)
+
+fisherman unlocks the target as `/dev/mapper/fisherman-root` and closes it on
+teardown, but that close can lose a race (`Device fisherman-root is still in
+use.`). `scripts/fisherman-install.sh` then tried to `luksOpen` the same
+partition again, got `Cannot use device /dev/vda2 which is in use`, skipped the
+debug-SSH patch, and still printed `post-install patch complete` — so the run
+failed five minutes later at the SSH gate with a misleading error (#314).
+
+The wrapper now checks `cryptsetup status fisherman-root` first: it settles udev
+and retries `cryptsetup close` up to five times, and if the mapping is still in
+use it mounts through `fisherman-root` instead of opening the partition twice.
+If the installed root cannot be opened or mounted at all, the wrapper exits 1
+so the install step fails with the real cause in its log.
+
 ### LUKS emergency shell: missing `rd.luks.name=` kernel arg (2026-06-23)
 
 After the ISO build was fixed, all 6 LUKS E2E variants (dakota dev/stable, lts

@@ -95,7 +95,8 @@ class FishermanInstallHarness(unittest.TestCase):
 
     def _install_stubs(self, *, fish_rc=0, fish_log="install complete\n",
                        lsblk=LSBLK_PLAIN, layout="ostree/bootc/deploy/default/abcdef/etc",
-                       mount_rc=0, luks_open_rc=0, files=None):
+                       mount_rc=0, luks_open_rc=0, files=None,
+                       leftover_mapping=False, leftover_busy=False):
         """Install recording shims for every external command the script calls.
 
         ``layout`` is the directory tree the stub ``mount`` materialises under
@@ -103,6 +104,11 @@ class FishermanInstallHarness(unittest.TestCase):
         (space-separated for several directories).  Pass ``None`` to mount an
         empty filesystem (no deployment found).  ``files`` maps a path relative
         to the mount point to its content, for fixtures like etc/shadow.
+
+        ``leftover_mapping`` simulates fisherman's teardown race (#314): its
+        ``fisherman-root`` mapping is still active, so opening the partition a
+        second time fails the way real cryptsetup does.  ``leftover_busy``
+        additionally makes every close of that mapping fail as still in use.
         """
         self._stub("fisherman", f"""
             printf '%s' {shlex.quote(fish_log)}
@@ -129,14 +135,37 @@ class FishermanInstallHarness(unittest.TestCase):
         self._stub("umount", """
             echo "umount $*" >> "$STUB_CALLS"
         """)
+        mapped = self.sandbox / "mapped"
+        mapped.mkdir(exist_ok=True)
+        if leftover_mapping:
+            (mapped / "fisherman-root").touch()
         self._stub("cryptsetup", f"""
             action="$1"
             if [ "$action" = "luksOpen" ]; then
                 passphrase="$(cat)"
                 echo "cryptsetup $* key=$passphrase" >> "$STUB_CALLS"
+                if [ -e "$STUB_MAPPED/fisherman-root" ]; then
+                    echo "Cannot use device $4 which is in use (already mapped or mounted)." >&2
+                    exit 5
+                fi
                 exit {luks_open_rc}
             fi
             echo "cryptsetup $*" >> "$STUB_CALLS"
+            case "$action" in
+                status) [ -e "$STUB_MAPPED/$2" ]; exit ;;
+                close|luksClose)
+                    if [ "$2" = fisherman-root ] && [ {int(leftover_busy)} -eq 1 ]; then
+                        echo "Device fisherman-root is still in use." >&2
+                        exit 5
+                    fi
+                    rm -f "$STUB_MAPPED/$2" ;;
+            esac
+        """)
+        self._stub("udevadm", """
+            echo "udevadm $*" >> "$STUB_CALLS"
+        """)
+        self._stub("sleep", """
+            echo "sleep $*" >> "$STUB_CALLS"
         """)
 
     def run_script(self, recipe_path, *extra_args, **stub_kwargs):
@@ -146,6 +175,7 @@ class FishermanInstallHarness(unittest.TestCase):
         env["FISHERMAN_BIN"] = str(self.bindir / "fisherman")
         env["STUB_CALLS"] = str(self.calls)
         env["STUB_MNT"] = str(self.mnt_record)
+        env["STUB_MAPPED"] = str(self.sandbox / "mapped")
         env["TMPDIR"] = str(self.sandbox)
         proc = subprocess.run(
             ["bash", str(FISHERMAN_INSTALL), str(recipe_path), *extra_args],
@@ -259,6 +289,8 @@ class TestTargetDiscovery(FishermanInstallHarness):
         self.assertIn("could not extract LUKS passphrase", proc.stdout)
         self.assertNotIn("cryptsetup luksOpen", proc.calls)
         self.assertIsNone(self.deployed_etc())
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("post-install patch complete", proc.stdout)
 
     def test_luks_open_failure_does_not_mount(self):
         recipe = self._write_recipe(hostname="crypt-box",
@@ -268,6 +300,8 @@ class TestTargetDiscovery(FishermanInstallHarness):
                                lsblk=LSBLK_LUKS, luks_open_rc=1)
         self.assertIn("cryptsetup luksOpen /dev/vda2 failed", proc.stdout)
         self.assertNotIn("mount /dev/mapper/", proc.calls)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("post-install patch complete", proc.stdout)
 
     def test_no_recognised_filesystem_reports_error(self):
         recipe = self._write_recipe(hostname="dakota")
@@ -275,12 +309,77 @@ class TestTargetDiscovery(FishermanInstallHarness):
         self.assertIn("no btrfs, xfs, or crypto_LUKS partition found",
                       proc.stdout)
         self.assertIsNone(self.deployed_etc())
+        self.assertNotEqual(proc.returncode, 0)
 
     def test_mount_failure_reports_error_and_skips_patch(self):
         recipe = self._write_recipe(hostname="dakota")
         proc = self.run_script(recipe, fish_rc=0, mount_rc=32)
         self.assertIn("post-install patch not applied", proc.stdout)
         self.assertIsNone(self.deployed_etc())
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("post-install patch complete", proc.stdout)
+
+    def test_no_leftover_mapping_skips_close_loop(self):
+        """The common case must not touch fisherman-root at all."""
+        recipe = self._write_recipe(hostname="crypt-box",
+                                    encryption={"passphrase": "testpassphrase"})
+        proc = self.run_script(recipe, fish_rc=0, lsblk=LSBLK_LUKS)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("cryptsetup close fisherman-root", proc.calls)
+        self.assertNotIn("fisherman left", proc.stdout)
+
+
+class TestLeftoverFishermanMapping(FishermanInstallHarness):
+    """fisherman's teardown can leave fisherman-root mapped (#314).
+
+    Run 43287915188: fisherman's luksClose lost a race, our second luksOpen of
+    /dev/vda2 failed with "in use", the debug-SSH patch was skipped, yet the
+    wrapper printed "post-install patch complete" and exited 0 — the E2E only
+    failed five minutes later at the SSH gate with a misleading error.
+    """
+
+    def _luks_recipe(self):
+        return self._write_recipe(hostname="crypt-box",
+                                  encryption={"passphrase": "testpassphrase"})
+
+    def test_leftover_mapping_is_closed_then_partition_opened(self):
+        proc = self.run_script(self._luks_recipe(), fish_rc=0,
+                               lsblk=LSBLK_LUKS, leftover_mapping=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        calls = proc.calls.splitlines()
+        close = calls.index("cryptsetup close fisherman-root")
+        opened = next(i for i, c in enumerate(calls)
+                      if c.startswith("cryptsetup luksOpen"))
+        self.assertLess(close, opened, "partition opened before leftover closed")
+        self.assertIn("udevadm settle", calls[:close])
+        self.assertIn("closed leftover fisherman-root", proc.stdout)
+        self.assertIsNotNone(self.deployed_etc())
+        self.assertIn("post-install patch complete", proc.stdout)
+
+    def test_busy_leftover_mapping_is_reused(self):
+        recipe = self._luks_recipe()
+        proc = self.run_script(
+            recipe, "--enable-debug-ssh", fish_rc=0, lsblk=LSBLK_LUKS,
+            leftover_mapping=True, leftover_busy=True,
+            layout="state/deploy/0123abcd/etc",
+            files={"state/deploy/0123abcd/etc/shadow": "root:*:20000:0:::::\n"},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.calls.count("cryptsetup close fisherman-root"), 5,
+                         "close was not retried before giving up")
+        self.assertNotIn("cryptsetup luksOpen", proc.calls,
+                         "partition opened a second time while still mapped")
+        self.assertIn("mount /dev/mapper/fisherman-root", proc.calls)
+        self.assertIn("reusing that mapping", proc.stdout)
+        self.assertIn("debug SSH override written", proc.stdout)
+
+    def test_unopenable_disk_fails_install_step(self):
+        """If the root cannot be opened the step itself must go red."""
+        proc = self.run_script(self._luks_recipe(), fish_rc=0,
+                               lsblk=LSBLK_LUKS, luks_open_rc=5)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("post-install patch not applied", proc.stdout)
+        self.assertNotIn("post-install patch complete", proc.stdout)
 
 
 class TestPostInstallPatching(FishermanInstallHarness):
