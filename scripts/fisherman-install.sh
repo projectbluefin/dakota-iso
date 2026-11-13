@@ -93,6 +93,15 @@ MNT=$(mktemp -d /tmp/post-install-fix-XXXX)
 MAPPER="post-install-fix-$$"
 MOUNTED=0
 
+# fisherman unlocks the target as "fisherman-root" and closes it on teardown,
+# but that close can lose a race ("Device fisherman-root is still in use").
+# The partition then stays held and our own luksOpen fails with "Cannot use
+# device ... which is in use", skipping every patch below (#314).  Close the
+# leftover mapping first, settling udev between attempts; if it stays busy,
+# mount through it instead of opening the partition a second time.
+FISHERMAN_MAPPER="fisherman-root"
+LUKS_CLOSE_ATTEMPTS="${LUKS_CLOSE_ATTEMPTS:-5}"
+
 if [[ -n "$LUKS_DEV" ]]; then
     # LUKS install: extract passphrase from recipe JSON and unlock the container.
     PASSPHRASE=$(python3 -c "
@@ -100,9 +109,25 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 print(d.get('encryption', {}).get('passphrase', ''))
 " "$RECIPE" 2>/dev/null || echo "")
+    if [[ -n "$PASSPHRASE" ]] && cryptsetup status "$FISHERMAN_MAPPER" >/dev/null 2>&1; then
+        echo "==> fisherman left /dev/mapper/$FISHERMAN_MAPPER mapped — closing it before unlocking $LUKS_DEV"
+        for attempt in $(seq 1 "$LUKS_CLOSE_ATTEMPTS"); do
+            udevadm settle 2>/dev/null || true
+            if cryptsetup close "$FISHERMAN_MAPPER"; then
+                echo "==> closed leftover $FISHERMAN_MAPPER (attempt $attempt/$LUKS_CLOSE_ATTEMPTS)"
+                break
+            fi
+            sleep 2
+        done
+        if cryptsetup status "$FISHERMAN_MAPPER" >/dev/null 2>&1; then
+            echo "==> $FISHERMAN_MAPPER still in use after $LUKS_CLOSE_ATTEMPTS close attempts — reusing that mapping"
+            MAPPER="$FISHERMAN_MAPPER"
+        fi
+    fi
     if [[ -z "$PASSPHRASE" ]]; then
         echo "ERROR: could not extract LUKS passphrase from recipe — post-install patch not applied"
-    elif printf '%s' "$PASSPHRASE" | cryptsetup luksOpen --key-file=- --batch-mode "$LUKS_DEV" "$MAPPER" 2>/tmp/cryptsetup-err.log; then
+    elif [[ "$MAPPER" == "$FISHERMAN_MAPPER" ]] ||
+         printf '%s' "$PASSPHRASE" | cryptsetup luksOpen --key-file=- --batch-mode "$LUKS_DEV" "$MAPPER" 2>/tmp/cryptsetup-err.log; then
         if mount "/dev/mapper/$MAPPER" "$MNT"; then
             MOUNTED=1
         else
@@ -252,4 +277,10 @@ FWEOF
 fi
 
 rmdir "$MNT" || true
+if [[ $MOUNTED -ne 1 ]]; then
+    # Carrying on would only fail minutes later at the post-boot SSH gate with
+    # a misleading "unreachable" error; fail here with the real cause above.
+    echo "ERROR: installed root could not be opened — failing the install step"
+    exit 1
+fi
 echo "==> post-install patch complete"
