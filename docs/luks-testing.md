@@ -315,6 +315,25 @@ exits 1 via `grep -qF` when the replacement does not land (or `shadow` is
 absent) so the install step fails fast with the cause in the log instead of
 timing out on SSH.
 
+### Plain install: debug-SSH patch boots empty, root login rejected (2026-11-14)
+
+On the plain (non-LUKS) E2E the post-install patch logged success, but the
+installed system rejected every root SSH login (`password check failed for user
+(root)`) and firewalld logged `INVALID_ZONE: not a valid zone file: no element
+found: line 1, column 0` for the `public.xml` the patch had just written. The
+files existed on disk but were empty: the data never left the page cache (#317).
+
+fisherman detaches its own mount of the target with `umount -Rl`. On a plain
+install the wrapper mounts that same partition again, so it shares the still-live
+filesystem and its `umount` is not the last one: nothing forces writeback. The
+harness then powers the live VM off, and whether the data made it out was down
+to timing (stable passed in the same run). The LUKS path opens a separate mapping,
+so its unmount is final and flushes, which is why LUKS dev passed.
+
+The wrapper now runs `sync` before unmounting the installed root. Any new step
+that writes to the installed disk from the live session must finish before that
+`sync`.
+
 ### Leftover `fisherman-root` mapping skips the post-install patch (2026-11-12)
 
 fisherman unlocks the target as `/dev/mapper/fisherman-root` and closes it on
