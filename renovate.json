@@ -3,6 +3,7 @@
   "extends": [
     "local>projectbluefin/renovate-config"
   ],
+  "forkProcessing": "enabled",
   "github-actions": {
     "enabled": true,
     "pinDigests": true
