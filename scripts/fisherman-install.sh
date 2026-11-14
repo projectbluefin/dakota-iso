@@ -301,6 +301,12 @@ FWEOF
         ls -la "$MNT" 2>/dev/null || true
     fi
 
+    # Flush the patches before the harness powers the live VM off (#317).
+    # fisherman lazily unmounts (umount -Rl) its own mount of the same
+    # partition, so on a plain install that filesystem can still be alive and
+    # our umount below does not write it back. Without this, files written
+    # above (shadow, sshd drop-in, firewalld zone) can boot empty.
+    sync
     umount -R "$MNT" || true
     if [[ -n "$LUKS_DEV" ]]; then
         cryptsetup luksClose "$MAPPER" || true

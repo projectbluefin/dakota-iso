@@ -167,6 +167,9 @@ class FishermanInstallHarness(unittest.TestCase):
         self._stub("sleep", """
             echo "sleep $*" >> "$STUB_CALLS"
         """)
+        self._stub("sync", """
+            echo "sync $*" >> "$STUB_CALLS"
+        """)
 
     def run_script(self, recipe_path, *extra_args, **stub_kwargs):
         self._install_stubs(**stub_kwargs)
@@ -468,6 +471,25 @@ class TestPostInstallPatching(FishermanInstallHarness):
         self.assertIn("changed since install", check())
         self.assertTrue((etc / "systemd/system/multi-user.target.wants/"
                          "e2e-root-shadow-diagnostic.service").is_symlink())
+
+    def test_patches_are_flushed_before_the_installed_root_is_unmounted(self):
+        """Regression for #317: on the plain install the debug-SSH files
+        booted empty (firewalld logged an empty zone file and every root SSH
+        login failed) because nothing wrote them back before the VM stopped.
+        """
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(
+            recipe, "--enable-debug-ssh", fish_rc=0,
+            layout="state/deploy/0123abcd/etc",
+            files={"state/deploy/0123abcd/etc/shadow": "root:*:20000:0:::::\n"},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        calls = proc.calls.splitlines()
+        self.assertIn("sync ", calls, "patches were never flushed to disk")
+        unmounts = [i for i, c in enumerate(calls) if c.startswith("umount ")]
+        self.assertTrue(unmounts, "installed root was never unmounted")
+        self.assertLess(calls.index("sync "), unmounts[0],
+                        "sync must run before the installed root is unmounted")
 
     def test_debug_ssh_missing_root_line_fails_fast(self):
         """A shadow without root: must fail here, not after a 5-minute SSH wait.
