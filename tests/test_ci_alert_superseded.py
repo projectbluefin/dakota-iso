@@ -25,7 +25,13 @@ def test_supersession_lookup(tmp_path, pages, expected):
     workflow = yaml.safe_load(WORKFLOW.read_text())
     step = next(s for s in workflow["jobs"]["alert"]["steps"] if s.get("id") == "superseded")
     gh = tmp_path / "gh"
-    gh.write_text('#!/bin/sh\nprintf "%s" "$API_RESPONSE"\n')
+    # Reject -G the way the real gh does ("unknown shorthand flag"); a stub that
+    # accepted any flags let the first version of this step ship broken.
+    gh.write_text(
+        '#!/bin/sh\n'
+        'for a in "$@"; do [ "$a" = -G ] && { echo "unknown shorthand flag: \'G\' in -G" >&2; exit 1; }; done\n'
+        'printf "%s" "$API_RESPONSE"\n'
+    )
     gh.chmod(0o755)
     output = tmp_path / "output"
     output.touch()
