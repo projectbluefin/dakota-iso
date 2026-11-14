@@ -102,20 +102,38 @@ SSH="sshpass -p root ssh $SSH_OPTS root@127.0.0.1 -p ${SSH_PORT}"
 
 echo "Waiting for installed system SSH on port ${SSH_PORT}..."
 READY=0
-for _ in $(seq 1 60); do
-    if $SSH true 2>/dev/null; then
+if ! SSH_ERROR=$(mktemp "${TMPDIR:-/tmp}/installed-ssh.XXXXXX"); then
+    echo "❌ Cannot create temporary file for SSH diagnostics in ${TMPDIR:-/tmp}" >&2
+    exit 1
+fi
+trap 'rm -f "$SSH_ERROR"' EXIT
+START_SECONDS=$SECONDS
+SSH_RC=0
+for ATTEMPT in $(seq 1 60); do
+    # Keep only the last attempt's error in a private file. Do not use shell
+    # tracing or sshpass verbose output: either could expose the test password.
+    if $SSH true 2>"$SSH_ERROR"; then
         READY=1
         break
+    else
+        SSH_RC=$?
     fi
     sleep 5
 done
 
 if [[ "$READY" -ne 1 ]]; then
-    echo "❌ Post-boot assertions SKIPPED: could not reach installed system over SSH after 5 minutes" >&2
-    echo "   (debug SSH may not have been enabled, or sshd/network wasn't up in time)" >&2
+    echo "❌ Post-boot assertions SKIPPED: could not reach installed system over SSH after ${ATTEMPT} attempts ($((SECONDS - START_SECONDS)) seconds elapsed)" >&2
+    echo "   Final SSH attempt exit status ${SSH_RC}; stderr:" >&2
+    if [[ -s "$SSH_ERROR" ]]; then
+        cat "$SSH_ERROR" >&2
+    else
+        echo "   (no SSH error output)" >&2
+    fi
     # Compression is a required release property, not an observability check.
     exit 2
 fi
+rm -f "$SSH_ERROR"
+trap - EXIT
 
 MOUNT_OPTIONS=$($SSH 'findmnt -rn -o FSTYPE,OPTIONS -T /var') || exit 1
 BOOT_CMDLINE=$($SSH 'cat /proc/cmdline') || exit 1

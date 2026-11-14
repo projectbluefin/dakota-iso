@@ -278,6 +278,30 @@ This fixes every LUKS E2E run since composefs was enabled (all had been silently
 timing out at the 90-minute job ceiling before the fisherman wrapper surfaced
 the real error).
 
+### Installed SSH failures need transport evidence (2026-11-11)
+
+Publication run `42950848237` completed installation, patched the selected
+composefs deployment's root password, and reached graphical startup, but failed
+installed SSH readiness. That rules out the previously observed silent password
+replacement miss for this run; it does not establish whether networking, daemon
+startup, or authentication failed. Do not infer a store-transfer regression from
+the timing of a preceding merge alone.
+
+`verify-post-install.sh` now retains the final SSH attempt's stderr and exit status
+in a private temporary file, prints them only on readiness failure, and removes
+the file on exit. It reports actual elapsed seconds and attempt count instead of
+claiming a five-minute deadline (connection time adds to each sleep). It does not
+print the password-bearing command or enable verbose credential logging. The
+60-attempt policy and hard exit 2 are unchanged; mounted compression and persistent
+rootflags remain required after connection. Stubbed transport tests cover refusal,
+timeout, authentication failure, recovery and missing compression; these are not
+installed-guest proof.
+
+For #309, diagnosis and a fresh full install/installed boot/SSH/compression check
+through the publication path are still required. Compare the failed serial log
+and disk with successful run `42569645735` before selecting a guest-side fix. Do
+not rerun production publication merely to gather diagnostics without approval.
+
 ### Silent debug-SSH miss: shadow without a `root:` line (2026-11-09)
 
 `scripts/fisherman-install.sh --enable-debug-ssh` sets the installed system's
