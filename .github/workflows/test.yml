@@ -2,6 +2,8 @@ name: Test
 
 on:
   pull_request:
+  # The required checks must also run in the merge queue (shared baseline).
+  merge_group:
   push:
     branches: [main]
 

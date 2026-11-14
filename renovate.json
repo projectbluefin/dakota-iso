@@ -9,8 +9,38 @@
   },
   "packageRules": [
     {
+      "description": "Third-party GitHub Actions updates wait three days after release, then Renovate automerges them. The hive also merges Renovate PRs once the required checks pass, because mergeraptor is a trusted bot.",
       "matchManagers": ["github-actions"],
-      "groupName": "GitHub Actions",
+      "matchPackageNames": ["!projectbluefin/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "github-actions-third-party-non-major",
+      "pinDigests": true,
+      "minimumReleaseAge": "3 days",
+      "automerge": true
+    },
+    {
+      "description": "First-party projectbluefin/** actions merge right away and open at any time.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["projectbluefin/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "github-actions-first-party-non-major",
+      "pinDigests": true,
+      "schedule": ["at any time"],
+      "automerge": true
+    },
+    {
+      "description": "build-iso.yml, build-iso-utah.yml and promote-release.yml are human-merge paths in the hive (they build, publish and promote the ISOs). Give their updates their own branches, so a pin-only update to them is a PR of its own that the hive's pin-only exception can merge, instead of being held with other workflows.",
+      "matchFileNames": [
+        ".github/workflows/build-iso.yml",
+        ".github/workflows/build-iso-utah.yml",
+        ".github/workflows/promote-release.yml"
+      ],
+      "additionalBranchPrefix": "publishing-workflows-"
+    },
+    {
+      "description": "Renovate never automerges GitHub Actions majors. The hive's trusted-bot merge policy is independent of this setting.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
       "automerge": false
     }
   ]
