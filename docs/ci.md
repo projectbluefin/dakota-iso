@@ -41,6 +41,15 @@ gh workflow run build-iso.yml --ref main
 | ShellCheck Lint + Pinned fetches | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
 
+### CI alert cancellation handling (2026-11-14)
+
+Push-triggered E2E runs cancel older runs when a newer push arrives. The CI
+alert checks all pages of runs for a newer push of the same workflow and branch
+before opening or reopening an alert for a cancelled push. Scheduled runs do
+not supersede push runs; a cancellation without a newer push still alerts
+unless it had no jobs. API lookup failures fail the alert job rather than
+silently suppressing an alert.
+
 ## build-iso.yml
 
 **Triggers:** Daily 03:00 UTC (`0 3 * * *`), `workflow_dispatch`, `repository_dispatch` (`dakota-release`, `client_payload.image_ref`)
