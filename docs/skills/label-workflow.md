@@ -19,9 +19,14 @@ metadata:
 
 # Label Workflow — dakota-iso
 
-dakota-iso uses [Prow](https://github.com/cncf/prow-github-actions) (cncf/prow-github-actions v3.0.1) and org-wide configuration from [`projectbluefin/.project/prow.yaml`](https://github.com/projectbluefin/.project/blob/main/prow.yaml).
+dakota-iso uses [Prow](https://github.com/cncf/prow-github-actions) (cncf/prow-github-actions v3.5.0) and org-wide configuration from [`projectbluefin/.project/prow.yaml`](https://github.com/projectbluefin/.project/blob/main/prow.yaml).
 
 Full org lifecycle documentation lives in the shared [Project Bluefin label-workflow guide](https://github.com/projectbluefin/common/blob/main/docs/skills/label-workflow.md).
+
+The merge backstop runs `sweep lgtm` every four hours at minute 11, trading
+scheduled runner use for up to four hours of reconciliation delay plus GitHub
+scheduling delays. Label sync runs separately on Sundays at 03:11 UTC; manual
+dispatch and repository-config pushes still sync labels.
 
 ---
 
