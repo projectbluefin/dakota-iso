@@ -43,6 +43,10 @@ jobs:
         id: jobs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_CREATED: ${{ github.event.workflow_run.created_at }}
         run: |
           set -euo pipefail
           REPO="${{ github.repository }}"
@@ -51,11 +55,25 @@ jobs:
           JOB_COUNT=$(jq '[.[].jobs[]] | length' <<< "$JOBS")
           FAILURES=$(jq -r '[.[].jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "skipped")
                    | "- [\(.name)](\(.html_url)) (\(.conclusion))"] | join("\n")' <<< "$JOBS")
-          if [[ "${{ github.event.workflow_run.conclusion }}" == "cancelled" && "$JOB_COUNT" == "0" ]]; then
+          if [[ "${CONCLUSION}" == "cancelled" && "$JOB_COUNT" == "0" ]]; then
             echo "Run was cancelled before any job started; nothing was alerted."
           fi
-          echo "count=${JOB_COUNT}" >> "$GITHUB_OUTPUT"
+          # A run cancelled because a newer run of the same workflow on the same
+          # branch replaced it (cancel-in-progress on push) is not a failure:
+          # the newer run reports for that branch (#324).
+          SUPERSEDED=false
+          if [[ "${CONCLUSION}" == "cancelled" ]]; then
+            NEWER=$(gh api "repos/${REPO}/actions/workflows/${WORKFLOW_ID}/runs?branch=${RUN_BRANCH}&per_page=20" \
+              | jq --argjson id "${RUN_ID}" --arg created "${RUN_CREATED}" \
+                  '[.workflow_runs[] | select(.id != $id and .created_at > $created)] | length')
+            if [[ "${NEWER}" -gt 0 ]]; then
+              SUPERSEDED=true
+              echo "Run was cancelled and a newer ${WORKFLOW} run on ${RUN_BRANCH} exists; nothing was alerted."
+            fi
+          fi
           {
+            echo "superseded=${SUPERSEDED}"
+            echo "count=${JOB_COUNT}"
             echo "failures<<EOF"
             echo "${FAILURES}"
             echo "EOF"
@@ -75,7 +93,7 @@ jobs:
           echo "issue_number=${ISSUE_NUM:-}" >> "$GITHUB_OUTPUT"
 
       - name: Create or reopen alert issue
-        if: github.event.workflow_run.conclusion != 'success' && (github.event.workflow_run.conclusion != 'cancelled' || steps.jobs.outputs.count != '0')
+        if: github.event.workflow_run.conclusion != 'success' && (github.event.workflow_run.conclusion != 'cancelled' || (steps.jobs.outputs.count != '0' && steps.jobs.outputs.superseded != 'true'))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
