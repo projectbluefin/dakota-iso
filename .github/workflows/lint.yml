@@ -28,6 +28,6 @@ jobs:
     name: Pinned fetches
     permissions:
       contents: read
-    uses: projectbluefin/actions/.github/workflows/reusable-pinned-fetches.yml@v1
+    uses: projectbluefin/actions/.github/workflows/reusable-pinned-fetches.yml@d1f65645c53d413462117fe1f05d00b9d9382f89 # v1
     with:
       mode: warn
