@@ -22,7 +22,7 @@
 
 ARG TARGET=dakota-nvidia
 # TAG selects the image tag. Defaults to 'stable'; use 'lts' for LTS variants.
-ARG TAG=stable
+ARG TAG=stable@sha256:f24c2010a1f387f97a0835e7cd5930dbccef1f7844b53941f060f6b8904c50ee
 # REGISTRY selects the OCI registry org. Defaults to projectbluefin.
 ARG REGISTRY=projectbluefin
 # BASE_DIGEST pins the reference image to a cosign-verified digest
@@ -113,7 +113,7 @@ RUN set -ex; \
 
 # ── Stage 3: Final live image ─────────────────────────────────────────────────
 ARG TARGET=dakota-nvidia
-ARG TAG=stable
+ARG TAG=stable@sha256:f24c2010a1f387f97a0835e7cd5930dbccef1f7844b53941f060f6b8904c50ee
 ARG REGISTRY=projectbluefin
 FROM ghcr.io/${REGISTRY}/${TARGET}:${TAG}${BASE_DIGEST}
 
