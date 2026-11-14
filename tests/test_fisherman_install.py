@@ -446,6 +446,29 @@ class TestPostInstallPatching(FishermanInstallHarness):
             (etc / "systemd/system/multi-user.target.wants/sshd.service").is_symlink()
         )
 
+    def test_debug_shadow_diagnostic_detects_boot_time_changes(self):
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(
+            recipe, "--enable-debug-ssh", fish_rc=0,
+            layout="state/deploy/0123abcd/etc",
+            files={"state/deploy/0123abcd/etc/shadow": "root:*:20000:0:::::\n"},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        etc = self.deployed_etc()
+        shadow = etc / "shadow"
+        diagnostic = etc / "e2e-debug/check-root-shadow.sh"
+        fingerprint = etc / "e2e-debug/root-shadow.sha256"
+        def check():
+            return subprocess.run(
+                ["sh", str(diagnostic), str(shadow), str(fingerprint)],
+                capture_output=True, text=True, check=True,
+            ).stdout
+        self.assertIn("unchanged since install", check())
+        shadow.write_text("root:!:20000:0:::::\n")
+        self.assertIn("changed since install", check())
+        self.assertTrue((etc / "systemd/system/multi-user.target.wants/"
+                         "e2e-root-shadow-diagnostic.service").is_symlink())
+
     def test_debug_ssh_missing_root_line_fails_fast(self):
         """A shadow without root: must fail here, not after a 5-minute SSH wait.
 

@@ -347,6 +347,17 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 
 **Lesson:** when a post-boot invariant can only be observed at runtime (firmware NVRAM state, live kernel cmdline, running daemon output), don't try to approximate it from static files during install — enable a throwaway debug path into the actual booted target instead.
 
+### Debug SSH rejects the installed root password (2026-11-13, #317)
+
+The installed dev guest can reject the debug root password even when the
+post-install shadow patch reports success. Debug installs now record a
+fingerprint of the patched root shadow entry and compare it after boot; look
+for `E2E root shadow entry unchanged since install` or `changed since install`
+in the installed guest's serial log. No password hash is printed by this
+diagnostic. An unchanged entry points investigation toward password verification;
+a changed entry calls for tracing boot-time shadow updates. This diagnostic
+does not itself fix the login failure.
+
 ### composefs-native `/etc` lives under `state/deploy/`, not `ostree/` (2026-10-27, #283)
 
 **Symptom:** plain E2E logs `WARNING: deployment etc/ not found under …/ostree — post-install patches not applied`, then `❌ Post-boot assertions SKIPPED: could not reach installed system over SSH`. The hostname patch and the debug-SSH override were never written, so the post-boot assertions above never ran.
