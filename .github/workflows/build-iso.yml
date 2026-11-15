@@ -51,7 +51,7 @@ jobs:
             sudo podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       # Verify the cosign signature of the payload (also the live base image)
       # and pin to the verified digest — the mutable :stable tag alone does
