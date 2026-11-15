@@ -62,7 +62,10 @@ jobs:
           INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
         run: |
           sudo mkdir -p /var/iso-build
-          sudo just \
+          # ubuntu-26.04's sudo keeps the runner user's XDG_RUNTIME_DIR, so root's
+          # just would create a root-owned /run/user/<uid>/just that a later
+          # unprivileged just can't write ("Permission denied", os error 13).
+          sudo env -u XDG_RUNTIME_DIR just \
             debug=1 \
             installer_channel="$INSTALLER_CHANNEL" \
             output_dir=/var/iso-build \
