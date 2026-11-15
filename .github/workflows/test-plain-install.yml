@@ -21,6 +21,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 on:
+  pull_request:
+    branches: [main]
+  merge_group:
   push:
     branches:
       - main
@@ -39,7 +42,32 @@ on:
 permissions: {}
 
 jobs:
+  plain-e2e-gate:
+    name: Plain E2E gate
+    needs: [unit-tests, plain-e2e]
+    if: always()
+    runs-on: ubuntu-26.04
+    permissions: {}
+    timeout-minutes: 5
+    steps:
+      - name: Check dependency results
+        env:
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          E2E_RESULT: ${{ needs.plain-e2e.result }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$UNIT_RESULT" == failure || "$UNIT_RESULT" == cancelled ||
+                "$E2E_RESULT" == failure || "$E2E_RESULT" == cancelled ]]; then
+            echo "::error::Plain E2E dependencies failed or were cancelled"
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == merge_group && "$E2E_RESULT" == skipped ]]; then
+            echo "::error::Plain E2E was skipped in the merge queue"
+            exit 1
+          fi
+
   unit-tests:
+    if: github.event_name != 'pull_request'
     name: Python Unit Tests
     runs-on: ubuntu-26.04
     permissions:
@@ -56,6 +84,7 @@ jobs:
       - run: just test
 
   plain-e2e:
+    if: github.event_name != 'pull_request'
     needs: unit-tests
     name: Plain E2E ${{ matrix.variant }} (${{ matrix.installer_channel }})
     runs-on: ubuntu-26.04
@@ -72,7 +101,7 @@ jobs:
         # legs are dormant, not deleted — re-add them to this list to revive.
         # variant: [dakota, stable, lts]
         variant: [dakota]
-        installer_channel: [dev, stable]
+        installer_channel: ${{ github.event_name == 'merge_group' && fromJSON('["stable"]') || fromJSON('["dev","stable"]') }}
 
     steps:
       - name: Checkout

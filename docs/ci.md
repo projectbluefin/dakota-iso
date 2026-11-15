@@ -36,7 +36,7 @@ gh workflow run build-iso.yml --ref main
 | Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch`, `repository_dispatch` (`dakota-release`, `client_payload.image_ref`) |
 | Utah Build & Publish | `build-iso-utah.yml` | Monthly 8th 04:00 UTC, `workflow_dispatch` (bluefin entries retired in #228) |
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
-| Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
+| Plain Install E2E | `test-plain-install.yml` | PRs to main (gate only), merge queue (stable), push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
 | ShellCheck Lint + Pinned fetches | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
@@ -256,13 +256,23 @@ comments. Key screenshots:
 
 ## test-plain-install.yml
 
-**Matrix:** `installer_channel: [dev, stable]` (fail-fast: false)
+**Matrix:** `installer_channel: [dev, stable]` (fail-fast: false); merge queue: stable only
 **Timeout:** 120 minutes
-**Triggers:** PRs to main, weekly schedule, `workflow_dispatch`
+**Triggers:** PRs to main, merge queue, push to main (docs ignored), weekly schedule, `workflow_dispatch`
 
 This workflow builds a debug Dakota ISO and runs the full plain-install QEMU path
 (`just ... plain-test-qemu dakota`) to catch unencrypted installer regressions,
 including the tight-memory ENOSPC class.
+
+### Merge queue gate (2026-11-15)
+
+PRs report `Plain E2E gate` without running the install or duplicating unit
+tests. The merge queue runs the unit tests and the Dakota stable install leg;
+the gate fails if either fails or is cancelled, or if the install is skipped.
+The dev leg is excluded from the queue because an upstream development installer
+failure should not block unrelated merges. A queue group takes about 35 minutes.
+Push, schedule, and dispatch continue to run both channels. A maintainer can
+make `Plain E2E gate` required after it has reported on a PR and in the queue.
 
 ## scheduled-gui-installer.yml
 
