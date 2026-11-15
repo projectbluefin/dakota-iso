@@ -27,6 +27,14 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+  # The merge queue runs the stable leg, so a change that breaks the live ISO
+  # build or the install (a Renovate base-image bump in live/Containerfile, for
+  # example) is caught before it lands. Pull requests only report the gate, so
+  # the PR can enter the queue; the E2E itself runs in the queue (#347).
+  pull_request:
+    branches:
+      - main
+  merge_group:
   workflow_dispatch:
     inputs:
       installer_channel:
@@ -41,6 +49,8 @@ permissions: {}
 jobs:
   unit-tests:
     name: Python Unit Tests
+    # test.yml runs the unit tests on pull requests.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -72,7 +82,10 @@ jobs:
         # legs are dormant, not deleted — re-add them to this list to revive.
         # variant: [dakota, stable, lts]
         variant: [dakota]
-        installer_channel: [dev, stable]
+        # The merge queue runs only the stable leg: the dev leg tests the
+        # upstream continuous-dev Flatpak, not this repo, and a break there
+        # must not block every merge.
+        installer_channel: ${{ github.event_name == 'merge_group' && fromJSON('["stable"]') || fromJSON('["dev", "stable"]') }}
 
     steps:
       - name: Checkout
@@ -215,10 +228,11 @@ jobs:
 
       - name: Write job summary
         if: always()
+        env:
+          RESULT: ${{ steps.plain_test.outcome }}
+          CHANNEL: ${{ matrix.installer_channel }}
+          VARIANT: ${{ matrix.variant }}
         run: |
-          RESULT="${{ steps.plain_test.outcome }}"
-          CHANNEL="${{ matrix.installer_channel }}"
-          VARIANT="${{ matrix.variant }}"
           ICON=$( [ "$RESULT" = "success" ] && echo "✅" || echo "❌" )
           {
             echo "## ${ICON} Plain Install E2E ${VARIANT} (${CHANNEL}) — ${RESULT}"
@@ -239,3 +253,35 @@ jobs:
           ls /tmp/dakota-plain-qemu-*.log /tmp/plain-screenshot-final.png 2>/dev/null || true
           tail -30 /tmp/dakota-plain-qemu-installed-serial.log 2>/dev/null || true
           exit 1
+
+  # One stable check name for the required checks. It passes on pull requests,
+  # where the E2E is skipped, and in the merge queue it passes only when the
+  # stable leg ran and passed.
+  plain-e2e-gate:
+    name: Plain E2E gate
+    needs: [unit-tests, plain-e2e]
+    # Only where it is a check: on push and schedule runs it would add a failed
+    # job to a cancelled run, which ci-alert.yml counts.
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check the E2E results
+        env:
+          EVENT: ${{ github.event_name }}
+          UNIT_TESTS: ${{ needs.unit-tests.result }}
+          PLAIN_E2E: ${{ needs.plain-e2e.result }}
+        run: |
+          set -euo pipefail
+          for result in "$UNIT_TESTS" "$PLAIN_E2E"; do
+            if [[ "$result" == failure || "$result" == cancelled ]]; then
+              echo "A Plain E2E dependency ended with $result" >&2
+              exit 1
+            fi
+          done
+          if [[ "$EVENT" == merge_group && "$PLAIN_E2E" != success ]]; then
+            echo "Plain E2E did not run to success on $EVENT (result: $PLAIN_E2E)" >&2
+            exit 1
+          fi
+          echo "Plain E2E gate passed on $EVENT (unit tests: $UNIT_TESTS, E2E: $PLAIN_E2E)"
