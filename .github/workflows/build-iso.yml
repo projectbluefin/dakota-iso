@@ -241,7 +241,7 @@ jobs:
         run: sudo chmod a+r /tmp/dakota-plain-qemu-*.log /tmp/plain-screenshot-final.png 2>/dev/null || true
       - name: Upload plain E2E serial logs artifact
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: plain-e2e-serial-logs
           path: |
@@ -253,7 +253,7 @@ jobs:
 
       - name: Upload plain E2E disk (on failure, for post-mortem)
         if: always() && (steps.e2e_install.outcome == 'failure' || steps.e2e_verify.outcome == 'failure')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: plain-e2e-disk
           path: /var/tmp/dakota-plain-install.img
@@ -432,7 +432,7 @@ jobs:
           fi
 
       - name: Upload ISO artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dakota-live-iso
           path: ${{ steps.iso.outputs.path }}
@@ -440,7 +440,7 @@ jobs:
           retention-days: 7
 
       - name: Upload checksum artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: steps.checksum.outputs.latest_path != ''
         with:
           name: checksum-dakota-live-latest
@@ -449,7 +449,7 @@ jobs:
           retention-days: 7
 
       - name: Upload boot screenshot
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: boot-screenshot
