@@ -62,7 +62,11 @@ jobs:
           INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
         run: |
           sudo mkdir -p /var/iso-build
-          sudo just \
+          # On ubuntu-26.04 sudo keeps the runner user's XDG_RUNTIME_DIR, so a
+          # plain `sudo just` writes a root-owned just cache into the runner's
+          # runtime dir and the next unprivileged `just gui-e2e` fails with
+          # "Permission denied (os error 13)". Unset it for the build step.
+          sudo env -u XDG_RUNTIME_DIR just \
             debug=1 \
             installer_channel="$INSTALLER_CHANNEL" \
             output_dir=/var/iso-build \
