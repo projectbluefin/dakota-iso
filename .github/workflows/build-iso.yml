@@ -25,7 +25,7 @@ on:
 jobs:
   build-and-publish:
     name: Build Dakota Live ISO (NVIDIA + offline store)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 120
     permissions:
       contents: write

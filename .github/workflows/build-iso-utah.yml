@@ -28,7 +28,7 @@ on:
 jobs:
   build-and-publish:
     name: Build ${{ matrix.variant }} Live ISO
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 120
     permissions:
       contents: read
