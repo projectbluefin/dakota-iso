@@ -99,7 +99,7 @@ jobs:
 
       - name: Install Cosign
         if: steps.should_build.outputs.build == 'true'
-        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
 
       # Verify cosign signatures and pin to verified digests — the mutable
       # tag alone does not prove the image was built by project CI.
@@ -199,7 +199,7 @@ jobs:
 
       - name: Install just
         if: steps.should_build.outputs.build == 'true'
-        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1 (just)
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3 (just)
         with:
           tool: just
 
