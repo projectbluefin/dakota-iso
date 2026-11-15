@@ -39,6 +39,13 @@
       "additionalBranchPrefix": "publishing-workflows-"
     },
     {
+      "description": "Don't digest-pin the Dakota base image in live/Containerfile. Its FROM lines are ghcr.io/${REGISTRY}/${TARGET}:${TAG}${BASE_DIGEST}, and build-iso.yml passes the cosign-verified digest as BASE_DIGEST, so a digest inside TAG gives a reference with two digests and the ISO build fails (#330).",
+      "matchManagers": ["dockerfile"],
+      "matchFileNames": ["live/Containerfile"],
+      "matchPackageNames": ["ghcr.io/projectbluefin/dakota*"],
+      "pinDigests": false
+    },
+    {
       "description": "Renovate never automerges GitHub Actions majors. The hive's trusted-bot merge policy is independent of this setting.",
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["major"],
