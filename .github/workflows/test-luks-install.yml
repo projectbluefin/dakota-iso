@@ -132,7 +132,12 @@ jobs:
 
           # Use just iso-sd-boot: bound OCI media + squashfs + ISO assembly.
           # debug=1 enables SSH for the LUKS install step below.
-          sudo just \
+          # On ubuntu-26.04 sudo keeps the runner user's XDG_RUNTIME_DIR, so a
+          # plain `sudo just` writes a root-owned just cache into the runner's
+          # runtime dir; the next unprivileged `just` then fails with
+          # "Permission denied (os error 13)" before the test starts. Unset it
+          # for the build step, the same way build-iso.yml already does.
+          sudo env -u XDG_RUNTIME_DIR just \
             debug=1 \
             installer_channel=${{ matrix.installer_channel }} \
             output_dir=/var/iso-build \
