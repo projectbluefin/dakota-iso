@@ -75,6 +75,16 @@ if [[ $FISH_RC -ne 0 ]]; then
         fi
     else
         echo "==> fisherman failed for a non-hostname reason (rc=$FISH_RC) — propagating"
+        # ENOSPC names no filesystem, and the RAM-backed live mounts (/run,
+        # /tmp, /var/tmp, the overlay root) share one memory budget (#322).
+        # Report what each one holds so the CI log shows which one filled.
+        if grep -qi "no space left on device" /tmp/fish.log; then
+            echo "==> ENOSPC: filesystem usage at failure"
+            df -h 2>&1 || true
+            echo "==> ENOSPC: largest entries on the RAM-backed live mounts"
+            du -xah --max-depth=2 / /run /tmp /var/tmp /dev/shm 2>/dev/null |
+                sort -rh | head -25 || true
+        fi
         exit "$FISH_RC"
     fi
 else

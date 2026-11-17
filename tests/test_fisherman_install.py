@@ -170,6 +170,13 @@ class FishermanInstallHarness(unittest.TestCase):
         self._stub("sync", """
             echo "sync $*" >> "$STUB_CALLS"
         """)
+        # ENOSPC diagnostics: canned usage so tests never scan the host disk.
+        self._stub("df", """
+            echo "tmpfs 800M 800M 0 100% /run"
+        """)
+        self._stub("du", """
+            printf '790M\\t/run/huge\\n'
+        """)
 
     def run_script(self, recipe_path, *extra_args, **stub_kwargs):
         self._install_stubs(**stub_kwargs)
@@ -237,6 +244,23 @@ class TestFailureTriage(FishermanInstallHarness):
         self.assertIn("non-hostname reason", proc.stdout)
         self.assertEqual(proc.calls.strip().splitlines(), ["fisherman " + str(recipe)],
                          "wrapper kept going after an unrelated failure")
+
+    def test_enospc_failure_reports_live_mount_usage(self):
+        """ENOSPC must log which live filesystem filled, then stay red (#322)."""
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(
+            recipe, fish_rc=125,
+            fish_log="writing blob: no space left on device\n",
+        )
+        self.assertEqual(proc.returncode, 125)
+        self.assertIn("100% /run", proc.stdout)
+        self.assertIn("/run/huge", proc.stdout)
+
+    def test_non_enospc_failure_skips_usage_report(self):
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(recipe, fish_rc=3, fish_log="bootc: bad image\n")
+        self.assertEqual(proc.returncode, 3)
+        self.assertNotIn("ENOSPC", proc.stdout)
 
     def test_hostname_mention_without_composefs_marker_propagates(self):
         """"writing hostname" alone is not the known bug — both halves required.
