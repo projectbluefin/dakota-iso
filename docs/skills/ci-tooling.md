@@ -291,9 +291,10 @@ curl -sL https://projectbluefin.dev/dakota-live-latest.iso-CHECKSUM
 curl -sIL https://projectbluefin.dev/dakota-live-latest.iso | grep -i content-length
 ```
 
-Since #270 the `latest` checksum is also signed (`-CHECKSUM.sig` / `-CHECKSUM.pem`,
-keyless cosign from the publish workflow). When quoting a checksum anywhere, verify the
-signature first — the full procedure is in
+Since #270 the `latest` checksum is also signed (`-CHECKSUM.sigstore.json`, the keyless
+cosign Sigstore bundle from the publish workflow, with `-CHECKSUM.sig` / `-CHECKSUM.pem`
+published alongside for now). When quoting a checksum anywhere, verify the signature first
+— the full procedure is in
 [docs/ci.md → Verifying a downloaded ISO](../ci.md#verifying-a-downloaded-iso).
 
 Note the same protected-branch rule is why every PR needs `gh pr merge --admin`: the

@@ -72,7 +72,7 @@ silently suppressing an alert.
 10. **Generate checksum** — latest variant
 11. **Plain-install E2E gates** — live boot, strict bound-media preflight at 4 GiB, full offline install, installed boot and btrfs zstd/rootflags verification
 12. **Boot verification** — QEMU UEFI smoke boot on the production ISO
-13. **Sign checksum** — `cosign sign-blob` (keyless, GitHub OIDC; the job has `id-token: write`) writes `<CHECKSUM>.sig` and `<CHECKSUM>.pem` next to the checksum; runs under the upload's exact conditions and before it, so a signing failure publishes nothing
+13. **Sign checksum** — `cosign sign-blob` (keyless, GitHub OIDC; the job has `id-token: write`) writes `<CHECKSUM>.sigstore.json` (the Sigstore bundle) next to the checksum, and keeps the legacy `<CHECKSUM>.sig` / `<CHECKSUM>.pem` pair beside it for now; runs under the upload's exact conditions and before it, so a signing failure publishes nothing (#360)
 14. **Upload to R2 + artifacts** — only after ENOSPC, full install, installed-boot verification, production boot smoke, and signing all succeed
 
 > **Do not add `--store`, a second OCI archive, or an opaque payload blob alongside the store.**
@@ -123,7 +123,7 @@ new ISO  → latest
 ```
 
 Objects published per build:
-- `dakota-live-latest.iso` + `-CHECKSUM` + `-CHECKSUM.sig` + `-CHECKSUM.pem` (always overwritten)
+- `dakota-live-latest.iso` + `-CHECKSUM` + `-CHECKSUM.sigstore.json` + `-CHECKSUM.sig` + `-CHECKSUM.pem` (always overwritten; the `.sigstore.json` bundle is the primary artifact, `.sig`/`.pem` kept alongside for now)
 - `dakota-live-backup-{1,2,3}.iso` + `-CHECKSUM` (rotated; slots beyond 3 are pruned; the
   rotation moves only the ISO and checksum, so backup checksums carry no signature)
 
@@ -140,17 +140,26 @@ repository's publish workflow, which a bucket write cannot forge.
 
 ```bash
 NAME=dakota-live-latest.iso   # or utah-live-latest.iso
-for f in "$NAME" "$NAME-CHECKSUM" "$NAME-CHECKSUM.sig" "$NAME-CHECKSUM.pem"; do
+for f in "$NAME" "$NAME-CHECKSUM" "$NAME-CHECKSUM.sigstore.json"; do
   curl -fsSLO "https://projectbluefin.dev/$f"
 done
 
 # 1. The checksum was produced by build-iso.yml / build-iso-utah.yml on main.
+#    Primary: verify the Sigstore bundle cosign v3 publishes. The identity pin is
+#    the same as the command below; keep it exact (#259).
 cosign verify-blob "$NAME-CHECKSUM" \
-  --signature "$NAME-CHECKSUM.sig" \
-  --certificate "$NAME-CHECKSUM.pem" \
+  --bundle "$NAME-CHECKSUM.sigstore.json" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp \
     '^https://github\.com/projectbluefin/dakota-iso/\.github/workflows/build-iso(-utah)?\.yml@refs/heads/main$'
+
+#    Alternative: the legacy separate signature + certificate are still published.
+#    cosign verify-blob "$NAME-CHECKSUM" \
+#      --signature "$NAME-CHECKSUM.sig" \
+#      --certificate "$NAME-CHECKSUM.pem" \
+#      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#      --certificate-identity-regexp \
+#        '^https://github\.com/projectbluefin/dakota-iso/\.github/workflows/build-iso(-utah)?\.yml@refs/heads/main$'
 
 # 2. The ISO matches the verified checksum.
 sha256sum -c "$NAME-CHECKSUM"
@@ -162,8 +171,8 @@ workflow (the mistake `scripts/verify-image-signature.sh` fixed in #259).
 
 Only the `latest` checksum is signed. Backup slots lose the signature in rotation, and
 `promote-release.yml` rewrites the checksum for the promoted filename, so named releases
-(`dakota-live-alpha6.iso` etc.) have no `.sig`/`.pem` yet — verify those by promoting
-only from a `latest` whose signature you have checked first.
+(`dakota-live-alpha6.iso` etc.) have no `.sigstore.json` / `.sig` / `.pem` yet — verify
+those by promoting only from a `latest` whose signature you have checked first.
 
 ### README table auto-refresh
 

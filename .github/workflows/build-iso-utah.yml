@@ -100,12 +100,9 @@ jobs:
       - name: Install Cosign
         if: steps.should_build.outputs.build == 'true'
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-        with:
-          # Installer v4 defaults to cosign v3, whose sign-blob requires --bundle and
-          # no longer writes the .sig/.pem files published below. Stay on cosign v2
-          # (v2.6.5 includes the fixes for GHSA-whqx-f9j3-ch6m and GHSA-w6c6-c85g-mmv6)
-          # until the move to Sigstore bundles.
-          cosign-release: 'v2.6.5'
+        # cosign v3 (the installer default) signs the checksum as a Sigstore
+        # bundle. The legacy .sig/.pem pair is still published next to it for a
+        # while so existing verify instructions keep working (#360).
 
       # Verify cosign signatures and pin to verified digests — the mutable
       # tag alone does not prove the image was built by project CI.
@@ -320,7 +317,13 @@ jobs:
       # ISO can be checked against something an R2 write cannot forge (#220).
       # It runs under the same conditions as the upload, before it: if signing
       # fails, nothing is published or rotated.
-      - name: Sign ISO checksum (keyless cosign)
+      #
+      # cosign v3 (the installer default) signs in the new Sigstore bundle
+      # format by default and ignores --output-signature/--output-certificate,
+      # so a single call cannot produce both. Sign twice (#360): the bundle is
+      # the primary artifact, and the legacy .sig/.pem pair is kept next to it
+      # so the verify instructions people already use still work.
+      - name: Sign ISO checksum as a Sigstore bundle (keyless cosign)
         if: >
           steps.should_build.outputs.build == 'true' &&
           inputs.skip_upload != true &&
@@ -330,7 +333,17 @@ jobs:
           CHECKSUM: ${{ steps.checksum.outputs.latest_path }}
         run: |
           set -euo pipefail
+          # Primary artifact: the Sigstore bundle (cosign v3 new bundle format).
           cosign sign-blob --yes \
+            --bundle "${CHECKSUM}.sigstore.json" \
+            "$CHECKSUM"
+          # Keep the legacy separate signature + certificate so existing verify
+          # instructions keep working. --new-bundle-format=false reaches that code
+          # path, and --use-signing-config=false keeps the keyless OIDC flow while
+          # allowing the old output flags.
+          cosign sign-blob --yes \
+            --new-bundle-format=false \
+            --use-signing-config=false \
             --output-signature "${CHECKSUM}.sig" \
             --output-certificate "${CHECKSUM}.pem" \
             "$CHECKSUM"
@@ -384,6 +397,7 @@ jobs:
 
           rclone copyto --log-level INFO --s3-no-check-bucket "$ISO" "R2:testing/${LATEST_NAME}"
           rclone copyto --log-level INFO --s3-no-check-bucket "${{ steps.checksum.outputs.latest_path }}" "R2:testing/${LATEST_NAME}-CHECKSUM"
+          rclone copyto --log-level INFO --s3-no-check-bucket "${{ steps.checksum.outputs.latest_path }}.sigstore.json" "R2:testing/${LATEST_NAME}-CHECKSUM.sigstore.json"
           for ext in sig pem; do
             rclone copyto --log-level INFO --s3-no-check-bucket "${{ steps.checksum.outputs.latest_path }}.${ext}" "R2:testing/${LATEST_NAME}-CHECKSUM.${ext}"
           done
@@ -400,6 +414,7 @@ jobs:
             echo "## Latest ISO URL (${{ matrix.variant }})"
             echo "- [${LATEST_NAME}](https://projectbluefin.dev/${LATEST_NAME})"
             echo "- [${LATEST_NAME}-CHECKSUM](https://projectbluefin.dev/${LATEST_NAME}-CHECKSUM)"
+            echo "- [${LATEST_NAME}-CHECKSUM.sigstore.json](https://projectbluefin.dev/${LATEST_NAME}-CHECKSUM.sigstore.json)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Boot verification status
