@@ -314,7 +314,8 @@ Any new shell script must pass ShellCheck before merge. For intentional suppress
 add an inline `# shellcheck disable=SCxxxx` comment with a justification.
 
 The `pinned-fetches` job calls the shared
-`projectbluefin/actions/.github/workflows/reusable-pinned-fetches.yml@v1` gate. It scans
+`projectbluefin/actions/.github/workflows/reusable-pinned-fetches.yml` gate, pinned to a
+commit SHA (`# v1`) that Renovate keeps current, as in the other projectbluefin repos. It scans
 the repository for fetches pinned to a moving target: download URLs on `latest`/branches,
 `curl | sh`-style pipes, `git clone` with no commit SHA, container images by tag with no
 `@sha256` digest, and `bootc switch`/`ostree rebase` without a signature policy.
