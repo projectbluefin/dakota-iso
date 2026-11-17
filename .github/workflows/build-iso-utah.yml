@@ -105,7 +105,7 @@ jobs:
           # no longer writes the .sig/.pem files published below. Stay on cosign v2
           # (v2.6.5 includes the fixes for GHSA-whqx-f9j3-ch6m and GHSA-w6c6-c85g-mmv6)
           # until the move to Sigstore bundles.
-          cosign-release: 'v2.6.5'
+          cosign-release: 'v3.1.4'
 
       # Verify cosign signatures and pin to verified digests — the mutable
       # tag alone does not prove the image was built by project CI.
