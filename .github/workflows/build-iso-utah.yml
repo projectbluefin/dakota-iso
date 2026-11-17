@@ -348,6 +348,13 @@ jobs:
             --output-certificate "${CHECKSUM}.pem" \
             "$CHECKSUM"
 
+          # Fail closed if cosign produced no output: a sign-blob that exits 0
+          # without writing a file (cosign v3 ignoring the legacy output flags)
+          # would otherwise let the upload publish a stale or missing signature.
+          for f in "${CHECKSUM}".{sigstore.json,sig,pem}; do
+            test -s "$f" || { echo "::error::missing $f"; exit 1; }
+          done
+
       - name: Upload ISO to Cloudflare R2
         if: >
           steps.should_build.outputs.build == 'true' &&
