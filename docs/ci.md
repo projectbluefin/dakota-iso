@@ -36,7 +36,7 @@ gh workflow run build-iso.yml --ref main
 | Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch`, `repository_dispatch` (`dakota-release`, `client_payload.image_ref`) |
 | Utah Build & Publish | `build-iso-utah.yml` | Monthly 8th 04:00 UTC, `workflow_dispatch` (bluefin entries retired in #228) |
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
-| Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
+| Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), merge queue (stable leg only), PRs (the `Plain E2E gate` check only), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
 | ShellCheck Lint + Pinned fetches | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
@@ -256,9 +256,28 @@ comments. Key screenshots:
 
 ## test-plain-install.yml
 
-**Matrix:** `installer_channel: [dev, stable]` (fail-fast: false)
+**Matrix:** `installer_channel: [dev, stable]` (fail-fast: false); in the merge queue, `[stable]` only
 **Timeout:** 120 minutes
-**Triggers:** PRs to main, weekly schedule, `workflow_dispatch`
+**Triggers:** push to main, merge queue, PRs to main (gate only), weekly schedule, `workflow_dispatch`
+
+### Merge-queue gate (#347)
+
+Nothing else that is required builds `live/Containerfile`, and Renovate updates
+its base images. So the merge queue runs this workflow's **stable** leg, and the
+`Plain E2E gate` job reports one stable check name that can be required:
+
+- **Pull request:** the unit tests and the E2E are skipped (`test.yml` already
+  runs the unit tests). The gate passes, so the PR can enter the queue.
+- **Merge queue:** `Plain E2E dakota (stable)` runs. The gate passes only if it
+  ran and passed. A skipped, failed or cancelled leg fails it.
+- **Push, schedule, dispatch:** both legs, as before. The gate doesn't run, so a
+  cancelled push run gets no extra failed job for `ci-alert.yml` to count.
+
+The dev leg stays out of the queue. It tests the upstream continuous-dev Flatpak,
+not this repo, and a break there must not block every merge. A queued group now
+waits about 35 minutes for the E2E, well within the queue's 120-minute timeout.
+`tests/test_plain_e2e_gate.py` checks the triggers, the matrix expression and
+the gate's script.
 
 This workflow builds a debug Dakota ISO and runs the full plain-install QEMU path
 (`just ... plain-test-qemu dakota`) to catch unencrypted installer regressions,

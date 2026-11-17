@@ -28,7 +28,7 @@ on:
 jobs:
   build-and-publish:
     name: Build ${{ matrix.variant }} Live ISO
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 120
     permissions:
       contents: read
@@ -99,7 +99,13 @@ jobs:
 
       - name: Install Cosign
         if: steps.should_build.outputs.build == 'true'
-        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          # Installer v4 defaults to cosign v3, whose sign-blob requires --bundle and
+          # no longer writes the .sig/.pem files published below. Stay on cosign v2
+          # (v2.6.5 includes the fixes for GHSA-whqx-f9j3-ch6m and GHSA-w6c6-c85g-mmv6)
+          # until the move to Sigstore bundles.
+          cosign-release: 'v2.6.5'
 
       # Verify cosign signatures and pin to verified digests — the mutable
       # tag alone does not prove the image was built by project CI.
