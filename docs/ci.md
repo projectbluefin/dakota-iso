@@ -853,6 +853,24 @@ is simpler: the submodule is a pinned SHA, so a fix merged to `tuna-os/fisherman
 `dev` still needs the submodule pin in `tuna-os/bootc-installer` bumped and a new
 Flatpak release cut before it reaches a dakota ISO.
 
+### ENOSPC report must measure each RAM-backed mount on its own (2026-11-18)
+
+**What failed:** A LUKS E2E run on main (dev installer leg) failed with
+`write /run/libpod/alive: no space left on device`; `df` showed `/run` and the
+live root (`LiveOS_rootfs`) both at 100%. The "largest entries" report from
+`scripts/fisherman-install.sh` listed only `/`, `/usr`, `/var/lib`… and nothing
+under `/run`, so the run said which mount filled but not what filled it.
+
+**Why:** the report ran one `du -x / /run /tmp …`. `du` counts each inode once
+across all its arguments, and `/` is the overlay over the read-only squashfs,
+whose files report the inodes of the writable upper layer stored in `/run`. The
+`/` pass consumed those inodes first, so `/run` looked empty, and the squashfs
+gigabytes pushed everything else out of the top 25.
+
+**Fix:** never measure `/`; run one `du -xah --max-depth=4` per RAM-backed mount
+(`/run`, `/tmp`, `/var/tmp`, `/dev/shm`). The overlay upper layer lives under
+`/run`, so files written to the live root show up there.
+
 ### Workflow matrix must be kept in sync with variant config files (2026-06)
 
 `build-iso-utah.yml` has a `strategy.matrix` that hardcodes `payload_image`,

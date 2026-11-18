@@ -81,9 +81,16 @@ if [[ $FISH_RC -ne 0 ]]; then
         if grep -qi "no space left on device" /tmp/fish.log; then
             echo "==> ENOSPC: filesystem usage at failure"
             df -h 2>&1 || true
-            echo "==> ENOSPC: largest entries on the RAM-backed live mounts"
-            du -xah --max-depth=2 / /run /tmp /var/tmp /dev/shm 2>/dev/null |
-                sort -rh | head -25 || true
+            # One du per mount: du counts each inode once across all of its
+            # arguments, and "/" is the overlay over the multi-GB read-only
+            # squashfs, so measuring "/" first hid what filled /run (#323).
+            # The overlay's writable upper layer lives under /run, so this
+            # also shows what was written to the live root.
+            for mnt in /run /tmp /var/tmp /dev/shm; do
+                echo "==> ENOSPC: largest entries under $mnt"
+                du -xah --max-depth=4 "$mnt" 2>/dev/null |
+                    sort -rh | head -15 || true
+            done
         fi
         exit "$FISH_RC"
     fi

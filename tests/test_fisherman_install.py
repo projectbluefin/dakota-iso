@@ -175,6 +175,7 @@ class FishermanInstallHarness(unittest.TestCase):
             echo "tmpfs 800M 800M 0 100% /run"
         """)
         self._stub("du", """
+            echo "du-args: $*"
             printf '790M\\t/run/huge\\n'
         """)
 
@@ -255,6 +256,26 @@ class TestFailureTriage(FishermanInstallHarness):
         self.assertEqual(proc.returncode, 125)
         self.assertIn("100% /run", proc.stdout)
         self.assertIn("/run/huge", proc.stdout)
+
+    def test_enospc_report_measures_each_ram_mount_alone(self):
+        """du must not measure "/" or share a call with /run (#323).
+
+        du counts each inode once across its arguments, and "/" includes the
+        read-only squashfs, so a combined call hid what filled /run.
+        """
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(
+            recipe, fish_rc=125,
+            fish_log="write /run/libpod/alive: no space left on device\n",
+        )
+        self.assertEqual(proc.returncode, 125)
+        du_calls = [line.split()[1:] for line in proc.stdout.splitlines()
+                    if line.startswith("du-args:")]
+        paths = [[a for a in call if not a.startswith("-")] for call in du_calls]
+        self.assertIn(["/run"], paths)
+        for p in paths:
+            self.assertEqual(len(p), 1, f"du measured several mounts at once: {p}")
+            self.assertNotEqual(p, ["/"], "du measured the squashfs-backed root")
 
     def test_non_enospc_failure_skips_usage_report(self):
         recipe = self._write_recipe(hostname="dakota")
