@@ -40,6 +40,7 @@ gh workflow run build-iso.yml --ref main
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
 | ShellCheck Lint + Pinned fetches | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
+| R2 Download Stats | `r2-download-stats.yml` | Daily 06:00 UTC, `workflow_dispatch` — counts public ISO downloads from R2 Data Access Logs; needs `CF_OBSERVABILITY_TOKEN` secret |
 
 ### CI alert cancellation handling (2026-11-14)
 

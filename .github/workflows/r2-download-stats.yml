@@ -1,0 +1,63 @@
+name: R2 download stats
+
+# Counts public ISO downloads from R2 Data Access Logs (Workers Observability).
+# Requires secret CF_OBSERVABILITY_TOKEN: Cloudflare API token with
+# "Workers Observability Write" on account 2a4147f637f7d9e6a67ca185357d3b0a.
+#
+# Data Access Logs are non-retroactive and best-effort: the first runs after
+# enabling will return ~zero rows until real traffic arrives. The query uses a
+# rolling 7-day window (the log retention) so a missed run self-heals.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query R2 download counts
+        env:
+          CF_OBSERVABILITY_TOKEN: ${{ secrets.CF_OBSERVABILITY_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Seconds * 1000 avoids %3N portability quirks; 13-digit ms.
+          from=$(( $(date -u -d '7 days ago' +%s) * 1000 ))
+          to=$(( $(date -u +%s) * 1000 ))
+          # Status semantics: 200 = full download; 206 = HTTP range request
+          # (download manager/resume), a separate GetObject and not a new download.
+          payload=$(jq -n --argjson from "$from" --argjson to "$to" '{
+            queryId: "r2-download-stats",
+            timeframe: {from: $from, to: $to},
+            parameters: {
+              datasets: ["r2"],
+              filterCombination: "and",
+              filters: [
+                {key: "$metadata.service", operation: "in", type: "string", value: "testing"},
+                {key: "interface", operation: "in", type: "string", value: "Public"},
+                {key: "action", operation: "in", type: "string", value: "GetObject"}
+              ],
+              calculations: [{operator: "count"}],
+              groupBys: [
+                {type: "string", value: "resource.key"},
+                {type: "string", value: "response.status"}
+              ],
+              limit: 100
+            }
+          }')
+          result=$(curl -sS --fail-with-body \
+            "https://api.cloudflare.com/client/v4/accounts/2a4147f637f7d9e6a67ca185357d3b0a/workers/observability/telemetry/query" \
+            -H "Authorization: Bearer $CF_OBSERVABILITY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          echo "$result" | jq .
+          {
+            echo '### R2 download counts'
+            echo '```json'
+            echo "$result" | jq .
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
