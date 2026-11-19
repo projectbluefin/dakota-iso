@@ -434,6 +434,44 @@ CI sets `SUPERISO_COMPRESSION=release` (zstd-15, 1M blocks) in the squashfs buil
 this produces ~20% smaller ISOs at ~5× longer squashfs build time. Always use `release`
 for ISOs published to R2. Use `fast` only for local testing.
 
+### sudo-rs drops `sudo -E` — ISO recompressed to zstd-3, +0.7 GB (2026-11-19)
+
+**Symptom:** the published `dakota-live-latest.iso` grew 5.6 GB → 6.3 GB on
+ubuntu-26.04 runners. The build log shows `mksquashfs ... (zstd-3)` even though
+the step still declares `SUPERISO_COMPRESSION: release`.
+
+**Root cause:** Ubuntu 25.10+/26.04 ships **sudo-rs** as its default `sudo`.
+sudo-rs always enables `env_reset` and does not implement `-E`/`--preserve-env`
+— the flag is accepted but the step environment never reaches
+`scripts/build-live-squashfs.sh`. The script fell back to its `fast` default
+(zstd-3, 128 KB blocks) instead of `release` (zstd-15, 1 MB), growing the
+squashfs 5.5 GB → 6.2 GB and the ISO 5.6 GB → 6.3 GB — still under the ≤6.5 GB
+single-copy target, but ~0.7 GB larger than a release build should be.
+`SUPERISO_TMPDIR=/var/iso-build` is dropped by the same mechanism, silently
+moving ~12 GB of intermediates back to `/var/tmp` (the ENOSPC landmine below).
+
+**Fix:** pass the vars inside the sudo invocation, where sudo cannot strip them:
+
+```bash
+sudo env \
+  SUPERISO_COMPRESSION=release \
+  SUPERISO_TMPDIR=/var/iso-build \
+  bash scripts/build-live-squashfs.sh …
+```
+
+Hardcode the values — a `"$SUPERISO_COMPRESSION"` self-reference expands to
+empty (→ `fast`) if the step `env:` block is ever removed. CI also asserts the
+artifact: `unsquashfs -s <sfs> | grep -q 'Block size 1048576'` (release = 1M
+blocks, fast = 128K), so any future env-plumbing break fails the build instead
+of silently shipping a zstd-3 ISO.
+
+Applied to `build-iso.yml`, `build-iso-utah.yml`, and the `test-plain-install.yml`
+squashfs step (which needs no env, so it drops `-E` outright).
+
+**Rule:** on the ubuntu-26.04 runners never rely on `sudo -E` to carry build
+config. Use `sudo env VAR=value bash …` — the same convention already used for
+`sudo env PATH="$PATH" just …`.
+
 ### installer_channel=dev regression: oci-cache/index.json not found (2026-05)
 
 After the continuous-dev release ~2026-05, fisherman's overlay storage path fails
