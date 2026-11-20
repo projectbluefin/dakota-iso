@@ -49,11 +49,17 @@ jobs:
               limit: 100
             }
           }')
-          result=$(curl -sS --fail-with-body \
+          if result=$(curl -sS --fail-with-body \
             "https://api.cloudflare.com/client/v4/accounts/2a4147f637f7d9e6a67ca185357d3b0a/workers/observability/telemetry/query" \
             -H "Authorization: Bearer $CF_OBSERVABILITY_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "$payload")
+            -d "$payload"); then
+            :
+          else
+            status=$?
+            printf '%s\n' "$result" >&2
+            exit "$status"
+          fi
           echo "$result" | jq .
           {
             echo '### R2 download counts'
