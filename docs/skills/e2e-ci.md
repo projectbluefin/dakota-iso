@@ -212,6 +212,32 @@ If the image grows, this overflows.
     SUPERISO_TMPDIR: /var/iso-build
 ```
 
+### sudo-rs ignores `sudo -E` on ubuntu-26.04 (2026-11-19)
+
+**Symptom:** the `env:` block above has no effect on ubuntu-26.04 runners — the
+squashfs comes out zstd-3, not zstd-15, so the ISO is ~0.7 GB larger.
+
+**Root cause:** Ubuntu 25.10+/26.04 defaults to **sudo-rs**, which always sets
+`env_reset` and does not implement `-E`. `sudo -E bash scripts/...` drops the
+step environment.
+
+**Fix:** pass the vars through `sudo env`:
+
+```bash
+sudo env \
+  SUPERISO_COMPRESSION=release \
+  SUPERISO_TMPDIR=/var/iso-build \
+  bash scripts/build-live-squashfs.sh …
+```
+
+Hardcode the values (a `"$VAR"` self-reference silently empties if the `env:`
+block is removed). The publish workflows additionally assert
+`unsquashfs -s <sfs> | grep -q 'Block size 1048576'`, so a zstd-3 fallback
+fails the build.
+
+For steps that need no env (e.g. `test-plain-install.yml`, which passes every
+input as a CLI arg), drop `-E` and use plain `sudo bash`.
+
 ---
 
 ## fisherman hostname failure — fixed in v2.7.4

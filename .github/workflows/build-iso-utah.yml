@@ -142,16 +142,27 @@ jobs:
 
       - name: Build live squashfs + boot tar
         if: steps.should_build.outputs.build == 'true'
-        env:
-          SUPERISO_COMPRESSION: release
-          SUPERISO_TMPDIR: /var/iso-build
         run: |
           sudo mkdir -p /var/iso-build
-          sudo -E bash scripts/build-live-squashfs.sh \
+          # sudo-rs (ubuntu-26.04) ignores -E and resets env — pass the values
+          # inside the sudo command, hardcoded (no $VAR self-reference).
+          sudo env \
+            SUPERISO_COMPRESSION=release \
+            SUPERISO_TMPDIR=/var/iso-build \
+            bash scripts/build-live-squashfs.sh \
             --oci-image ${{ matrix.payload_image }} \
             localhost/${{ matrix.live_target }}-live:latest \
             /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
             /var/iso-build/${{ matrix.live_target }}-boot.tar
+
+      - name: Assert release compression (zstd-15)
+        if: steps.should_build.outputs.build == 'true'
+        run: |
+          # release = 1M squashfs blocks, fast = 128K. Fail the build if env
+          # plumbing regressed and we silently got zstd-3.
+          sudo unsquashfs -s /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
+            | grep -q 'Block size 1048576' \
+            || { echo "ERROR: squashfs is not zstd-15 (block size != 1048576)" >&2; exit 1; }
 
       - name: Verify bound OCI media receipt is embedded
         if: steps.should_build.outputs.build == 'true'
