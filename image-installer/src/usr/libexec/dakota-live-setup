@@ -1,6 +1,73 @@
 #!/usr/bin/bash
-# Live session setup for gnome-setup on Dakota.
+# Turn a dakota.live boot of the installed disk image into the live session.
+#
+# Runs only with dakota.live on the kernel command line. / (with /etc and
+# /var) is a tmpfs overlay there (the live entry's extra initrd configures
+# bootc-root-setup that way), so everything written here (the live account,
+# its autologin, the installer autostart) exists only in RAM and never reaches
+# the medium -- which is what the installer copies.
 set -euo pipefail
+
+user=liveuser
+home="$(realpath -m /home)/${user}"
+
+if ! id "${user}" >/dev/null 2>&1; then
+    useradd --create-home --home-dir "${home}" --user-group \
+        --groups wheel --comment 'Live User' "${user}"
+fi
+passwd --delete "${user}" >/dev/null
+# Name the rule zz-dakota-live so it sorts after sudoers.d/wheel in sudo-rs
+printf '%s ALL=(ALL) NOPASSWD: ALL\n' "${user}" >/etc/sudoers.d/zz-dakota-live
+chmod 0440 /etc/sudoers.d/zz-dakota-live
+install -d -o "${user}" -g "${user}" "${home}/.config"
+install -o "${user}" -g "${user}" -m 0644 /dev/null "${home}/.config/gnome-initial-setup-done"
+
+python3 - <<'PY'
+import configparser, pathlib
+path = pathlib.Path("/etc/gdm/custom.conf")
+config = configparser.ConfigParser(interpolation=None)
+config.optionxform = str
+if path.exists():
+    config.read(path)
+if not config.has_section("daemon"):
+    config.add_section("daemon")
+config["daemon"]["AutomaticLoginEnable"] = "True"
+config["daemon"]["AutomaticLogin"] = "liveuser"
+path.parent.mkdir(parents=True, exist_ok=True)
+with path.open("w") as f:
+    config.write(f)
+PY
+
+# Keep the live session awake and skip the tour; pin the installer.
+db="$(sed -n 's/^system-db://p' /etc/dconf/profile/user 2>/dev/null | head -n 1)"
+db="${db:-local}"
+if [[ ! -f /etc/dconf/profile/user ]]; then
+    install -d /etc/dconf/profile
+    printf 'user-db:user\nsystem-db:%s\n' "${db}" >/etc/dconf/profile/user
+fi
+install -d "/etc/dconf/db/${db}.d/locks"
+cat >"/etc/dconf/db/${db}.d/50-dakota-live" <<'EOF'
+[org/gnome/shell]
+welcome-dialog-last-shown-version='999'
+favorite-apps=['org.gnome.Setup.desktop', 'org.gnome.Nautilus.desktop']
+
+[org/gnome/desktop/screensaver]
+lock-enabled=false
+idle-activation-enabled=false
+
+[org/gnome/desktop/session]
+idle-delay=uint32 0
+
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+EOF
+cat >"/etc/dconf/db/${db}.d/locks/50-dakota-live" <<'EOF'
+/org/gnome/desktop/screensaver/lock-enabled
+/org/gnome/desktop/screensaver/idle-activation-enabled
+/org/gnome/desktop/session/idle-delay
+EOF
+dconf update || true
 
 if grep -qw 'dakota.live.installer=gnome-setup' /proc/cmdline; then
     /usr/libexec/dakota-live-definitions
@@ -16,4 +83,11 @@ Icon=org.gnome.Setup
 X-GNOME-Autostart-enabled=true
 EOF
     cp /usr/share/dakota/gnome-setup/org.gnome.Setup.desktop /usr/local/share/applications/
+fi
+
+if grep -qw dakota.live.debug /proc/cmdline; then
+    echo "${user}:live" | chpasswd
+    install -d /etc/ssh/sshd_config.d
+    printf 'PasswordAuthentication yes\n' >/etc/ssh/sshd_config.d/00-dakota-live-debug.conf
+    systemctl --no-block start sshd.service 2>/dev/null || true
 fi

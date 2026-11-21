@@ -42,6 +42,14 @@ class ExperimentalRawInstallerContractTest(unittest.TestCase):
         pages = (TRACK / "src" / "usr" / "share" / "dakota" / "gnome-setup" / "pages.conf").read_text()
         self.assertIn("post-install-unit=dakota-sysinstall-post@.service", pages)
 
+    def test_live_setup_creates_liveuser_and_gdm_autologin(self):
+        setup_script = (TRACK / "src" / "usr" / "libexec" / "dakota-live-setup").read_text()
+        self.assertIn("useradd", setup_script)
+        self.assertIn("liveuser", setup_script)
+        self.assertIn("AutomaticLoginEnable", setup_script)
+        self.assertIn("AutomaticLogin", setup_script)
+        self.assertIn("zz-dakota-live", setup_script)
+
     def test_prepare_medium_adds_live_entry_without_mutating_installed_entry(self):
         module = load_module("prepare_medium", TRACK / "prepare-medium.py")
         with tempfile.TemporaryDirectory() as tmp:
