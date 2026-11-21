@@ -30,13 +30,14 @@
       "automerge": true
     },
     {
-      "description": "build-iso.yml, build-iso-utah.yml and promote-release.yml are human-merge paths in the hive (they build, publish and promote the ISOs). Give their updates their own branches, so a pin-only update to them is a PR of its own that the hive's pin-only exception can merge, instead of being held with other workflows.",
+      "description": "build-iso.yml, build-iso-utah.yml and promote-release.yml are human-merge paths in the hive (they build, publish and promote the ISOs). Give their updates their own branches, so a pin-only update to them is a PR of its own that the hive's pin-only exception can merge, instead of being held with other workflows. Renovate doesn't merge these updates itself, because its own merge would skip the hive's hold on these files. The hive merges a pin-only update, and anything else, a major included, waits for a person.",
       "matchFileNames": [
         ".github/workflows/build-iso.yml",
         ".github/workflows/build-iso-utah.yml",
         ".github/workflows/promote-release.yml"
       ],
-      "additionalBranchPrefix": "publishing-workflows-"
+      "additionalBranchPrefix": "publishing-workflows-",
+      "automerge": false
     },
     {
       "description": "Don't digest-pin the Dakota base image in live/Containerfile. Its FROM lines are ghcr.io/${REGISTRY}/${TARGET}:${TAG}${BASE_DIGEST}, and build-iso.yml passes the cosign-verified digest as BASE_DIGEST, so a digest inside TAG gives a reference with two digests and the ISO build fails (#330).",
