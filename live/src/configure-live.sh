@@ -26,6 +26,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p /etc/systemd/system
 ln -sfn /dev/null /etc/systemd/system/bootc-unified-storage.service
 
+# brew-setup.service unpacks ~400-500 MiB of Homebrew into /var/home/linuxbrew
+# on first boot. In the live session /var is the RAM-backed overlay upper
+# layer, so on a 4 GiB VM that alone fills most of the 40%-of-RAM /run tmpfs
+# and the offline install then fails with ENOSPC (#322, #323). Nothing in the
+# installer needs brew; installed systems keep it enabled because the mask
+# lives only in the live root.
+ln -sfn /dev/null /etc/systemd/system/brew-setup.service
+
 cleanup_liveuser_home_bind() {
     if [[ "${LIVEUSER_HOME_BIND_ACTIVE:-0}" == "1" ]]; then
         # Only attempt to umount if /home is a mountpoint to avoid unmounting a
