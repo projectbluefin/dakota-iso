@@ -59,6 +59,11 @@ class ExperimentalRawInstallerContractTest(unittest.TestCase):
             self.assertIn("systemd.volatile=state", live)
             self.assertIn("initrd /dakota-live-initrd.img", live)
             self.assertEqual((esp / "loader" / "loader.conf").read_text(), "timeout 5\ndefault dakota-live.conf\n")
+    def test_setup_root_conf_is_in_usr_lib_composefs(self):
+        build_script = (TRACK / "build-raw-image.sh").read_text()
+        self.assertIn("usr/lib/composefs", build_script)
+        self.assertNotIn("usr/lib/bootc/setup-root-conf.toml", build_script)
+
 
     def test_repart_definitions_copy_esp_and_encrypt_root(self):
         module = load_module("live_definitions", TRACK / "live-definitions.py")
