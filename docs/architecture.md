@@ -323,6 +323,10 @@ composefs raw disk with systemd-boot. Derive the live Type #1 BLS entry from the
 installed entry: keep the `composefs.digest` argument even when the original
 entry uses GPT auto-discovery and has no explicit `root=`. The live account,
 autologin and installer permission grants exist only in the live session.
+Use `/run/dakota-live/` sockets and Dakota-only Polkit actions. The base image
+already ships stock SysInstall and CryptEnroll sockets; sharing either the
+socket path or the authorization grant lets the live session reach the stock
+implementation instead of the guarded Dakota service.
 
 `just experimental-raw-container` builds and checks the installer binaries.
 The frontend uses Fedora 44's Blueprint 0.20+ because older compilers reject
