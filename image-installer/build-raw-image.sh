@@ -37,7 +37,7 @@ close_image() {
         rmdir -- "${MNT_ESP}" || return 1
     fi
     if [[ -n "${LOOPDEV:-}" ]]; then
-        losetup -d -- "${LOOPDEV}" || return 1
+        losetup --detach "${LOOPDEV}" || return 1
         LOOPDEV=""
     fi
 }
