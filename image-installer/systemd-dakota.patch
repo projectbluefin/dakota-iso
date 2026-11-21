@@ -129,6 +129,15 @@ diff --git a/src/sysinstall/sysinstall.c b/src/sysinstall/sysinstall.c
          } else
                  fit = DEVICE_FIT_ENOUGH_FREE_SPACE;
 
+@@ -1904,7 +1934,7 @@
+         r = varlink_verify_polkit_async(
+                         link,
+                         /* bus= */ NULL,
+-                        "io.systemd.sysinstall.ListCandidateDevices",
++                        "org.projectbluefin.dakota.sysinstall.ListCandidateDevices",
+                         /* details= */ NULL,
+                         polkit_registry);
+         if (r <= 0)
 @@ -1921,12 +1951,15 @@
          if (r != 0)
                  return r;
@@ -146,6 +155,15 @@ diff --git a/src/sysinstall/sysinstall.c b/src/sysinstall/sysinstall.c
          if (r < 0)
                  return r;
 
+@@ -2067,7 +2100,7 @@
+         r = varlink_verify_polkit_async(
+                         link,
+                         /* bus= */ NULL,
+-                        "io.systemd.sysinstall.Run",
++                        "org.projectbluefin.dakota.sysinstall.Run",
+                         /* details= */ NULL,
+                         polkit_registry);
+         if (r <= 0)
 @@ -2081,21 +2114,27 @@
          if (r != 0)
                  return r;
@@ -761,6 +779,15 @@ diff --git a/src/cryptenroll/cryptenroll-varlink.c b/src/cryptenroll/cryptenroll
          _cleanup_(crypt_freep) struct crypt_device *cd = NULL;
          _cleanup_(iovec_done_erase) struct iovec vk = {};
          _cleanup_close_ int keyfile_fd = -EBADF;
+@@ -203,7 +316,7 @@
+         r = varlink_verify_polkit_async(
+                         link,
+                         /* bus= */ NULL,
+-                        "io.systemd.cryptenroll.enroll",
++                        "org.projectbluefin.dakota.cryptenroll.enroll",
+                         /* details= */ NULL,
+                         polkit_registry);
+         if (r <= 0)
 @@ -215,7 +331,14 @@
          c.enroll_type = p.mechanism;
          c.unlock_type = _UNLOCK_TYPE_INVALID;
@@ -831,6 +858,15 @@ diff --git a/src/cryptenroll/cryptenroll-varlink.c b/src/cryptenroll/cryptenroll
          _cleanup_(crypt_freep) struct crypt_device *cd = NULL;
          _cleanup_free_ EnrolledSlot *slots = NULL;
          const char *node = NULL;
+@@ -444,7 +586,7 @@
+         r = varlink_verify_polkit_async(
+                         link,
+                         /* bus= */ NULL,
+-                        "io.systemd.cryptenroll.list-slots",
++                        "org.projectbluefin.dakota.cryptenroll.list-slots",
+                         /* details= */ NULL,
+                         polkit_registry);
+         if (r <= 0)
 @@ -452,7 +594,11 @@
 
          c.interactive = false;
@@ -844,3 +880,45 @@ diff --git a/src/cryptenroll/cryptenroll-varlink.c b/src/cryptenroll/cryptenroll
                  r = determine_default_node(&c.node);
                  if (r == -ENXIO)
                          return sd_varlink_error_invalid_parameter_name(link, "node");
+diff --git a/src/sysinstall/io.systemd.sysinstall.policy b/src/sysinstall/io.systemd.sysinstall.policy
+--- a/src/sysinstall/io.systemd.sysinstall.policy
++++ b/src/sysinstall/io.systemd.sysinstall.policy
+@@ -18,7 +18,7 @@
+         <vendor>The systemd Project</vendor>
+         <vendor_url>https://systemd.io</vendor_url>
+
+-        <action id="io.systemd.sysinstall.Run">
++        <action id="org.projectbluefin.dakota.sysinstall.Run">
+                 <description gettext-domain="systemd">Install OS to disk</description>
+                 <message gettext-domain="systemd">Authentication is required to install an OS to disk.</message>
+                 <defaults>
+@@ -28,7 +28,7 @@
+                 </defaults>
+         </action>
+
+-        <action id="io.systemd.sysinstall.ListCandidateDevices">
++        <action id="org.projectbluefin.dakota.sysinstall.ListCandidateDevices">
+                 <description gettext-domain="systemd">List candidate devices</description>
+                 <message gettext-domain="systemd">Authentication is required to list device candidates.</message>
+                 <defaults>
+diff --git a/src/cryptenroll/io.systemd.cryptenroll.policy b/src/cryptenroll/io.systemd.cryptenroll.policy
+--- a/src/cryptenroll/io.systemd.cryptenroll.policy
++++ b/src/cryptenroll/io.systemd.cryptenroll.policy
+@@ -18,7 +18,7 @@
+         <vendor>The systemd Project</vendor>
+         <vendor_url>https://systemd.io</vendor_url>
+
+-        <action id="io.systemd.cryptenroll.enroll">
++        <action id="org.projectbluefin.dakota.cryptenroll.enroll">
+                 <description gettext-domain="systemd">Enroll an unlock mechanism into an encrypted volume</description>
+                 <message gettext-domain="systemd">Authentication is required to enroll a new unlock mechanism into an encrypted volume.</message>
+                 <defaults>
+@@ -28,7 +28,7 @@
+                 </defaults>
+         </action>
+
+-        <action id="io.systemd.cryptenroll.list-slots">
++        <action id="org.projectbluefin.dakota.cryptenroll.list-slots">
+                 <description gettext-domain="systemd">Enumerate the keyslots currently enrolled in a LUKS2 volume</description>
+                 <message gettext-domain="systemd">Authentication is required to enumerate currently enrolled keyslots in a LUKS2 volume.</message>
+                 <defaults>

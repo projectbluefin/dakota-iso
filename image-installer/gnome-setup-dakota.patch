@@ -452,6 +452,15 @@ diff --git a/src/interfaces/sysinstall.rs b/src/interfaces/sysinstall.rs
 
  use systemd_sysinstall_demo::SysInstallDemo;
 
+@@ -22,7 +22,7 @@
+     BlockDeviceAction, CandidateDevice, DeviceFit, ProgressPhase, SysInstall as SysInstallTrait,
+ };
+
+-const SOCKET_PATH: &str = "/run/systemd/io.systemd.SysInstall";
++const SOCKET_PATH: &str = "/run/dakota-live/sysinstall.sock";
+
+ /// Unit the distribution wants started (with the target disk as its instance) after
+ /// systemd-sysinstall copied the OS, e.g. to fix up what a block copy cannot get right.
 @@ -29,87 +29,59 @@
  static POST_INSTALL_UNIT: OnceLock<Option<String>> = OnceLock::new();
 
@@ -773,7 +782,8 @@ diff --git a/src/interfaces/crypt_enroll.rs b/src/interfaces/crypt_enroll.rs
 +use super::sysinstall::installed_luks_partition;
  use systemd_crypt_enroll::{CryptEnroll as CryptEnrollTrait, EnrollMechanism};
 
- const SOCKET_PATH: &str = "/run/systemd/io.systemd.CryptEnroll";
+-const SOCKET_PATH: &str = "/run/systemd/io.systemd.CryptEnroll";
++const SOCKET_PATH: &str = "/run/dakota-live/cryptenroll.sock";
 
  #[derive(Debug)]
 -pub struct CryptEnroll {}

@@ -25,8 +25,10 @@ RUN dnf -y install --setopt=install_weak_deps=False \
         /build/systemd-sysinstall /build/systemd-repart /build/systemd-cryptenroll && \
     install -D -m 0755 -t /out/usr/lib64/dakota-sysinstall /build/src/shared/libsystemd-shared-dakota-sysinstall.so && \
     patchelf --set-rpath /usr/lib64/dakota-sysinstall /out/usr/libexec/dakota-sysinstall/systemd-* && \
-    install -D -m 0644 -t /out/usr/share/polkit-1/actions \
-        /src/src/sysinstall/io.systemd.sysinstall.policy /src/src/cryptenroll/io.systemd.cryptenroll.policy && \
+    install -D -m 0644 /src/src/sysinstall/io.systemd.sysinstall.policy \
+        /out/usr/share/polkit-1/actions/org.projectbluefin.dakota.sysinstall.policy && \
+    install -D -m 0644 /src/src/cryptenroll/io.systemd.cryptenroll.policy \
+        /out/usr/share/polkit-1/actions/org.projectbluefin.dakota.cryptenroll.policy && \
     echo "${SYSTEMD_REF}" > /out/usr/libexec/dakota-sysinstall/SOURCE_REF
 
 # Translated Blueprint expressions require blueprint-compiler >= 0.20.

@@ -3,10 +3,10 @@ polkit.addRule(function(action, subject) {
     if (subject.user != "liveuser" || !subject.active || !subject.local)
         return undefined;
 
-    var installAction = action.id == "io.systemd.sysinstall.Run" ||
-        action.id == "io.systemd.sysinstall.ListCandidateDevices" ||
-        action.id == "io.systemd.cryptenroll.enroll" ||
-        action.id == "io.systemd.cryptenroll.list-slots" ||
+    var installAction = action.id == "org.projectbluefin.dakota.sysinstall.Run" ||
+        action.id == "org.projectbluefin.dakota.sysinstall.ListCandidateDevices" ||
+        action.id == "org.projectbluefin.dakota.cryptenroll.enroll" ||
+        action.id == "org.projectbluefin.dakota.cryptenroll.list-slots" ||
         action.id == "org.freedesktop.locale1.set-locale" ||
         action.id == "org.freedesktop.locale1.set-keyboard";
     var postInstallAction = action.id == "org.freedesktop.systemd1.manage-units" &&

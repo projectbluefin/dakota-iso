@@ -7,8 +7,7 @@ Conflicts=shutdown.target
 Before=shutdown.target
 
 [Socket]
-ListenStream=/run/systemd/io.systemd.CryptEnroll
-Symlinks=/run/varlink/registry/io.systemd.CryptEnroll
+ListenStream=/run/dakota-live/cryptenroll.sock
 FileDescriptorName=varlink
 SocketMode=0666
 Accept=yes
