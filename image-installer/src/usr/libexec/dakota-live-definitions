@@ -1,0 +1,28 @@
+#!/usr/bin/bash
+# Prepare runtime configuration for Dakota's experimental live medium.
+set -euo pipefail
+
+out=/run/dakota-live/repart.d
+mkdir -p "${out}"
+
+root_part=""
+if mountpoint -q /sysroot; then
+    root_part="$(findmnt -n -o SOURCE /sysroot 2>/dev/null || true)"
+fi
+if [[ -z "${root_part}" ]]; then
+    root_uuid=""
+    read -r -a cmdline </proc/cmdline
+    for arg in "${cmdline[@]}"; do
+        case "${arg}" in root=UUID=*) root_uuid="${arg#root=UUID=}" ;; esac
+    done
+    [[ -n "${root_uuid}" ]] && root_part="$(realpath "/dev/disk/by-uuid/${root_uuid}" 2>/dev/null || true)"
+fi
+[[ -n "${root_part}" ]] || { echo "could not determine medium root partition" >&2; exit 1; }
+
+src_disk="/dev/$(lsblk -rno PKNAME "${root_part}")"
+tpm2=0
+if [[ "$(cat /sys/class/tpm/tpm0/tpm_version_major 2>/dev/null)" == 2 ]]; then
+    tpm2=1
+fi
+
+sfdisk --json "${src_disk}" | python3 /usr/libexec/dakota-live-definitions.py "${out}" "${root_part}" "${tpm2}"

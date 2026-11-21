@@ -1,0 +1,8 @@
+[root]
+transient = true
+
+[etc]
+mount = "root"
+
+[var]
+mount = "none"
