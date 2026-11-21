@@ -47,8 +47,8 @@ ROOT_UUID="$(blkid -s UUID -o value "${ROOT_PART}")"
 
 # Build the live-only initrd containing setup-root-conf.toml
 INITRD_TMP="$(mktemp -d /tmp/dakota-initrd.XXXXXX)"
-mkdir -p "${INITRD_TMP}/usr/lib/bootc"
-cp "${HERE}/live/setup-root-conf.toml" "${INITRD_TMP}/usr/lib/bootc/setup-root-conf.toml"
+mkdir -p "${INITRD_TMP}/usr/lib/composefs"
+cp "${HERE}/live/setup-root-conf.toml" "${INITRD_TMP}/usr/lib/composefs/setup-root-conf.toml"
 
 MNT_ESP="$(mktemp -d /tmp/dakota-esp.XXXXXX)"
 mount "${ESP_PART}" "${MNT_ESP}"
