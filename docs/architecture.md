@@ -314,3 +314,9 @@ sudo just debug=1 installer_channel=${{ matrix.installer_channel }} \
 only in filename (`org.bootcinstaller.Installer.flatpak` vs `...Installer.Devel.flatpak`);
 the bundle's SHA-256 must match the lock — see `TestInstallerChannelURLs` in
 `tests/test_live_build_invariants.py`. Bump with `scripts/bump-installer-bundle.sh`.
+
+### Experimental gnome-setup + systemd-sysinstall raw medium track (2026-11-21)
+
+Utah PR #1437 experiments with `gnome-setup` driving `systemd-sysinstall` via Varlink sockets to block-copy a bootable raw medium. In Dakota, composefs + systemd-boot uses `gpt-auto` without a `root=` kernel argument, so block-copy post-install scripts fail if they require `root=UUID=`.
+
+Keep the experimental track separated under `image-installer/` with opt-in recipe `experimental-raw-medium` in `justfile`. Do not replace the release ISO pipeline (`just iso-sd-boot`) or mutate `live/src/configure-live.sh` until end-to-end boot of the installed system is proven.

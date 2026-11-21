@@ -1,0 +1,98 @@
+#!/usr/bin/bash
+# Finish installation on target block device after sysinstall partition copy.
+set -euo pipefail
+
+target="${1:?usage: dakota-sysinstall-post TARGET}"
+[[ -b "${target}" ]] || { echo "${target} is not a block device" >&2; exit 1; }
+target="$(realpath "${target}")"
+
+udevadm settle
+esp="" root_part=""
+ESP_TYPE="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+while read -r part; do
+    ptype="$(lsblk -rno PARTTYPE "${part}" | tr '[:upper:]' '[:lower:]')"
+    fstype="$(blkid -p -s TYPE -o value "${part}" || true)"
+    if [[ "${ptype}" == "${ESP_TYPE}" ]]; then
+        esp="${part}"
+    elif [[ "${fstype}" == crypto_LUKS ]]; then
+        root_part="${part}"
+    fi
+done < <(lsblk -rnpo NAME,TYPE "${target}" | awk '$2 == "part" { print $1 }')
+
+[[ -n "${esp}" && -n "${root_part}" ]] || { echo "target missing ESP or root" >&2; exit 1; }
+
+work="$(mktemp -d /run/dakota-install.XXXXXX)"
+mapper="dakota-install-root-$$"
+cleanup() {
+    set +e
+    for m in "${work}"/mnt/*; do mountpoint -q "$m" && umount -R "$m"; done
+    [[ -e "/dev/mapper/${mapper}" ]] && cryptsetup close "${mapper}"
+    rm -rf "${work}"
+}
+trap cleanup EXIT
+mkdir -p "${work}/mnt/root" "${work}/mnt/efi"
+
+luks_uuid="$(cryptsetup luksUUID "${root_part}")"
+python3 - "${root_part}" "${mapper}" <<'PY'
+import ctypes, sys
+lib = ctypes.CDLL("libcryptsetup.so.12")
+cd = ctypes.c_void_p()
+lib.crypt_init.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p]
+lib.crypt_load.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
+lib.crypt_activate_by_passphrase.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int,
+                                             ctypes.c_char_p, ctypes.c_size_t, ctypes.c_uint32]
+lib.crypt_free.argtypes = [ctypes.c_void_p]
+if lib.crypt_init(ctypes.byref(cd), sys.argv[1].encode()) < 0:
+    sys.exit("crypt_init failed")
+try:
+    if lib.crypt_load(cd, b"LUKS2", None) < 0:
+        sys.exit("not LUKS2")
+    if lib.crypt_activate_by_passphrase(cd, sys.argv[2].encode(), -1, b"", 0, 0) < 0:
+        sys.exit("failed to unlock with empty passphrase")
+finally:
+    lib.crypt_free(cd)
+PY
+
+root_dev="/dev/mapper/${mapper}"
+# Check /sysroot existence if present on composefs hosts
+test -d /sysroot 2>/dev/null || true
+mount "${root_dev}" "${work}/mnt/root"
+mount "${esp}" "${work}/mnt/efi"
+
+deployments=()
+for d in "${work}"/mnt/root/state/deploy/*; do
+    [[ -d "$d/etc" ]] && deployments+=("$d")
+done
+[[ ${#deployments[@]} -ge 1 ]] || { echo "no composefs deployment found" >&2; exit 1; }
+
+entry_dir="${work}/mnt/efi/loader/entries"
+rm -f "${entry_dir}/dakota-live.conf"
+
+options="discard"
+if cryptsetup luksDump "${root_part}" | grep -q 'systemd-tpm2'; then
+    options="tpm2-device=auto,discard"
+fi
+
+for entry in "${entry_dir}"/*.conf; do
+    [[ -f "${entry}" ]] || continue
+    sed -i "/^options /{/rd.luks.uuid=${luks_uuid}/!s/\$/ rd.luks.uuid=${luks_uuid} rd.luks.options=${luks_uuid}=${options}/}" "${entry}"
+    sed -i "s/dakota.live.installer=gnome-setup //g; s/dakota.live //g" "${entry}"
+done
+
+for d in "${deployments[@]}"; do
+    printf 'luks-%s UUID=%s none %s\n' "${luks_uuid}" "${luks_uuid}" "${options}" >"$d/etc/crypttab"
+done
+
+fstype="$(blkid -p -s TYPE -o value "${root_dev}" || true)"
+if [[ "${fstype}" == "btrfs" ]]; then
+    btrfs filesystem resize max "${work}/mnt/root" >/dev/null || true
+elif [[ "${fstype}" == "ext4" ]]; then
+    resize2fs "${root_dev}" >/dev/null || true
+fi
+
+sync
+umount -R "${work}/mnt/efi"
+umount -R "${work}/mnt/root"
+cryptsetup close "${mapper}"
+trap - EXIT
+rm -rf "${work}"

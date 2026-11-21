@@ -1,0 +1,19 @@
+#!/usr/bin/bash
+# Live session setup for gnome-setup on Dakota.
+set -euo pipefail
+
+if grep -qw 'dakota.live.installer=gnome-setup' /proc/cmdline; then
+    /usr/libexec/dakota-live-definitions
+    install -d /run/gnomeos /etc/xdg/autostart /usr/local/share/applications
+    touch /run/gnomeos/is-live
+
+    cat >/etc/xdg/autostart/dakota-gnome-setup.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Install Dakota
+Exec=gnome-setup
+Icon=org.gnome.Setup
+X-GNOME-Autostart-enabled=true
+EOF
+    cp /usr/share/dakota/gnome-setup/org.gnome.Setup.desktop /usr/local/share/applications/
+fi
