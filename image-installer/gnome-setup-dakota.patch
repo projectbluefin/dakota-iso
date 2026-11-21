@@ -1,0 +1,1061 @@
+diff --git a/src/page/installer/disk/mod.rs b/src/page/installer/disk/mod.rs
+--- a/src/page/installer/disk/mod.rs
++++ b/src/page/installer/disk/mod.rs
+@@ -4,7 +4,6 @@
+ mod disk_row;
+ mod rst;
+ mod select;
+-mod wipe_or_free;
+
+ pub use rst::RstPage;
+ pub use select::DiskSelectPage;
+diff --git a/src/page/installer/disk/wipe_or_free.blp b/src/page/installer/disk/wipe_or_free.blp
+deleted file mode 100644
+--- a/src/page/installer/disk/wipe_or_free.blp
++++ /dev/null
+@@ -1,60 +0,0 @@
+-/* SPDX-License-Identifier: GPL-3.0-or-later */
+-using Gtk 4.0;
+-using Adw 1;
+-
+-template $SetupWipeOrFreePage : $SetupBasePage {
+-  title: _("Existing Data Found");
+-  can-next: false;
+-
+-  child: Adw.StatusPage heading {
+-    title: _("Existing Data Found");
+-    description: bind $apply_disk_name(template.disk as <$SetupDisk>.display_name, "Data detected on <b>{disk_name}</b>. Setup can use the entire disk, erasing all documents, software, and data on the disk, or install into available free space, preserving the existing data.") as <string>;
+-
+-    Gtk.Box {
+-      orientation: vertical;
+-      spacing: 12;
+-
+-      Adw.PreferencesGroup {
+-        $SetupDiskRow {
+-          disk: bind template.disk;
+-          activatable: false;
+-        }
+-      }
+-
+-      Adw.PreferencesGroup {
+-        Adw.ActionRow free_option {
+-          [prefix]
+-          Gtk.CheckButton free_radio {
+-            active: true;
+-          }
+-
+-          title: _("Install to Free Space");
+-          subtitle: _("Use free space on the disk for installation, preserving data");
+-          activatable-widget: free_radio;
+-        }
+-
+-        Adw.ActionRow {
+-          [prefix]
+-          Gtk.CheckButton full_radio {
+-            group: free_radio;
+-          }
+-
+-          title: _("Use Entire Disk");
+-          subtitle: _("Fully <b>erase all data</b> on disk and do a fresh installation");
+-          activatable-widget: full_radio;
+-        }
+-      }
+-
+-      Gtk.Button go_btn {
+-        label: _("Start _Installation");
+-        use-underline: true;
+-        halign: center;
+-        margin-top: 24;
+-
+-        clicked => $install() swapped;
+-
+-        styles [ "pill", "suggested-action" ]
+-      }
+-    }
+-  };
+-}
+\ No newline at end of file
+diff --git a/src/page/installer/disk/wipe_or_free.rs b/src/page/installer/disk/wipe_or_free.rs
+deleted file mode 100644
+--- a/src/page/installer/disk/wipe_or_free.rs
++++ /dev/null
+@@ -1,85 +0,0 @@
+-/* SPDX-License-Identifier: GPL-3.0-or-later */
+-
+-use adw::prelude::*;
+-use adw::subclass::prelude::*;
+-
+-use formatx::formatx;
+-
+-use super::super::install::InstallPage;
+-use super::confirm;
+-use crate::models::disk::Disk;
+-use crate::page::base::{BasePage, BasePageExt, BasePageImpl};
+-
+-glib::wrapper! {
+-    pub struct WipeOrFreePage(ObjectSubclass<imp::WipeOrFreePage>)
+-        @extends gtk::Widget, adw::NavigationPage, BasePage,
+-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+-}
+-
+-impl WipeOrFreePage {
+-    pub fn new(disk: &Disk) -> Self {
+-        glib::Object::builder().property("disk", disk).build()
+-    }
+-}
+-
+-mod imp {
+-    use super::*;
+-
+-    use std::cell::RefCell;
+-
+-    #[derive(Debug, Default, gtk::CompositeTemplate, glib::Properties)]
+-    #[template(file = "src/page/installer/disk/wipe_or_free.blp")]
+-    #[properties(wrapper_type = super::WipeOrFreePage)]
+-    pub struct WipeOrFreePage {
+-        #[property(get, set)]
+-        disk: RefCell<Option<Disk>>,
+-
+-        #[template_child]
+-        heading: TemplateChild<adw::StatusPage>,
+-        #[template_child]
+-        free_radio: TemplateChild<gtk::CheckButton>,
+-        #[template_child]
+-        go_btn: TemplateChild<gtk::Button>,
+-    }
+-
+-    #[glib::object_subclass]
+-    impl ObjectSubclass for WipeOrFreePage {
+-        const NAME: &'static str = "SetupWipeOrFreePage";
+-        type Type = super::WipeOrFreePage;
+-        type ParentType = BasePage;
+-
+-        fn class_init(klass: &mut Self::Class) {
+-            klass.bind_template();
+-            klass.bind_template_callbacks();
+-        }
+-
+-        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
+-            obj.init_template();
+-        }
+-    }
+-
+-    #[glib::derived_properties]
+-    impl ObjectImpl for WipeOrFreePage {}
+-    impl WidgetImpl for WipeOrFreePage {}
+-    impl NavigationPageImpl for WipeOrFreePage {}
+-    impl BasePageImpl for WipeOrFreePage {}
+-
+-    #[gtk::template_callbacks]
+-    impl WipeOrFreePage {
+-        #[template_callback]
+-        async fn install(&self) {
+-            let disk = self.obj().disk().expect("Every row has a associated disk");
+-
+-            if !self.free_radio.is_active() && !confirm::expected_wipe(&*self.obj()).await {
+-                return;
+-            }
+-            let wipe = !self.free_radio.is_active();
+-            self.obj().go_subpage(InstallPage::new(&disk, wipe));
+-        }
+-
+-        #[template_callback(function)]
+-        fn apply_disk_name(disk_name: &str, string: &str) -> String {
+-            formatx!(string, disk_name = disk_name,).unwrap()
+-        }
+-    }
+-}
+diff --git a/src/page/installer/disk/select.rs b/src/page/installer/disk/select.rs
+--- a/src/page/installer/disk/select.rs
++++ b/src/page/installer/disk/select.rs
+@@ -10,7 +10,6 @@
+ use super::super::install::InstallPage;
+ use super::confirm;
+ use super::disk_row::DiskRow;
+-use super::wipe_or_free::WipeOrFreePage;
+ use crate::models::disk::{Disk, DiskStatus, DisksModel};
+ use crate::osinfo;
+
+@@ -152,64 +151,22 @@
+         }
+
+         fn activate_disk(&self, disk: Disk) {
+-            match disk.status() {
+-                DiskStatus::Empty => {
+-                    self.nondestructive(disk);
+-                }
+-                DiskStatus::DataDetected => {
+-                    self.data_detected(disk);
+-                }
+-                DiskStatus::InsufficientFreeSpace | DiskStatus::Full => {
+-                    self.insufficient_wipe(disk);
+-                }
+-                DiskStatus::UnsupportedPartitionTable => {
+-                    self.full_wipe(disk);
+-                }
+-                DiskStatus::TooSmall => {
+-                    unreachable!("Disks that are to small can't be activated");
+-                }
+-            }
+-        }
+-
+-        fn data_detected(&self, disk: Disk) {
+-            self.obj().go_subpage(WipeOrFreePage::new(&disk));
+-        }
+-
+-        fn nondestructive(&self, disk: Disk) {
+-            glib::spawn_future_local(glib::clone!(
+-                #[weak(rename_to = obj)]
+-                self.obj(),
+-                async move {
+-                    if confirm::nondestructive(&obj).await {
+-                        obj.go_subpage(InstallPage::new(&disk, false));
+-                    }
+-                }
+-            ));
+-        }
+-
+-        fn full_wipe(&self, disk: Disk) {
+-            glib::spawn_future_local(glib::clone!(
+-                #[weak(rename_to = obj)]
+-                self.obj(),
+-                async move {
+-                    if confirm::full_wipe(&obj).await {
+-                        obj.go_subpage(InstallPage::new(&disk, true));
+-                    }
+-                }
+-            ));
+-        }
+-
+-        fn insufficient_wipe(&self, disk: Disk) {
++            let erase = match disk.status() {
++                DiskStatus::Empty => false,
++                DiskStatus::DataDetected => true,
++                DiskStatus::TooSmall => return,
++            };
++
+             glib::spawn_future_local(glib::clone!(
+                 #[weak(rename_to = obj)]
+                 self.obj(),
+                 async move {
+-                    if confirm::insufficient_wipe(&obj).await {
+-                        obj.go_subpage(InstallPage::new(&disk, true));
++                    if confirm::full_wipe(&obj, &disk).await {
++                        obj.go_subpage(InstallPage::new(&disk, erase));
+                     }
+                 }
+             ));
+         }
+
+         #[template_callback]
+         fn power_off() {
+diff --git a/src/page/installer/disk/confirm.rs b/src/page/installer/disk/confirm.rs
+--- a/src/page/installer/disk/confirm.rs
++++ b/src/page/installer/disk/confirm.rs
+@@ -2,49 +2,14 @@
+
+ use adw::prelude::*;
+
++use formatx::formatx;
+ use gettextrs::gettext;
+
+-fn base_expected_dialog() -> adw::AlertDialog {
+-    let dialog = adw::AlertDialog::builder()
+-        .heading(gettext("Begin Installation?"))
+-        .body_use_markup(true)
+-        .default_response("confirm")
+-        .close_response("cancel")
+-        .build();
+-
+-    dialog.add_response("cancel", &gettext("Cancel"));
+-
+-    dialog
+-}
+-
+-pub async fn nondestructive(parent: &impl IsA<gtk::Widget>) -> bool {
+-    let dialog = base_expected_dialog();
+-
+-    // TRANSLATORS: This appears in a dialog immediately before performing a nondestructive installation,
+-    //              in other words either the disk is empty or we won't destroy any data
+-    dialog.set_body(&gettext("Once the installation begins, the changes to the selected disk are irreversible. Continue with installation?"));
+-
+-    dialog.add_response("confirm", &gettext("Install"));
+-    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Suggested);
+-
+-    dialog.choose_future(parent).await == "confirm"
+-}
+-
+-pub async fn expected_wipe(parent: &impl IsA<gtk::Widget>) -> bool {
+-    let dialog = base_expected_dialog();
+-
+-    // TRANSLATORS: This appears in a dialog immediately before wiping the disk and installing the
+-    //              OS. The user explicitly chose to wipe the disk before this dialog appears.
+-    dialog.set_body(&gettext("Once the installation begins, the changes to the selected disk are irreversible. <b>Proceeding will fully erase all software, documents, and data from the disk.</b> Continue with installation?"));
+-
+-    dialog.add_response("confirm", &gettext("Erase and Install"));
+-    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+-
+-    dialog.choose_future(parent).await == "confirm"
+-}
+-
+-fn base_surprise_dialog() -> adw::AlertDialog {
++use crate::models::disk::Disk;
++
++pub async fn full_wipe(parent: &impl IsA<gtk::Widget>, disk: &Disk) -> bool {
+     let dialog = adw::AlertDialog::builder()
++        .heading(gettext("Erase Disk and Install?"))
+         .body_use_markup(true)
+         .default_response("cancel")
+         .close_response("cancel")
+@@ -77,27 +42,12 @@
+         ),
+     );
+
+-    dialog
+-}
+-
+-pub async fn insufficient_wipe(parent: &impl IsA<gtk::Widget>) -> bool {
+-    let dialog = base_surprise_dialog();
+-    dialog.set_heading(Some(&gettext("Insufficient Free Space")));
+-    // TRANSLATORS: This appears in a dialog immediately before wiping the disk and installing the
+-    //              OS if the selected disk has some free space but not enough. The user didn't
+-    //              actively choose to wipe the disk; this dialog is Setup informing the user that
+-    //              this is their only option given the current state of the disks
+-    dialog.set_body(&gettext("There is not enough free space on the selected disk to install the operating system to. <b>Proceeding will fully erase all software, documents, and data from the disk.</b> Continue with installation?"));
+-    dialog.choose_future(parent).await == "confirm"
+-}
+-
+-pub async fn full_wipe(parent: &impl IsA<gtk::Widget>) -> bool {
+-    let dialog = base_surprise_dialog();
+-    dialog.set_heading(Some(&gettext("Disk is Full")));
+-    // TRANSLATORS: This appears in a dialog immediately before wiping the disk and installing the
+-    //              OS if the selected disk has no free space. The user didn't actively choose to
+-    //              wipe the disk; this dialog is Setup informing the user that this is their only
+-    //              option given the current state of the disks
+-    dialog.set_body(&gettext("The selected disk has no free space to install the operating system to. <b>Proceeding will fully erase all software, documents, and data from the disk.</b> Continue with installation?"));
++    let disk_name = glib::markup_escape_text(&disk.display_name());
++    let node = glib::markup_escape_text(&disk.node());
++    dialog.set_body(&formatx!(
++        gettext("<b>All software, documents, and data on {disk_name} ({node}) will be permanently erased.</b> Continue with installation?"),
++        disk_name = disk_name,
++        node = node,
++    ).unwrap());
+     dialog.choose_future(parent).await == "confirm"
+ }
+diff --git a/src/models/disk/disk.rs b/src/models/disk/disk.rs
+--- a/src/models/disk/disk.rs
++++ b/src/models/disk/disk.rs
+@@ -15,7 +15,4 @@
+     DataDetected,
+-    InsufficientFreeSpace,
+-    Full,
+-    UnsupportedPartitionTable,
+     TooSmall,
+ }
+
+@@ -25,8 +22,4 @@
+-            Self::Empty
+-            | Self::DataDetected
+-            | Self::InsufficientFreeSpace
+-            | Self::Full
+-            | Self::UnsupportedPartitionTable => true,
++            Self::Empty | Self::DataDetected => true,
+             Self::TooSmall => false,
+         }
+     }
+@@ -64,6 +57,8 @@
+     pub struct Disk {
+         #[property(get, construct_only)]
+         node: OnceCell<String>,
++        #[property(get, construct_only)]
++        diskseq: Cell<i64>,
+         #[property(get = Self::subsystem, set = Self::set_subsystem, construct_only, nullable, type = Option<String>)]
+         subsystem: OnceCell<String>,
+         #[property(get = Self::vendor, set = Self::set_vendor, construct_only, nullable, type = Option<String>)]
+@@ -152,7 +147,7 @@
+
+         fn display_desc(&self) -> String {
+             if self.status.get() == DiskStatus::Empty {
+-                gettext("This disk is fully empty")
++                gettext("No existing filesystem or partition table detected")
+             } else {
+                 gettext("This disk contains existing data")
+             }
+diff --git a/src/page/installer/disk/disk_row.rs b/src/page/installer/disk/disk_row.rs
+--- a/src/page/installer/disk/disk_row.rs
++++ b/src/page/installer/disk/disk_row.rs
+@@ -108,18 +108,10 @@
+             };
+
+             match disk.status() {
+-                DiskStatus::Empty | DiskStatus::DataDetected => {}
++                DiskStatus::Empty => {}
+-                DiskStatus::InsufficientFreeSpace => {
+-                    self.details_title.set_label(&gettext("Disk Has Insufficient Free Space"));
+-                    self.details_desc.set_label(&gettext("This disk does not have enough free space for an installation. Setup will only offer to use the entire disk during installation."));
+-                }
+-                DiskStatus::Full => {
+-                    self.details_title.set_label(&gettext("Disk Is Full"));
+-                    self.details_desc.set_label(&gettext("This disk is full or has very limit free space available. Setup will only offer to use the entire disk during installation."));
+-                }
+-                DiskStatus::UnsupportedPartitionTable => {
+-                    self.details_title.set_label(&gettext("Disk Has Unsupported Partition Table"));
+-                    self.details_desc.set_label(&gettext("This disk has an unsupported partition table. Only GTP is supported by Setup."));
++                DiskStatus::DataDetected => {
++                    self.details_title.set_label(&gettext("Disk Contains Existing Data"));
++                    self.details_desc.set_label(&gettext("Installing to this disk requires erasing all of its data."));
+                 }
+                 DiskStatus::TooSmall => {
+                     let os_name = osinfo::name();
+@@ -131,12 +123,10 @@
+             }
+
+             match disk.status() {
+-                DiskStatus::Empty | DiskStatus::DataDetected => {
++                DiskStatus::Empty => {
+                     self.details_button.set_visible(false);
+                 }
+-                DiskStatus::InsufficientFreeSpace
+-                | DiskStatus::Full
+-                | DiskStatus::UnsupportedPartitionTable => {
++                DiskStatus::DataDetected => {
+                     self.details_button.set_visible(true);
+                     self.details_button.add_css_class("warning");
+                     self.details_button.set_icon_name("dialog-warning-symbolic");
+diff --git a/src/interfaces/mod.rs b/src/interfaces/mod.rs
+--- a/src/interfaces/mod.rs
++++ b/src/interfaces/mod.rs
+@@ -9,4 +9,4 @@
+ pub use crypt_enroll::CryptEnroll;
+ pub use localed::LocaledProxy;
+ pub use shutdown::Shutdown;
+-pub use sysinstall::{installed_node, luks_partition, set_post_install_unit, SysInstall};
++pub use sysinstall::{publish_installed_boot, set_post_install_unit, SysInstall};
+diff --git a/src/interfaces/sysinstall.rs b/src/interfaces/sysinstall.rs
+--- a/src/interfaces/sysinstall.rs
++++ b/src/interfaces/sysinstall.rs
+@@ -3,12 +3,12 @@
+ mod systemd_sysinstall;
+ mod systemd_sysinstall_demo;
+
+-use std::fs::File;
+-use std::io::{BufRead, BufReader};
+-use std::path::Path;
+-use std::sync::{LazyLock, Mutex, OnceLock};
++use std::ffi::OsStr;
++use std::fs;
++use std::path::Path;
++use std::sync::{Mutex, OnceLock};
+
+-use anyhow::anyhow;
++use anyhow::{anyhow, ensure};
+
+ use systemd_sysinstall_demo::SysInstallDemo;
+
+@@ -29,87 +29,59 @@
+ static POST_INSTALL_UNIT: OnceLock<Option<String>> = OnceLock::new();
+
+ /// The disk the OS was installed to, once the installation succeeded.
+-static INSTALLED_NODE: Mutex<Option<String>> = Mutex::new(None);
++static INSTALLED_DISK: Mutex<Option<(String, i64)>> = Mutex::new(None);
++const DISKSEQ_DIR: &str = "/dev/disk/by-diskseq";
+
+ pub fn set_post_install_unit(unit: Option<String>) {
+     let _ = POST_INSTALL_UNIT.set(unit.filter(|u| !u.is_empty()));
+ }
+
+-pub fn installed_node() -> Option<String> {
+-    INSTALLED_NODE.lock().unwrap().clone()
+-}
+-
+-/// The LUKS2 partition on `disk`, from the udev database.
+-pub fn luks_partition(disk: &str) -> Option<String> {
+-    let disk = std::fs::canonicalize(disk).ok()?;
+-    let name = disk.file_name()?.to_str()?.to_owned();
+-    let sysfs = Path::new("/sys/class/block").join(&name);
+-
+-    let mut partitions: Vec<String> = std::fs::read_dir(&sysfs)
+-        .ok()?
+-        .flatten()
+-        .filter(|entry| entry.path().join("partition").exists())
+-        .filter_map(|entry| entry.file_name().into_string().ok())
+-        .collect();
+-    partitions.sort();
+-
+-    partitions.into_iter().find_map(|partition| {
+-        let dev = std::fs::read_to_string(sysfs.join(&partition).join("dev")).ok()?;
+-        let udev = std::fs::read_to_string(format!("/run/udev/data/b{}", dev.trim())).ok()?;
+-        udev.lines()
+-            .any(|line| line == "E:ID_FS_TYPE=crypto_LUKS")
+-            .then(|| format!("/dev/{partition}"))
+-    })
+-}
+-
+-static KERNEL_IAMGE_PATH: LazyLock<Option<String>> = LazyLock::new(|| {
+-    let file = match File::open("/etc/os-release") {
+-        Ok(file) => file,
+-        Err(error) => {
+-            error!("Failed to read /etc/os-release: {error}");
+-            return None;
+-        }
+-    };
+-    let reader = BufReader::new(file);
+-    let mut lines = reader.lines();
+-
+-    loop {
+-        let line = match lines.next() {
+-            Some(Ok(line)) => line,
+-            Some(Err(error)) => {
+-                error!("Failed to read IMAGE_VERSION from /etc/os-release: {error}");
+-                return None;
+-            }
+-            None => {
+-                error!("Can't find IMAGE_VERSION in /etc/os-release");
+-                return None;
+-            }
+-        };
+-
+-        let line = line.trim();
+-
+-        if line.is_empty() || line.starts_with('#') {
+-            continue;
+-        }
+-
+-        let mut parts = line.splitn(2, '=');
+-        let key = parts.next().unwrap().trim();
+-        let value = match parts.next() {
+-            Some(v) => v.trim(),
+-            None => continue,
+-        };
+-
+-        if key == "IMAGE_VERSION" {
+-            let image_version = value.trim_matches(['"', '\'']);
+-            let kernel_image =
+-                format!("/var/lib/gnomeos/installer-esp/EFI/Linux/gnomeos_{image_version}.efi");
+-
+-            log::debug!("Use kernel image at {kernel_image}");
+-
+-            return Some(kernel_image);
+-        }
+-    }
+-});
++fn device_name(node: &str) -> anyhow::Result<&str> {
++    let name = node.strip_prefix("/dev/").ok_or_else(|| anyhow!("Invalid device path"))?;
++    ensure!(
++        !name.is_empty() && !matches!(name, "." | "..") && !name.contains(['/', '\n']),
++        "Invalid device name"
++    );
++    Ok(name)
++}
++
++/// Match the post-install receipt, but send CryptEnroll the sequence-qualified partition.
++pub(super) fn installed_luks_partition() -> anyhow::Result<String> {
++    let installed_disk = INSTALLED_DISK.lock().unwrap();
++    let (disk, diskseq) = installed_disk.as_ref().ok_or_else(|| anyhow!("No installed disk"))?;
++    let sysfs = Path::new("/sys/class/block").join(device_name(disk)?);
++    let receipt = fs::read_to_string("/run/dakota-live/encrypted-root")?;
++    let node = receipt.strip_suffix('\n').ok_or_else(|| anyhow!("Invalid encrypted-root receipt"))?;
++    let part = fs::read_to_string(sysfs.join(device_name(node)?).join("partition"))?
++        .trim()
++        .parse::<u32>()?;
++    ensure!(part > 0, "Invalid installed partition number");
++
++    let link = format!("{DISKSEQ_DIR}/{diskseq}-part{part}");
++    ensure!(fs::canonicalize(&link)?.as_os_str() == OsStr::new(node), "LUKS partition does not match the post-install receipt");
++    ensure!(fs::read_to_string(sysfs.join("diskseq"))?.trim().parse::<i64>()? == *diskseq, "Installed disk changed");
++    Ok(link)
++}
++
++fn post_install_instance(node: &str) -> anyhow::Result<String> {
++    let unit = POST_INSTALL_UNIT
++        .get()
++        .and_then(Option::as_deref)
++        .ok_or_else(|| anyhow!("Missing post-install service configuration"))?;
++    super::systemd_manager::template_instance(unit, node)
++}
++
++pub async fn publish_installed_boot() -> anyhow::Result<()> {
++    if crate::is_demo() {
++        return Ok(());
++    }
++    let instance = {
++        let installed_disk = INSTALLED_DISK.lock().unwrap();
++        let (node, _) = installed_disk.as_ref().ok_or_else(|| anyhow!("No installed disk"))?;
++        post_install_instance(node)?
++    };
++    super::systemd_manager::start_unit_and_wait(&instance).await
++}
+
+ impl Disk {
+     pub fn from_candidate_device(device: CandidateDevice) -> Option<Self> {
+@@ -116,37 +88,31 @@
+         let CandidateDevice {
+             node,
++            diskseq,
+             subsystem,
+             vendor,
+             model,
+             size_bytes,
+             fit,
+             minimal_size_bytes,
+-            current_size_bytes,
+             ..
+         } = device;
+
+-        // Make sure this is a actual node
+-        if node.is_none() || fit.is_none() {
+-            return None;
+-        }
++        let node = node?;
++        device_name(&node).ok()?;
++        let diskseq = diskseq.filter(|&seq| seq > 0)?;
+
+-        let status = match fit.unwrap() {
++        let status = match fit? {
+-            DeviceFit::ConflictingDiskLabelPresent => DiskStatus::UnsupportedPartitionTable,
++            DeviceFit::ConflictingDiskLabelPresent => DiskStatus::DataDetected,
+-            DeviceFit::InsufficientFreeSpace => DiskStatus::InsufficientFreeSpace,
+-            DeviceFit::DiskTooSmall => DiskStatus::TooSmall,
++            DeviceFit::InsufficientFreeSpace | DeviceFit::DiskTooSmall => DiskStatus::TooSmall,
+-            DeviceFit::EnoughFreeSpace => {
+-                if current_size_bytes == Some(0i64) {
+-                    DiskStatus::Empty
+-                } else {
+-                    DiskStatus::DataDetected
+-                }
+-            }
++            // A disk without recognized signatures is not necessarily empty.
++            DeviceFit::EnoughFreeSpace => DiskStatus::Empty,
+         };
+
+         Some(
+             glib::Object::builder()
+-                .property("node", node.unwrap())
++                .property("node", node)
++                .property("diskseq", diskseq)
+                 .property("subsystem", subsystem.as_ref().filter(|s| !s.is_empty()))
+                 .property("vendor", vendor.as_ref().filter(|s| !s.is_empty()))
+                 .property("model", model.as_ref().filter(|s| !s.is_empty()))
+                 .property("size", size_bytes.unwrap_or_default())
+@@ -236,14 +202,20 @@
+         };
+
+-        let node = disk.node();
++        let canonical_node = disk.node();
++        let diskseq = disk.diskseq();
++        ensure!(diskseq > 0, "No listed disk sequence for install target");
++        let node = format!("{DISKSEQ_DIR}/{diskseq}");
++        let post_unit = (!crate::is_demo())
++            .then(|| post_install_instance(&canonical_node))
++            .transpose()?;
+
+         let mut stream = connection
+             .run_with_progress(
+                 &node,                        // node
+                 &[REPART_DEFINITIONS_DIR],    // definitions
+                 erase,                        // erase
+-                KERNEL_IAMGE_PATH.as_deref(), // kernel_image
+-                true,                         // variables
++                None,                         // kernel_image
++                false,                        // variables
+                 Some(true),                   // copy_locale
+                 Some(true),                   // copy_timezone
+                 Some(true),                   // copy_keymap
+@@ -275,15 +247,9 @@
+
+-        if let Some(unit) = POST_INSTALL_UNIT.get().cloned().flatten() {
+-            if crate::is_demo() {
+-                log::info!("Not starting {unit} since setup is run in demo mode");
+-            } else {
+-                let instance = super::systemd_manager::template_instance(&unit, &node)?;
+-                disk.set_install_phase(InstallPhase::InstallBootloader);
+-                super::systemd_manager::start_unit_and_wait(&instance).await?;
+-            }
++        if let Some(instance) = post_unit {
++            disk.set_install_phase(InstallPhase::InstallBootloader);
++            super::systemd_manager::start_unit_and_wait(&instance).await?;
++            *INSTALLED_DISK.lock().unwrap() = Some((canonical_node, diskseq));
+         }
+-
+-        *INSTALLED_NODE.lock().unwrap() = Some(node.to_string());
+
+         disk.set_install_phase(InstallPhase::Finished);
+         disk.set_install_progress(100);
+@@ -309,3 +275,25 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn candidate_disk_requires_and_retains_its_sequence() {
++        let mut candidate = CandidateDevice {
++            node: Some("/dev/nonexistent-dakota-test-device".into()),
++            fit: Some(DeviceFit::EnoughFreeSpace),
++            ..CandidateDevice::default()
++        };
++        assert!(Disk::from_candidate_device(candidate.clone()).is_none());
++        candidate.diskseq = Some(-1);
++        assert!(Disk::from_candidate_device(candidate.clone()).is_none());
++        candidate.diskseq = Some(17);
++        let disk = Disk::from_candidate_device(candidate.clone()).unwrap();
++        assert_eq!(disk.diskseq(), 17);
++        candidate.fit = Some(DeviceFit::InsufficientFreeSpace);
++        assert!(!Disk::from_candidate_device(candidate).unwrap().status().usable());
++    }
++}
+diff --git a/src/interfaces/sysinstall/systemd_sysinstall_demo.rs b/src/interfaces/sysinstall/systemd_sysinstall_demo.rs
+--- a/src/interfaces/sysinstall/systemd_sysinstall_demo.rs
++++ b/src/interfaces/sysinstall/systemd_sysinstall_demo.rs
+@@ -34,6 +34,7 @@
+             model: Some("OceanDoor".to_string()),
+             vendor: Some("Sharkfin HDD".to_string()),
+             size_bytes: Some(1024 * GIGA_BYTES),
++            fit: Some(DeviceFit::ConflictingDiskLabelPresent),
+             current_size_bytes: Some(GIGA_BYTES),
+             minimal_size_bytes: Some(MIN_DISK_SIZE),
+             ..CandidateDevice::default()
+@@ -50,6 +51,7 @@
+         CandidateDevice {
+             node: Some("/dev/sdd".to_string()),
+             model: Some("Some Random Disk".to_string()),
++            fit: Some(DeviceFit::EnoughFreeSpace),
+             size_bytes: Some(1024 * GIGA_BYTES),
+             current_size_bytes: Some(0),
+             minimal_size_bytes: Some(MIN_DISK_SIZE),
+@@ -59,6 +61,7 @@
+             node: Some("/dev/sde".to_string()),
+             model: Some("Expensive Company Disk".to_string()),
+             size_bytes: Some(1024 * GIGA_BYTES),
++            fit: Some(DeviceFit::ConflictingDiskLabelPresent),
+             current_size_bytes: Some(1000 * GIGA_BYTES),
+             minimal_size_bytes: Some(MIN_DISK_SIZE),
+             ..CandidateDevice::default()
+@@ -69,7 +72,7 @@
+             vendor: Some("Awesome Company".to_string()),
+-            size_bytes: Some(1024 * GIGA_BYTES),
+-            current_size_bytes: Some(1024 * GIGA_BYTES),
++            size_bytes: Some(16 * GIGA_BYTES),
++            current_size_bytes: Some(16 * GIGA_BYTES),
+             minimal_size_bytes: Some(MIN_DISK_SIZE),
+             fit: Some(DeviceFit::InsufficientFreeSpace),
+             ..CandidateDevice::default()
+         },
+@@ -290,9 +293,10 @@
+     type Item = zlink::Reply<SysInstallServiceReply>;
+
+     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+-        let Some(device) = self.devices.pop() else {
++        let Some(mut device) = self.devices.pop() else {
+             return Poll::Ready(None);
+         };
++        device.diskseq = Some(self.devices.len() as i64 + 1);
+
+         let continues = Some(!self.devices.is_empty());
+         let reply = zlink::Reply::new(Some(SysInstallServiceReply::CandidateDevice(device)))
+diff --git a/src/interfaces/crypt_enroll.rs b/src/interfaces/crypt_enroll.rs
+--- a/src/interfaces/crypt_enroll.rs
++++ b/src/interfaces/crypt_enroll.rs
+@@ -2,19 +2,32 @@
+
+ mod systemd_crypt_enroll;
+
++use std::cell::Cell;
++
+-use log::{error, info};
++use anyhow::{anyhow, bail, ensure};
++use log::info;
+ use zlink::futures_util::StreamExt;
+
++use super::sysinstall::installed_luks_partition;
+ use systemd_crypt_enroll::{CryptEnroll as CryptEnrollTrait, EnrollMechanism};
+
+ const SOCKET_PATH: &str = "/run/systemd/io.systemd.CryptEnroll";
+
+ #[derive(Debug)]
+-pub struct CryptEnroll {}
++pub struct CryptEnroll {
++    enrollment: Cell<Enrollment>,
++}
++
++#[derive(Clone, Copy, Debug)]
++enum Enrollment {
++    NotStarted,
++    Unconfirmed,
++    Confirmed { temporary_slot: i64, recovery_slot: i64 },
++}
+
+ impl CryptEnroll {
+     pub fn new() -> Self {
+-        Self {}
++        Self { enrollment: Cell::new(Enrollment::NotStarted) }
+     }
+
+     pub async fn make_recovery_key(&self) -> anyhow::Result<String> {
+@@ -25,66 +38,88 @@
+             );
+         }
+
+-        let mut connection = zlink::unix::connect(SOCKET_PATH).await?;
++        let mut connection = zlink::unix::connect(SOCKET_PATH)
++            .await
++            .map_err(|_| anyhow!("Could not connect to CryptEnroll"))?;
+         let result = connection
+             .make_recovery_key()
+-            .await?
+-            .map_err(|error| anyhow::anyhow!("MakeRecoveryKey failed: {error:?}"))?;
+-
+-        Ok(result.recovery_key.to_string())
++            .await
++            .ok()
++            .and_then(Result::ok)
++            .ok_or_else(|| anyhow!("MakeRecoveryKey failed"))?;
++        ensure!(!result.recovery_key.is_empty(), "MakeRecoveryKey returned an empty key");
++        Ok(result.recovery_key.to_owned())
+     }
+
+-    pub async fn enroll_recovery_key(
+-        &self,
+-        node: &str,
+-        recovery_key: Option<&str>,
+-    ) -> anyhow::Result<Option<String>> {
+-        // TODO: Would be nice to have a demo implementation for the crytpenroll interface
++    pub async fn enroll_recovery_key(&self, recovery_key: &str) -> anyhow::Result<()> {
+         if crate::is_demo() {
+             info!("Not enrolling a recovery key since setup is run in demo mode");
+-            return Ok(Some(
+-                "dehgheth-gntevib-lnlijjfc-neerulnn-nndflbbi-bdlhgvg-unvfldlv-lcrcfnbg".to_string(),
+-            ));
++            return Ok(());
+         }
+
+-        let mut connection = zlink::unix::connect(SOCKET_PATH).await?;
++        let node = installed_luks_partition()?;
++        let mut connection = zlink::unix::connect(SOCKET_PATH)
++            .await
++            .map_err(|_| anyhow!("Could not connect to CryptEnroll"))?;
++        let (temporary_slot, recovery_slot) = match self.enrollment.get() {
++            Enrollment::Unconfirmed => bail!("Previous recovery key enrollment could not be confirmed"),
++            Enrollment::Confirmed { temporary_slot, recovery_slot } => (temporary_slot, recovery_slot),
++            Enrollment::NotStarted => {
++                let mut temporary_slot = None;
++                for_each_slot(&mut connection, &node, |slot, kind| {
++                    if kind == Some(EnrollMechanism::Password) {
++                        ensure!(temporary_slot.replace(slot).is_none(), "Multiple password slots on target");
++                    }
++                    Ok(())
++                }).await?;
++                let temporary_slot = temporary_slot.ok_or_else(|| anyhow!("Temporary password slot not found"))?;
++
++                // A lost reply may mean the key was enrolled and the empty slot already wiped.
++                self.enrollment.set(Enrollment::Unconfirmed);
++                let reply = connection
++                    .enroll(&node, &EnrollMechanism::Recovery, Some(recovery_key), Some(""), Some(&[temporary_slot]))
++                    .await
++                    .ok()
++                    .and_then(Result::ok)
++                    .ok_or_else(|| anyhow!("Recovery key enrollment could not be confirmed"))?;
++                let recovery_slot = reply.slot.filter(|&slot| slot >= 0 && slot != temporary_slot)
++                    .ok_or_else(|| anyhow!("CryptEnroll did not report a new recovery slot"))?;
++                ensure!(reply.recovery_key == Some(recovery_key), "CryptEnroll returned a different recovery key");
++                ensure!(reply.wiped_slots.as_deref() == Some(&[temporary_slot]), "CryptEnroll did not wipe exactly the temporary slot");
++                self.enrollment.set(Enrollment::Confirmed { temporary_slot, recovery_slot });
++                (temporary_slot, recovery_slot)
++            }
++        };
++
++        let mut verified = false;
++        for_each_slot(&mut connection, &node, |slot, kind| {
++            ensure!(slot != temporary_slot && kind != Some(EnrollMechanism::Password), "A password slot remains on target");
++            if slot == recovery_slot && kind == Some(EnrollMechanism::Recovery) {
++                verified = true;
++            }
++            Ok(())
++        }).await?;
++        ensure!(verified, "New recovery slot not found on target");
++        Ok(())
++    }
++}
+
+-        let mut stream = connection.list_slots(node).await?;
+-        let mut wipe_slots = Vec::with_capacity(1);
+-        while let Some(result) = stream.next().await {
+-            let reply = match result {
+-                Ok(Ok(reply)) => reply,
+-                Ok(Err(error)) => {
+-                    error!("Unexpected response while fetching key slots:  {error:?}");
+-                    continue;
+-                }
+-                Err(error) => {
+-                    error!("Connection to CryptEnroll failed: {error:?}");
+-                    continue;
+-                }
+-            };
+-            // TODO: Use empty slot once https://github.com/systemd/systemd/pull/42645 is merged
+-            if reply.r#type == Some(EnrollMechanism::Password) {
+-                if let Some(slot) = reply.slot {
+-                    wipe_slots.push(slot)
+-                }
++async fn for_each_slot(
++    connection: &mut zlink::unix::Connection,
++    node: &str,
++    mut visit: impl FnMut(i64, Option<EnrollMechanism>) -> anyhow::Result<()>,
++) -> anyhow::Result<()> {
++    let mut stream = connection.list_slots(node).await.map_err(|_| anyhow!("ListSlots failed"))?;
++    loop {
++        match stream.next().await {
++            Some(Ok(Ok(reply))) => {
++                let slot = reply.slot.filter(|&slot| slot >= 0)
++                    .ok_or_else(|| anyhow!("ListSlots returned an invalid slot"))?;
++                visit(slot, reply.r#type)?;
+             }
++            // The pinned server ends ListSlots with a successful reply without parameters.
++            Some(Err(zlink::Error::MissingParameters)) => return Ok(()),
++            _ => bail!("ListSlots did not finish successfully"),
+         }
+-
+-        drop(stream);
+-
+-        let result = connection
+-            .enroll(
+-                node,                       // node
+-                &EnrollMechanism::Recovery, // mechanism
+-                recovery_key,               // recovery_key
+-                // We enroll an empty password via SysInstall
+-                Some(""),                  // unlock_password
+-                Some(wipe_slots.as_ref()), // wipe_slots
+-            )
+-            .await?
+-            .map_err(|error| anyhow::anyhow!("Enroll on {node} failed: {error:?}"))?;
+-
+-        Ok(result.recovery_key.map(|key| key.to_string()))
+     }
+ }
+diff --git a/src/page/recovery_key/mod.rs b/src/page/recovery_key/mod.rs
+--- a/src/page/recovery_key/mod.rs
++++ b/src/page/recovery_key/mod.rs
+@@ -4,8 +4,9 @@
+
+ use adw::subclass::prelude::*;
+
++use gettextrs::gettext;
+ use gtk::glib;
+-use gtk::prelude::WidgetExt;
++use gtk::prelude::{CheckButtonExt, WidgetExt};
+ use log::warn;
+
+ use crate::osinfo::OsInfoCallbacks;
+@@ -37,7 +38,10 @@
+         #[template_child]
+         recovery_key_label: TemplateChild<gtk::Label>,
+         #[template_child]
+-        done_btn: TemplateChild<gtk::Button>,
++        confirm_btn: TemplateChild<gtk::CheckButton>,
++        #[template_child]
++        error_label: TemplateChild<gtk::Label>,
++        enrollment_verified: std::cell::Cell<bool>,
+         #[template_child]
+         qr_code_dialog_btn: TemplateChild<gtk::Button>,
+         #[template_child]
+@@ -94,7 +98,8 @@
+             let recovery_key = match interface.make_recovery_key().await {
+                 Ok(recovery_key) => recovery_key,
+                 Err(error) => {
+-                    warn!("Unable to create recovery key via systemd-cryptenroll: {error}");
++                    warn!("Unable to create recovery key: {error}");
++                    self.show_error(&gettext("Could not generate a recovery key. Setup cannot continue."));
+                     return;
+                 }
+             };
+@@ -102,27 +107,12 @@
+-            self.recovery_key_label.set_label(&recovery_key);
+-            self.recovery_key.set(recovery_key).unwrap();
++            let recovery_key = self.recovery_key.get_or_init(|| recovery_key);
++            self.recovery_key_label.set_label(recovery_key);
+             self.qr_code_dialog_btn.set_sensitive(true);
++            self.confirm_btn.set_sensitive(true);
+         }
+
+-        async fn enroll_recovery_key(&self) {
+-            // The LUKS2 partition on the disk we just installed to, falling back to the root
+-            // partition label of the GNOME OS definitions.
+-            let node = crate::interfaces::installed_node()
+-                .and_then(|disk| crate::interfaces::luks_partition(&disk))
+-                .unwrap_or_else(|| "/dev/disk/by-label/root".to_string());
+-            log::info!("Enrolling the recovery key on {node}");
+-            let recovery_key = self.recovery_key.get();
+-            let interface = self.interface.get().unwrap();
+-
+-            let result =
+-                interface.enroll_recovery_key(&node, recovery_key.map(|x| x.as_str())).await;
+-            match result {
+-                Ok(Some(_)) => {}
+-                Ok(None) => warn!("Systemd-cryptenroll didn't report a recovery key"),
+-                Err(error) => {
+-                    warn!("Unable to enroll recovery key via systemd-cryptenroll: {error}")
+-                }
+-            }
++        fn show_error(&self, message: &str) {
++            self.error_label.set_label(message);
++            self.error_label.set_visible(true);
+         }
+
+         #[template_callback]
+@@ -144,7 +134,33 @@
+
+         #[template_callback]
+         async fn on_done(&self) {
+-            self.enroll_recovery_key().await;
++            let Some(recovery_key) = self.recovery_key.get() else {
++                return;
++            };
++            if !self.confirm_btn.is_sensitive() || !self.confirm_btn.is_active() {
++                return;
++            }
++            self.confirm_btn.set_sensitive(false);
++            self.confirm_btn.set_active(false);
++            self.error_label.set_visible(false);
++
++            if !self.enrollment_verified.get() {
++                let interface = self.interface.get().unwrap();
++                if let Err(error) = interface.enroll_recovery_key(recovery_key).await {
++                    warn!("Could not verify recovery key enrollment: {error}");
++                    self.show_error(&gettext("Could not verify recovery key enrollment. Keep your backup and do not restart yet."));
++                    self.confirm_btn.set_sensitive(true);
++                    return;
++                }
++                self.enrollment_verified.set(true);
++            }
++
++            if let Err(error) = crate::interfaces::publish_installed_boot().await {
++                warn!("Could not publish installed boot entry: {error}");
++                self.show_error(&gettext("Could not make the installed system bootable. Do not restart yet."));
++                self.confirm_btn.set_sensitive(true);
++                return;
++            }
+
+             self.obj().go_next();
+         }
+diff --git a/src/page/recovery_key/recovery_key_page.blp b/src/page/recovery_key/recovery_key_page.blp
+--- a/src/page/recovery_key/recovery_key_page.blp
++++ b/src/page/recovery_key/recovery_key_page.blp
+@@ -42,8 +42,15 @@
+             styles [ "card" ]
+           }
+
++      Gtk.Label error_label {
++        visible: false;
++        wrap: true;
++        styles [ "error" ]
++      }
++
+       Gtk.CheckButton confirm_btn {
+-            label: _("I backed up my recovery key");
++        label: _("I backed up my recovery key");
++        sensitive: false;
+       }
+
+       Gtk.Button done_btn {

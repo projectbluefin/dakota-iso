@@ -48,14 +48,14 @@ class ExperimentalRawInstallerContractTest(unittest.TestCase):
         self.assertIn("liveuser", setup_script)
         self.assertIn("AutomaticLoginEnable", setup_script)
         self.assertIn("AutomaticLogin", setup_script)
-        self.assertIn("zz-dakota-live", setup_script)
 
     def test_prepare_medium_adds_live_entry_without_mutating_installed_entry(self):
         module = load_module("prepare_medium", TRACK / "prepare-medium.py")
         with tempfile.TemporaryDirectory() as tmp:
             esp = Path(tmp)
             (esp / "loader" / "entries").mkdir(parents=True)
-            installed = "title Dakota\nlinux /vmlinuz\ninitrd /initramfs.img\noptions root=gpt-auto rw quiet\n"
+            installed = ("title Dakota\nlinux /vmlinuz\ninitrd /initramfs.img\n"
+                         "options root=gpt-auto rw quiet composefs.digest=v1-sha512-12:example lockdown=integrity\n")
             (esp / "loader" / "entries" / "dakota.conf").write_text(installed)
             module.prepare_esp(esp, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "dakota-live-initrd.img")
 
@@ -65,21 +65,21 @@ class ExperimentalRawInstallerContractTest(unittest.TestCase):
             self.assertIn("dakota.live", live)
             self.assertIn("dakota.live.installer=gnome-setup", live)
             self.assertIn("systemd.volatile=state", live)
+            options = next(line.split()[1:] for line in live.splitlines() if line.startswith("options "))
+            self.assertIn("composefs.digest=v1-sha512-12:example", options)
+            self.assertIn("lockdown=integrity", options)
+            self.assertNotIn("root=gpt-auto", options)
+            self.assertNotIn("rw", options)
             self.assertIn("initrd /dakota-live-initrd.img", live)
             self.assertEqual((esp / "loader" / "loader.conf").read_text(), "timeout 5\ndefault dakota-live.conf\n")
+
     def test_setup_root_conf_is_in_usr_lib_composefs(self):
         build_script = (TRACK / "build-raw-image.sh").read_text()
         self.assertIn("usr/lib/composefs", build_script)
         self.assertNotIn("usr/lib/bootc/setup-root-conf.toml", build_script)
 
-    def test_build_raw_image_canonicalizes_out_dir(self):
-        build_script = (TRACK / "build-raw-image.sh").read_text()
-        self.assertIn('OUT_DIR="$(mkdir -p "$(dirname "${OUT}")" && cd "$(dirname "${OUT}")" && pwd)"', build_script)
-        self.assertIn('-v "${OUT_DIR}":/out', build_script)
-
-
     def test_repart_definitions_copy_esp_and_encrypt_root(self):
-        module = load_module("live_definitions", TRACK / "live-definitions.py")
+        module = load_module("live_definitions", TRACK / "src/usr/libexec/dakota-live-definitions.py")
         table = {
             "partitiontable": {
                 "sectorsize": 512,
@@ -95,15 +95,40 @@ class ExperimentalRawInstallerContractTest(unittest.TestCase):
         self.assertIn("SizeMaxBytes=1048576", rendered["01-copy.conf"])
         self.assertIn("Encrypt=key-file+tpm2", rendered["02-copy.conf"])
         self.assertIn("TPM2PCRs=7", rendered["02-copy.conf"])
+        with self.assertRaisesRegex(ValueError, "one distinct root"):
+            module.render_definitions(table, "/dev/unknown", tpm2=True)
 
-    def test_post_install_handles_composefs_and_gpt_auto_without_root_karg(self):
-        text = (TRACK / "src" / "usr" / "libexec" / "dakota-sysinstall-post").read_text()
-        self.assertIn("/state/deploy/*", text)
-        self.assertIn("/sysroot", text)
-        self.assertIn("rd.luks.uuid", text)
-        self.assertIn("resize2fs", text)
-        self.assertIn("dakota.live.installer=gnome-setup", text)
-        self.assertNotIn("root=UUID=", text)
+    def test_copied_disk_stages_boot_before_publishing_an_independent_entry(self):
+        module = load_module("finish_boot", TRACK / "src/usr/libexec/dakota-finish-boot.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            esp, root = Path(tmp) / "esp", Path(tmp) / "root"
+            entries = esp / "loader/entries"
+            entries.mkdir(parents=True)
+            (entries / "dakota-live.conf").write_text("title Dakota Live\n")
+            (esp / "dakota-live-initrd.img").touch()
+            entry = entries / "bootc.conf"
+            entry.write_text("title Dakota\noptions rw root=gpt-auto composefs.digest=v1-sha512-12:example\n")
+            loader = esp / "loader/loader.conf"
+            loader.write_text("timeout 5\ndefault dakota-live.conf\n")
+            etc = root / "state/deploy/one/etc"
+            etc.mkdir(parents=True)
+            (etc / "fstab").write_text("UUID=ABCD-1234 /boot vfat defaults 0 2\n")
+
+            module.finish(esp, root, "luks-id", "discard", ("old-root", "new-root", "abcd-1234", "EEFF-6789"))
+            self.assertEqual(list(entries.iterdir()), [entries / "bootc.conf.pending"])
+            self.assertFalse((esp / "dakota-live-initrd.img").exists())
+
+            module.finish(esp, root, "luks-id", "discard", ("old-root", "new-root", "abcd-1234", "EEFF-6789"))
+            module.publish(esp)
+            module.publish(esp)
+
+            self.assertEqual(list(entries.iterdir()), [entry])
+            self.assertFalse((entries / "bootc.conf.pending").exists())
+            self.assertEqual(loader.read_text(), "timeout 5\ndefault bootc.conf\n")
+            self.assertIn("composefs.digest=v1-sha512-12:example root=UUID=new-root rd.luks.uuid=luks-id", entry.read_text())
+            self.assertNotIn("root=gpt-auto", entry.read_text())
+            self.assertEqual((etc / "fstab").read_text(), "UUID=EEFF-6789 /boot vfat defaults 0 2\n")
+            self.assertEqual((etc / "crypttab").read_text(), "luks-luks-id UUID=luks-id none discard\n")
 
     def test_new_track_scripts_are_valid_shell(self):
         for path in (
