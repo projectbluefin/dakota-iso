@@ -2,35 +2,82 @@
 # Finish installation on target block device after sysinstall partition copy.
 set -euo pipefail
 
-target="${1:?usage: dakota-sysinstall-post TARGET}"
-[[ -b "${target}" ]] || { echo "${target} is not a block device" >&2; exit 1; }
-target="$(realpath "${target}")"
+fail() { printf 'dakota-sysinstall-post: %s\n' "$*" >&2; exit 1; }
+
+target="$(realpath -e -- "${1:?usage: dakota-sysinstall-post TARGET}")"
+state=/run/dakota-live
+[[ -b "${target}" && "$(lsblk -dnro TYPE -- "${target}")" == disk ]] || fail "not a whole disk"
+exec 9<"${state}"
+flock -n 9 || fail "another install operation is active"
+mapfile -t receipt <"${state}/installed-disk"
+[[ "${#receipt[@]}" == 2 && "${receipt[0]}" == "${target}" && "${receipt[1]}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "disk was not installed by this live session"
+diskseq="${receipt[1]}"
+disk_ref="/dev/disk/by-diskseq/${diskseq}"
+
+source_root="$(findmnt -nro SOURCE --mountpoint /sysroot)"
+source_disk="$(lsblk -dnrpo PKNAME -- "${source_root}")"
+[[ -b "${source_disk}" && "${source_disk}" != "${target}" ]] || fail "target is the live disk or source could not be verified"
 
 udevadm settle
+[[ "$(realpath -e -- "${disk_ref}")" == "${target}" ]] || fail "installed disk changed"
+exec {disk_fd}<"${disk_ref}"
+same_disk() { [[ "$(blockdev --getdiskseq "/proc/self/fd/$1")" == "${diskseq}" ]]; }
+same_disk "${disk_fd}" || fail "installed disk changed"
 esp="" root_part=""
-ESP_TYPE="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
-while read -r part; do
-    ptype="$(lsblk -rno PARTTYPE "${part}" | tr '[:upper:]' '[:lower:]')"
-    fstype="$(blkid -p -s TYPE -o value "${part}" || true)"
-    if [[ "${ptype}" == "${ESP_TYPE}" ]]; then
-        esp="${part}"
-    elif [[ "${fstype}" == crypto_LUKS ]]; then
-        root_part="${part}"
+table="$(lsblk -nrpo NAME,TYPE,PARTN,PARTTYPE,FSTYPE -- "${disk_ref}")"
+while read -r part kind number ptype fstype; do
+    [[ "${kind}" == part ]] || continue
+    [[ "${number}" =~ ^[1-9][0-9]*$ ]] || fail "invalid installed partition number"
+    partition_ref="${disk_ref}-part${number}"
+    [[ "$(realpath -e -- "${partition_ref}")" == "${part}" ]] || fail "installed partition changed"
+    if [[ "${ptype,,}" == c12a7328-f81f-11d2-ba4b-00a0c93ec93b && "${fstype}" == vfat && -z "${esp}" ]]; then
+        esp="${partition_ref}"
+    elif [[ "${fstype}" == crypto_LUKS && -z "${root_part}" ]]; then
+        root_part="${partition_ref}"
+    else
+        fail "unexpected partition on installed disk: ${part}"
     fi
-done < <(lsblk -rnpo NAME,TYPE "${target}" | awk '$2 == "part" { print $1 }')
-
-[[ -n "${esp}" && -n "${root_part}" ]] || { echo "target missing ESP or root" >&2; exit 1; }
+done <<<"${table}"
+[[ -n "${esp}" && -n "${root_part}" ]] || fail "expected one ESP and one LUKS root"
+root_node="$(realpath -e -- "${root_part}")"
+exec {esp_fd}<"${esp}" {root_fd}<"${root_part}"
+if ! same_disk "${esp_fd}" || ! same_disk "${root_fd}"; then
+    fail "installed partition changed"
+fi
 
 work="$(mktemp -d /run/dakota-install.XXXXXX)"
 mapper="dakota-install-root-$$"
 cleanup() {
-    set +e
-    for m in "${work}"/mnt/*; do mountpoint -q "$m" && umount -R "$m"; done
-    [[ -e "/dev/mapper/${mapper}" ]] && cryptsetup close "${mapper}"
-    rm -rf "${work}"
+    local status=$? m
+    trap - EXIT
+    for m in "${work}/efi" "${work}/root"; do
+        if mountpoint -q "${m}"; then
+            umount -- "${m}" || exit 1
+        fi
+    done
+    if [[ -b "/dev/mapper/${mapper}" ]]; then
+        cryptsetup close "${mapper}" || exit 1
+    fi
+    rmdir -- "${work}/efi" "${work}/root" "${work}" || exit 1
+    exit "${status}"
 }
 trap cleanup EXIT
-mkdir -p "${work}/mnt/root" "${work}/mnt/efi"
+mkdir -p "${work}/root" "${work}/efi"
+
+if [[ -e "${state}/encrypted-root" ]]; then
+    [[ "$(cat "${state}/encrypted-root")" == "${root_node}" ]] || fail "installed root changed"
+    cryptsetup luksDump --dump-json-metadata "${root_part}" |
+        jq -e '
+            any(.tokens[]; .type == "systemd-recovery" and (.keyslots | length == 1)) and
+            ((.keyslots | keys) == ([.tokens[] |
+                select(.type == "systemd-tpm2" or .type == "systemd-recovery") |
+                .keyslots[]] | unique))
+        ' >/dev/null || fail "a recovery slot must be enrolled and the temporary slot removed"
+    mount -t vfat -o nosuid,nodev,noexec -- "${esp}" "${work}/efi"
+    python3 /usr/libexec/dakota-finish-boot.py --publish "${work}/efi"
+    exit
+fi
 
 luks_uuid="$(cryptsetup luksUUID "${root_part}")"
 python3 - "${root_part}" "${mapper}" <<'PY'
@@ -54,45 +101,44 @@ finally:
 PY
 
 root_dev="/dev/mapper/${mapper}"
-# Check /sysroot existence if present on composefs hosts
-test -d /sysroot 2>/dev/null || true
-mount "${root_dev}" "${work}/mnt/root"
-mount "${esp}" "${work}/mnt/efi"
-
-deployments=()
-for d in "${work}"/mnt/root/state/deploy/*; do
-    [[ -d "$d/etc" ]] && deployments+=("$d")
-done
-[[ ${#deployments[@]} -ge 1 ]] || { echo "no composefs deployment found" >&2; exit 1; }
-
-entry_dir="${work}/mnt/efi/loader/entries"
-rm -f "${entry_dir}/dakota-live.conf"
-
-options="discard"
-if cryptsetup luksDump "${root_part}" | grep -q 'systemd-tpm2'; then
-    options="tpm2-device=auto,discard"
+[[ "$(blkid -p -s TYPE -o value -- "${root_dev}")" == ext4 ]] || fail "expected ext4 inside the LUKS root"
+current_root="$(blkid -p -s UUID -o value -- "${root_dev}")"
+current_esp="$(blkid -p -s UUID -o value -- "${esp}")"
+if [[ ! -e "${state}/copied-filesystems" ]]; then
+    printf '%s\n' "${current_root}" "${current_esp}" >"${state}/copied-filesystems.tmp"
+    mv -T -- "${state}/copied-filesystems.tmp" "${state}/copied-filesystems"
 fi
-
-for entry in "${entry_dir}"/*.conf; do
-    [[ -f "${entry}" ]] || continue
-    sed -i "/^options /{/rd.luks.uuid=${luks_uuid}/!s/\$/ rd.luks.uuid=${luks_uuid} rd.luks.options=${luks_uuid}=${options}/}" "${entry}"
-    sed -i "s/dakota.live.installer=gnome-setup //g; s/dakota.live //g" "${entry}"
-done
-
-for d in "${deployments[@]}"; do
-    printf 'luks-%s UUID=%s none %s\n' "${luks_uuid}" "${luks_uuid}" "${options}" >"$d/etc/crypttab"
-done
-
-fstype="$(blkid -p -s TYPE -o value "${root_dev}" || true)"
-if [[ "${fstype}" == "btrfs" ]]; then
-    btrfs filesystem resize max "${work}/mnt/root" >/dev/null || true
-elif [[ "${fstype}" == "ext4" ]]; then
-    resize2fs "${root_dev}" >/dev/null || true
+mapfile -t filesystems <"${state}/copied-filesystems"
+[[ "${#filesystems[@]}" == 2 && -n "${filesystems[0]}" && -n "${filesystems[1]}" ]] || fail "invalid filesystem receipt"
+old_root="${filesystems[0]}" old_esp="${filesystems[1]}"
+status=0
+e2fsck -fp "${root_dev}" || status=$?
+(( status <= 1 )) || fail "ext4 check failed (exit ${status})"
+if [[ "${current_root}" == "${old_root}" ]]; then
+    tune2fs -U random "${root_dev}"
 fi
+resize2fs "${root_dev}"
+if [[ "${current_esp}" == "${old_esp}" ]]; then
+    fatlabel --volume-id --reset "${esp}"
+fi
+new_root="$(blkid -p -s UUID -o value -- "${root_dev}")"
+new_esp="$(blkid -p -s UUID -o value -- "${esp}")"
 
-sync
-umount -R "${work}/mnt/efi"
-umount -R "${work}/mnt/root"
+mount -t ext4 -o nosuid,nodev,noexec -- "${root_dev}" "${work}/root"
+mount -t vfat -o nosuid,nodev,noexec -- "${esp}" "${work}/efi"
+
+options=discard
+if cryptsetup luksDump --dump-json-metadata "${root_part}" |
+    jq -e 'any(.tokens[]; .type == "systemd-tpm2")' >/dev/null; then
+    options=tpm2-device=auto,discard
+else
+    (( PIPESTATUS[0] == 0 && PIPESTATUS[1] == 1 )) || fail "could not read LUKS2 token metadata"
+fi
+python3 /usr/libexec/dakota-finish-boot.py "${work}/efi" "${work}/root" \
+    "${luks_uuid}" "${options}" "${old_root}" "${new_root}" "${old_esp}" "${new_esp}"
+
+umount -- "${work}/efi"
+umount -- "${work}/root"
 cryptsetup close "${mapper}"
-trap - EXIT
-rm -rf "${work}"
+[[ "$(realpath -e -- "${root_part}")" == "${root_node}" ]] || fail "installed root changed"
+printf '%s\n' "${root_node}" >"${state}/encrypted-root"

@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 # Turn a dakota.live boot of the installed disk image into the live session.
 #
-# Runs only with dakota.live on the kernel command line. / (with /etc and
+# Runs only for the gnome-setup live entry. / (with /etc and
 # /var) is a tmpfs overlay there (the live entry's extra initrd configures
 # bootc-root-setup that way), so everything written here (the live account,
 # its autologin, the installer autostart) exists only in RAM and never reaches
@@ -13,12 +13,9 @@ home="$(realpath -m /home)/${user}"
 
 if ! id "${user}" >/dev/null 2>&1; then
     useradd --create-home --home-dir "${home}" --user-group \
-        --groups wheel --comment 'Live User' "${user}"
+        --comment 'Live User' "${user}"
 fi
-passwd --delete "${user}" >/dev/null
-# Name the rule zz-dakota-live so it sorts after sudoers.d/wheel in sudo-rs
-printf '%s ALL=(ALL) NOPASSWD: ALL\n' "${user}" >/etc/sudoers.d/zz-dakota-live
-chmod 0440 /etc/sudoers.d/zz-dakota-live
+passwd --lock "${user}" >/dev/null
 install -d -o "${user}" -g "${user}" "${home}/.config"
 install -o "${user}" -g "${user}" -m 0644 /dev/null "${home}/.config/gnome-initial-setup-done"
 
@@ -39,9 +36,11 @@ with path.open("w") as f:
 PY
 
 # Keep the live session awake and skip the tour; pin the installer.
-db="$(sed -n 's/^system-db://p' /etc/dconf/profile/user 2>/dev/null | head -n 1)"
-db="${db:-local}"
-if [[ ! -f /etc/dconf/profile/user ]]; then
+db=local
+if [[ -f /etc/dconf/profile/user ]]; then
+    db="$(sed -n '/^system-db:/ { s/^system-db://; p; q; }' /etc/dconf/profile/user)"
+    db="${db:-local}"
+else
     install -d /etc/dconf/profile
     printf 'user-db:user\nsystem-db:%s\n' "${db}" >/etc/dconf/profile/user
 fi
@@ -71,8 +70,7 @@ dconf update || true
 
 if grep -qw 'dakota.live.installer=gnome-setup' /proc/cmdline; then
     /usr/libexec/dakota-live-definitions
-    install -d /run/gnomeos /etc/xdg/autostart /usr/local/share/applications
-    touch /run/gnomeos/is-live
+    install -d -m 0755 /run/gnomeos /etc/xdg/autostart /usr/local/share/applications
 
     cat >/etc/xdg/autostart/dakota-gnome-setup.desktop <<'EOF'
 [Desktop Entry]
@@ -83,11 +81,5 @@ Icon=org.gnome.Setup
 X-GNOME-Autostart-enabled=true
 EOF
     cp /usr/share/dakota/gnome-setup/org.gnome.Setup.desktop /usr/local/share/applications/
-fi
-
-if grep -qw dakota.live.debug /proc/cmdline; then
-    echo "${user}:live" | chpasswd
-    install -d /etc/ssh/sshd_config.d
-    printf 'PasswordAuthentication yes\n' >/etc/ssh/sshd_config.d/00-dakota-live-debug.conf
-    systemctl --no-block start sshd.service 2>/dev/null || true
+    touch /run/gnomeos/is-live
 fi

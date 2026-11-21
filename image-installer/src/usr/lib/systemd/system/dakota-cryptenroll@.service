@@ -7,4 +7,5 @@ Conflicts=shutdown.target
 Before=shutdown.target
 
 [Service]
+Environment=DAKOTA_CRYPTENROLL=1
 ExecStart=/usr/libexec/dakota-sysinstall/systemd-cryptenroll

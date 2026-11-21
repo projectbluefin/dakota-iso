@@ -6,12 +6,16 @@ import sys
 
 def render_definitions(table, root_node, tpm2=False, bios_type="21686148-6449-6e6f-744e-656564454649"):
     data = table.get("partitiontable", table)
+    esp_type = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+    parts = [part for part in data["partitions"] if part["type"].lower() != bios_type]
+    roots = [part for part in parts if part["node"] == root_node]
+    esps = [part for part in parts if part["type"].lower() == esp_type]
+    if len(parts) != 2 or len(roots) != 1 or len(esps) != 1 or roots == esps:
+        raise ValueError("expected exactly one source ESP and one distinct root partition")
     sector = data.get("sectorsize", 512)
     definitions = {}
-    for index, part in enumerate(data["partitions"], start=1):
+    for index, part in enumerate(parts, start=1):
         ptype = part["type"].lower()
-        if ptype == bios_type.lower():
-            continue
         lines = ["[Partition]", f"Type={ptype}", f"CopyBlocks=/dev/disk/by-partuuid/{part['uuid'].lower()}"]
         if part.get("name"):
             lines.append(f"Label={part['name']}")

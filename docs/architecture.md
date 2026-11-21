@@ -317,6 +317,28 @@ the bundle's SHA-256 must match the lock — see `TestInstallerChannelURLs` in
 
 ### Experimental gnome-setup + systemd-sysinstall raw medium track (2026-11-21)
 
-Utah PR #1437 experiments with `gnome-setup` driving `systemd-sysinstall` via Varlink sockets to block-copy a bootable raw medium. In Dakota, composefs + systemd-boot uses `gpt-auto` without a `root=` kernel argument, so block-copy post-install scripts fail if they require `root=UUID=`.
+[Utah #1437](https://github.com/projectbluefin/utah/pull/1437) uses GNOME Setup
+and `systemd-sysinstall` to install by block copy. Dakota builds its own ext4
+composefs raw disk with systemd-boot. Derive the live Type #1 BLS entry from the
+installed entry: keep the `composefs.digest` argument even when the original
+entry uses GPT auto-discovery and has no explicit `root=`. The live account,
+autologin and installer permission grants exist only in the live session.
 
-Keep the experimental track separated under `image-installer/` with opt-in recipe `experimental-raw-medium` in `justfile`. Do not replace the release ISO pipeline (`just iso-sd-boot`) or mutate `live/src/configure-live.sh` until end-to-end boot of the installed system is proven.
+`just experimental-raw-container` builds and checks the installer binaries.
+The frontend uses Fedora 44's Blueprint 0.20+ because older compilers reject
+the pinned GNOME Setup's translated expressions.
+From a root-capable terminal, `sudo just experimental-raw-medium <new-output-path>`
+uses the same Podman storage for the build and raw provisioning. The output
+filesystem needs hard links and space for the raw disk and staged OCI layout.
+Both recipes use `dakota/payload_ref`: the container build verifies and pins the
+downloaded digest; the installed disk tracks the published tag.
+
+The experimental installer requires explicit whole-disk erasure consent even
+if no filesystem or partition-table signature was detected. It does not
+install alongside another system. The installed boot entry stays unpublished
+until recovery is enrolled and the temporary empty-password slot is gone.
+Qualify in UEFI QEMU on disposable disks before using physical hardware. Verify GUI
+autologin, a confirmed install, recovery enrollment, and first boot with the
+source still attached. Test TPM unlock and recovery without the TPM, then
+verify `bootc` update and rollback on the installed disk. The release ISO
+continues to use Fisherman independently of this track.
