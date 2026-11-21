@@ -1235,6 +1235,16 @@ class TestBuildIsoScript(unittest.TestCase):
                          f"live/src/build-iso.sh syntax error:\n{result.stderr}")
 
 
+class TestLiveBrewSetupMasked(unittest.TestCase):
+    """Homebrew must not unpack into the RAM-backed live overlay (#322, #323)."""
+
+    def test_brew_setup_is_masked_in_live_root(self):
+        content = CONFIGURE_LIVE.read_text()
+        self.assertIn(
+            "ln -sfn /dev/null /etc/systemd/system/brew-setup.service", content
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 
