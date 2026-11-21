@@ -64,6 +64,11 @@ class ExperimentalRawInstallerContractTest(unittest.TestCase):
         self.assertIn("usr/lib/composefs", build_script)
         self.assertNotIn("usr/lib/bootc/setup-root-conf.toml", build_script)
 
+    def test_build_raw_image_canonicalizes_out_dir(self):
+        build_script = (TRACK / "build-raw-image.sh").read_text()
+        self.assertIn('OUT_DIR="$(mkdir -p "$(dirname "${OUT}")" && cd "$(dirname "${OUT}")" && pwd)"', build_script)
+        self.assertIn('-v "${OUT_DIR}":/out', build_script)
+
 
     def test_repart_definitions_copy_esp_and_encrypt_root(self):
         module = load_module("live_definitions", TRACK / "live-definitions.py")

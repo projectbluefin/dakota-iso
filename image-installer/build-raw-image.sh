@@ -11,14 +11,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 [[ ${EUID} -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
 
-mkdir -p "$(dirname "${OUT}")"
+OUT_DIR="$(mkdir -p "$(dirname "${OUT}")" && cd "$(dirname "${OUT}")" && pwd)"
+OUT="${OUT_DIR}/$(basename "${OUT}")"
 truncate -s "${SIZE}" "${OUT}"
 
 echo ">>> Installing container image to raw disk via bootc..."
 podman run --rm --privileged --pid=host --ipc=host \
     --security-opt label=type:unconfined_t \
     -v /dev:/dev -v /var/lib/containers:/var/lib/containers \
-    -v "$(dirname "${OUT}")":/out \
+    -v "${OUT_DIR}":/out \
     "${IMAGE}" bootc install to-disk --generic-image \
     --composefs-backend --bootloader systemd --filesystem "${FILESYSTEM}" \
     --via-loopback "/out/$(basename "${OUT}")"
