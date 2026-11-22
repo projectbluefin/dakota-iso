@@ -255,6 +255,14 @@ The live boot screenshot was captured immediately after SSH or the serial ready 
 
 Fix: Added `wait-live` mode to `luks-unlock.py` which monitors screen brightness and hash stability. It waits up to 5 minutes for the screen to become bright (brightness >= 1.5) and stable before capturing the PPM.
 
+### CI screenshots branch holds one replaced commit (2026-11-22)
+
+CI publishes screenshots with `.github/scripts/publish_screenshots.sh`, which
+force-pushes a single parentless commit holding only the newest run to
+`ci-screenshots`; appending a commit per image grew the branch forever (#382).
+A run's PNGs stay on the branch only until the next run publishes. See
+[`ci.md` → Screenshots](ci.md#screenshots).
+
 ### LUKS ENOSPC: fisherman skips /var/tmp bind-mount for encrypted targets (2026-06-14)
 
 The live environment mounts a tmpfs at `/var/tmp` sized at 80% of VM RAM

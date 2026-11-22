@@ -78,24 +78,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Ensure screenshots branch exists
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          if gh api "/repos/${REPO}/git/refs/heads/ci-screenshots" &>/dev/null; then
-            echo "ci-screenshots branch already exists"
-          else
-            echo "Creating ci-screenshots branch..."
-            DEFAULT=$(gh api "/repos/${REPO}" --jq '.default_branch')
-            SHA=$(gh api "/repos/${REPO}/git/refs/heads/${DEFAULT}" --jq '.object.sha')
-            gh api --method POST "/repos/${REPO}/git/refs" \
-              -f "ref=refs/heads/ci-screenshots" \
-              -f "sha=${SHA}"
-            echo "ci-screenshots branch created from ${DEFAULT}"
-          fi
-
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
         with:
@@ -168,47 +150,32 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          VARIANT: ${{ matrix.variant }}
+          CHANNEL: ${{ matrix.installer_channel }}
         run: |
           # Make root-owned PPMs readable
           sudo chmod a+r /tmp/luks-screenshot-*.ppm /tmp/luks-unlock-snap.ppm 2>/dev/null || true
 
-          commit_png() {
-            local src_ppm="$1" label="$2" out_var="$3"
-            local png="/tmp/${label}.png"
+          shots=$(mktemp -d)
+          for pair in live:live-boot plymouth:plymouth final:final-boot; do
+            convert "/tmp/luks-screenshot-${pair%%:*}.ppm" "${shots}/${pair#*:}.png" 2>/dev/null || true
+          done
 
-            convert "$src_ppm" "$png" 2>/dev/null || return 0
-            [[ -f "$png" ]] || return 0
+          # The branch holds one parentless commit with only this run's
+          # screenshots; every publish replaces it, so it never grows (#382).
+          run_dir="luks-e2e/${RUN_ID}"
+          leg_dir="${run_dir}/${VARIANT}/${CHANNEL}"
+          bash .github/scripts/publish_screenshots.sh \
+            "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
+            ci-screenshots "$run_dir" "$leg_dir" "$shots"
 
-            local path_in_repo="luks-e2e/${RUN_ID}/${{ matrix.variant }}/${{ matrix.installer_channel }}/${label}.png"
-            local existing_sha
-            existing_sha=$(gh api "/repos/${REPO}/contents/${path_in_repo}?ref=ci-screenshots" \
-              --jq '.sha' 2>/dev/null || echo "")
-
-            local b64_file
-            b64_file=$(mktemp)
-            base64 -w0 "$png" > "$b64_file"
-
-            jq -n \
-              --arg msg "LUKS E2E screenshot: ${label} (run ${RUN_ID})" \
-              --rawfile content "$b64_file" \
-              --arg branch "ci-screenshots" \
-              --arg sha "$existing_sha" \
-              'if $sha != "" then
-                {message: $msg, content: ($content | rtrimstr("\n")), branch: $branch, sha: $sha}
-              else
-                {message: $msg, content: ($content | rtrimstr("\n")), branch: $branch}
-              end' | \
-              gh api --method PUT "/repos/${REPO}/contents/${path_in_repo}" --input - > /dev/null
-
-            rm "$b64_file"
-            local url="https://raw.githubusercontent.com/${REPO}/ci-screenshots/${path_in_repo}"
-            echo "${out_var}=${url}" >> "$GITHUB_OUTPUT"
+          for pair in live-boot:live_url plymouth:plymouth_url final-boot:final_url; do
+            label=${pair%%:*}
+            [[ -f "${shots}/${label}.png" ]] || continue
+            url="https://raw.githubusercontent.com/${REPO}/ci-screenshots/${leg_dir}/${label}.png"
+            echo "${pair#*:}=${url}" >> "$GITHUB_OUTPUT"
             echo "Published ${label} → ${url}"
-          }
-
-          commit_png /tmp/luks-screenshot-live.ppm      "live-boot"     "live_url"
-          commit_png /tmp/luks-screenshot-plymouth.ppm  "plymouth"      "plymouth_url"
-          commit_png /tmp/luks-screenshot-final.ppm     "final-boot"    "final_url"
+          done
 
       - name: Post PR comment
         if: always() && github.event_name == 'pull_request'
