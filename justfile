@@ -773,11 +773,11 @@ luks-test-qemu target installer_channel="dev":
     source scripts/e2e-exit.sh
     e2e_require qemu-system-x86_64 socat sshpass
     on_deadline() {
-        local m p
+        local m SOCAT_PREFIX
         for m in "{{luks-qemu-monitor-installed}}" "{{luks-qemu-monitor-live}}"; do
             [[ -S "$m" ]] || continue
-            p=""; [[ -w "$m" ]] || p="sudo"
-            printf 'screendump /tmp/luks-screenshot-deadline.ppm\n' | $p socat - "UNIX-CONNECT:$m" >/dev/null 2>&1 || true
+            SOCAT_PREFIX=""; [[ -w "$m" ]] || SOCAT_PREFIX="sudo"
+            printf 'screendump /tmp/luks-screenshot-deadline.ppm\n' | $SOCAT_PREFIX socat - "UNIX-CONNECT:$m" >/dev/null 2>&1 || true
             break
         done
         e2e_exit "$E2E_EXIT_DEADLINE" "wall-clock deadline reached in phase $E2E_PHASE_EXIT ($(e2e_phase_name "$E2E_PHASE_EXIT"))"
@@ -1142,11 +1142,11 @@ plain-test-qemu target:
     source scripts/e2e-exit.sh
     e2e_require qemu-system-x86_64 socat sshpass
     on_deadline() {
-        local m p
+        local m SOCAT_PREFIX
         for m in "{{plain-qemu-monitor-installed}}" "{{plain-qemu-monitor-live}}"; do
             [[ -S "$m" ]] || continue
-            p=""; [[ -w "$m" ]] || p="sudo"
-            printf 'screendump /tmp/plain-screenshot-final.ppm\n' | $p socat - "UNIX-CONNECT:$m" >/dev/null 2>&1 || true
+            SOCAT_PREFIX=""; [[ -w "$m" ]] || SOCAT_PREFIX="sudo"
+            printf 'screendump /tmp/plain-screenshot-final.ppm\n' | $SOCAT_PREFIX socat - "UNIX-CONNECT:$m" >/dev/null 2>&1 || true
             break
         done
         e2e_exit "$E2E_EXIT_DEADLINE" "wall-clock deadline reached in phase $E2E_PHASE_EXIT ($(e2e_phase_name "$E2E_PHASE_EXIT"))"

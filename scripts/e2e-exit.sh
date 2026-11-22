@@ -12,7 +12,7 @@
 #   14      phase 4: unlock LUKS (LUKS lane only)
 #   15      phase 5: verify the installed system
 #   75      E2E_WALL_CLOCK_DEADLINE reached (EX_TEMPFAIL); evidence was kept
-#   77      a host dependency (QEMU, OVMF, socat) is missing
+#   77      a host dependency (qemu-system-x86_64, socat, sshpass) is missing
 #
 # A harness sets E2E_PHASE_EXIT at each phase. Its EXIT trap reports
 # `e2e_status`: E2E_EXIT_CODE when a failure named its own code, otherwise the
