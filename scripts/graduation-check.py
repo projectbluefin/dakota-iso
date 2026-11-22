@@ -104,9 +104,17 @@ def fetch_run_log(repo: str, run_id: int) -> str | None:
 def parse_tap(log: str | None) -> dict[str, str]:
     if not log:
         return {}
-    # Last occurrence per id wins: a re-run of the step in one run keeps the
-    # most recent verdict.
-    return {m.group("id"): m.group("status") for m in TAP_RE.finditer(log)}
+    # Fail-safe collapse: a check is "ok" only if every occurrence in the run
+    # is "ok". Each matrix leg re-runs the same checks, so a later "ok" leg
+    # must not mask an earlier "not ok" leg (dakota#392).
+    verdicts: dict[str, str] = {}
+    for m in TAP_RE.finditer(log):
+        cid, status = m.group("id"), m.group("status")
+        if status != "ok":
+            verdicts[cid] = "not ok"
+        else:
+            verdicts.setdefault(cid, "ok")
+    return verdicts
 
 
 def gather(checks: list[str], runs: list[dict], repo: str) -> dict[str, list[tuple[str, str]]]:
@@ -208,7 +216,7 @@ This recommendation is automated by scripts/graduation-check.py
 
 def find_existing_issue(repo: str, title: str) -> int | None:
     proc = run_gh(
-        ["issue", "list", "--state", "all", "--json", "number,title",
+        ["issue", "list", "--state", "open", "--json", "number,title",
          "--search", f"In:title:{title!r}"],
         repo,
     )

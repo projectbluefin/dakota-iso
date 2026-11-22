@@ -1038,9 +1038,9 @@ luks-verify-qemu target:
     set -euo pipefail
     # Post-boot assertions (projectbluefin/dakota#651). Each soft assertion is
     # observability-only unless its id is in STRICT_IDS (handled inside
-    # verify-post-install.sh); the weekly graduation check adds checks to
-    # STRICT_IDS once they pass a green bar. SSH unreachable is always blocking
-    # (rc 2).
+    # verify-post-install.sh); the weekly graduation check only recommends
+    # promoting checks to STRICT_IDS once they pass a green bar — a human
+    # enforces. SSH unreachable is always blocking (rc 2).
     bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase"
 
 # Run Python unit tests.
@@ -1442,8 +1442,9 @@ plain-verify-qemu target:
             # Flatpak exclusion, over SSH into the now-booted installed system.
             # Each soft assertion is observability-only unless its id is in
             # STRICT_IDS (handled inside verify-post-install.sh); the weekly
-            # graduation check adds checks to STRICT_IDS on a green bar. SSH
-            # unreachable is always blocking (rc 2).
+            # graduation check only recommends promoting checks to STRICT_IDS
+            # on a green bar — a human enforces. SSH unreachable is always
+            # blocking (rc 2).
             POST_BOOT_RC=0
             bash "scripts/verify-post-install.sh" "{{plain-qemu-ssh-port-installed}}" "none" || POST_BOOT_RC=$?
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true

@@ -64,8 +64,15 @@ class TestBar(unittest.TestCase):
 
 
 class TestParseTap(unittest.TestCase):
-    def test_last_occurrence_wins(self):
-        self.assertEqual(mod.parse_tap("ok - a\nnot ok - b\nok - a"),
+    def test_later_pass_does_not_mask_earlier_fail(self):
+        # Matrix legs each re-run the same checks. A later "ok" leg must not
+        # mask an earlier "not ok" leg, or a failing leg would be hidden from
+        # the graduation bar (dakota#392).
+        self.assertEqual(mod.parse_tap("not ok - a\nok - a\nok - b"),
+                         {"a": "not ok", "b": "ok"})
+
+    def test_all_occurrences_ok_is_ok(self):
+        self.assertEqual(mod.parse_tap("ok - a\nok - a\nnot ok - b"),
                          {"a": "ok", "b": "not ok"})
 
     def test_only_id_lines_parsed(self):
@@ -161,6 +168,19 @@ class TestLiveGhCalls(unittest.TestCase):
             self.assertIn("--repo", cmd)          # gh run list accepts --repo
             self.assertIn("run", cmd)             # gh run list
             self.assertIn("--workflow", cmd)
+
+    def test_find_existing_issue_searches_open_only(self):
+        # Only open issues are matched, so a previous (closed) recommendation
+        # issue is never reopened and edited (dakota#392).
+        calls = self._run_with_stub(
+            lambda: mod.find_existing_issue("projectbluefin/dakota-iso", "x")
+        )
+        cmd = calls[0]
+        self.assertIn("issue", cmd)
+        self.assertIn("list", cmd)
+        state_idx = cmd.index("--state")
+        self.assertEqual(cmd[state_idx + 1], "open")
+        self.assertNotIn("all", cmd)
 
 
 if __name__ == "__main__":
