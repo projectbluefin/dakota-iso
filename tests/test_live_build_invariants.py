@@ -5,7 +5,7 @@ These tests ensure that changes made to support Fedora/CentOS-based images
 
 Covered invariants
 ------------------
-1. Boot cmdline uses LABEL=DAKOTA_LIVE, NOT CDLABEL= (cdrom_id-based) or
+1. Boot cmdline uses LABEL=<variant volume label>, NOT CDLABEL= (cdrom_id-based) or
    /dev/sr0 (optical-only).
    - CDLABEL= requires the cdrom_id udev helper, which fails with the
      Debian-built initramfs on GnomeOS native kernels.
@@ -65,7 +65,7 @@ LIVE_SRC_VARIANT_FILES = [
 
 # Keys owned by the top-level <variant>/ directory. Nothing reads them from
 # live/src/<variant>/, so a copy there is an unreconciled duplicate.
-NAMESPACE_A_ONLY_FILES = ["payload_ref", "live_target", "live_title", "registry", "tag"]
+NAMESPACE_A_ONLY_FILES = ["payload_ref", "live_target", "live_title", "live_label", "registry", "tag"]
 
 # Scalar files nothing reads. flatpak_var_path is taken from images.json.
 UNREAD_LIVE_SRC_FILES = ["flatpak_var_path"]
@@ -83,8 +83,44 @@ def active_matrix_variants(workflow_text: str) -> set:
     return set(re.findall(r"- variant:\s*(\S+)", strip_yaml_comments(workflow_text)))
 
 
+class TestVolumeLabelPerVariant(unittest.TestCase):
+    """Each variant has its own ISO volume label; build-iso.sh, the kernel
+    cmdline and the dracut hook must all use one value (no hardcoded label)."""
+
+    LABEL_RE = re.compile(r"^[A-Z0-9_]{1,32}$")
+
+    def _variant_labels(self):
+        labels = {}
+        for p in sorted(REPO.glob("*/live_title")):
+            f = p.parent / "live_label"
+            self.assertTrue(f.is_file(), f"{p.parent.name}: missing live_label")
+            labels[p.parent.name] = f.read_text().strip()
+        return labels
+
+    def test_every_variant_has_valid_unique_label(self):
+        labels = self._variant_labels()
+        self.assertTrue(labels)
+        for name, label in labels.items():
+            self.assertRegex(label, self.LABEL_RE, f"{name}: bad ISO volume label")
+        self.assertEqual(len(set(labels.values())), len(labels), f"duplicate labels: {labels}")
+        self.assertEqual(labels.get("dakota"), "DAKOTA_LIVE")
+
+    def test_build_iso_uses_label_variable_everywhere(self):
+        text = LIVE_BUILD_ISO.read_text()
+        code = [l for l in text.splitlines() if not l.strip().startswith("#")]
+        joined = "\n".join(code)
+        self.assertIn('-V "${LABEL}"', joined)
+        self.assertEqual(joined.count("root=live:LABEL=${LABEL}"), 2)
+        self.assertNotIn("root=live:LABEL=DAKOTA_LIVE", joined)
+        self.assertIn("--label)", joined)
+
+    def test_dracut_hook_reads_label_from_cmdline(self):
+        hook = (REPO / "live/src/dracut/95dakota-isofile/dakota-isofile.sh").read_text()
+        self.assertIn('root=live:LABEL=*) LABEL="${arg#root=live:LABEL=}"', hook)
+
+
 class TestBootCmdline(unittest.TestCase):
-    """Ensure LABEL=DAKOTA_LIVE is used (not CDLABEL= or /dev/sr0).
+    """Ensure LABEL=<variant volume label> is used (not CDLABEL= or /dev/sr0).
 
     /dev/sr0 is optical-only and silently fails on USB flash drive boots
     (regression post-alpha2). CDLABEL= requires cdrom_id which is broken
@@ -105,18 +141,18 @@ class TestBootCmdline(unittest.TestCase):
             self.assertNotIn(
                 "root=live:/dev/sr0", stripped,
                 f"{path.name}: found root=live:/dev/sr0 — breaks USB flash drive boots, "
-                f"use root=live:LABEL=DAKOTA_LIVE: {stripped!r}",
+                f"use root=live:LABEL=${{LABEL}}: {stripped!r}",
             )
 
     def _check_has_label(self, path: Path):
         content = path.read_text()
         label_lines = [
             ln for ln in content.splitlines()
-            if "root=live:LABEL=DAKOTA_LIVE" in ln and not ln.strip().startswith("#")
+            if "root=live:LABEL=${LABEL}" in ln and not ln.strip().startswith("#")
         ]
         self.assertGreaterEqual(
             len(label_lines), 2,
-            f"{path.name}: expected ≥2 boot entries with root=live:LABEL=DAKOTA_LIVE "
+            f"{path.name}: expected ≥2 boot entries with root=live:LABEL=${{LABEL}} "
             f"(BLS + loopback), found {len(label_lines)}.",
         )
 
@@ -125,7 +161,7 @@ class TestBootCmdline(unittest.TestCase):
         self._check_boot_root(LIVE_BUILD_ISO)
 
     def test_live_build_iso_contains_label_root(self):
-        """live/src/build-iso.sh boot entries must use root=live:LABEL=DAKOTA_LIVE."""
+        """live/src/build-iso.sh boot entries must use root=live:LABEL=${LABEL} (the variant label)."""
         self._check_has_label(LIVE_BUILD_ISO)
 
 

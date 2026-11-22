@@ -263,10 +263,13 @@ df -h "${OUTPUT_DIR}"
 du -sh "${SQUASHFS}" "${BOOT_TAR}" 2>/dev/null || true
 
 LIVE_TITLE=$(cat "${TARGET}/live_title" 2>/dev/null || echo 'Dakota Live')
+LIVE_LABEL=$(tr -d '[:space:]' < "${TARGET}/live_label" 2>/dev/null || true)
+LIVE_LABEL="${LIVE_LABEL:-DAKOTA_LIVE}"
 TMPDIR="${OUTPUT_DIR}" \
 PATH="/usr/sbin:/usr/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}" \
     bash "live/src/build-iso.sh" \
         --title "${LIVE_TITLE}" \
+        --label "${LIVE_LABEL}" \
         "${BOOT_TAR}" "${SQUASHFS}" "${OUTPUT_DIR}/${TARGET}-live.iso"
 
 echo "ISO ready: ${OUTPUT_DIR}/${TARGET}-live.iso"

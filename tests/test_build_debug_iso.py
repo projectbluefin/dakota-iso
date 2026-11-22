@@ -51,7 +51,7 @@ def test_debug_copy_preserves_media_and_configures_boot_password(tmp_path, ssh_u
            "REAL_MKSQUASHFS": shutil.which("mksquashfs"),
            "REAL_UNSQUASHFS": shutil.which("unsquashfs")}
     result = subprocess.run(["bash", str(script), str(tmp_path / "production.sfs"), "boot.tar",
-                             "debug.iso", "Utah Live"], env=env, text=True, capture_output=True)
+                             "debug.iso", "Utah Live", "UTAH_LIVE"], env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert (capture / "usr/share/bootc-installer/oci/blobs/sha256/fixture").read_bytes() == b"production payload"
     assert (capture / "etc/bootc-installer/media-input.json").read_bytes() == (config / "media-input.json").read_bytes()
@@ -61,6 +61,7 @@ def test_debug_copy_preserves_media_and_configures_boot_password(tmp_path, ssh_u
     assert "liveuser:live" in (capture / "usr/lib/systemd/system/live-debug-passwords.service").read_text()
     assert f"enable {ssh_unit}" in (capture / "etc/systemd/system-preset/90-live-debug.preset").read_text()
     assert (capture / "etc/systemd/system/multi-user.target.wants" / ssh_unit).is_symlink()
-    assert args.read_text().splitlines()[:3] == ["--title", "Utah Live", "boot.tar"]
+    assert args.read_text().splitlines()[:5] == [
+        "--title", "Utah Live", "--label", "UTAH_LIVE", "boot.tar"]
     assert not list(tmp_path.glob("debug-iso.*"))
     assert not (root / "etc/ssh/sshd_config.d").exists()

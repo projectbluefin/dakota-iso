@@ -124,6 +124,7 @@ Each key lives in exactly one place. A file anywhere else is not read.
 | `payload_ref` | `<variant>/` | `justfile`, `scripts/*.sh` | yes (hard error) | — |
 | `live_target` | `<variant>/` | `variant_live_target` | no | variant name |
 | `live_title` | `<variant>/` | `scripts/iso-sd-boot.sh` | no | — |
+| `live_label` | `<variant>/` | `scripts/iso-sd-boot.sh`, workflows | no | `DAKOTA_LIVE` |
 | `registry` | `<variant>/` | `variant_registry` | no | `projectbluefin` |
 | `tag` | `<variant>/` | `variant_tag` | no | `stable` |
 | `composefs` | `live/src/<bootloader-variant>/` | `variant_composefs`, `configure-live.sh` | no | `true` |
