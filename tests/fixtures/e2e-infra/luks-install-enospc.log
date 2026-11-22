@@ -1,0 +1,12 @@
+2026-11-21T12:35:56.3790112Z Current runner version: '2.338.2'
+2026-11-21T12:35:56.3816780Z ##[group]Runner Image Provisioner
+2026-11-21T12:35:56.3817690Z Hosted Compute Agent
+2026-11-21T13:09:45.4797334Z ##[group]Run START=$(date +%s)
+2026-11-21T13:09:45.4797864Z START=$(date +%s)
+2026-11-21T13:18:32.9054299Z Error: unable to perform copy: unable to copy from source oci:/mnt/fisherman-target/.fisherman-scratch/oci-cache:: writing blob: adding layer with blob "sha256:cdd733832e254aab54f4043ff3d7de5635db6c16f19929b04135666ed3a0b2c6"/""/"sha256:2b2d6ea5070112b0956bd1626deb0aaf2051322e142b62851550b8521a2e77be": write /run/containers/storage/overlay-layers/.tmp-mountpoints.json160410185: no space left on device
+2026-11-21T13:18:32.9067596Z fisherman: fatal: bootc install: bootc install to-filesystem (via container): exit status 125 — last output:
+2026-11-21T13:18:32.9074858Z ==> fisherman failed for a non-hostname reason (rc=1) — propagating
+2026-11-21T13:18:33.8146542Z error: Recipe `luks-install-qemu` failed on line 915 with exit code 1
+2026-11-21T13:18:33.8158450Z error: Recipe `luks-test-qemu` failed with exit code 1
+2026-11-21T13:18:33.8189143Z ##[error]Process completed with exit code 1.
+2026-11-21T13:18:33.8255514Z ##[group]Run # Make root-owned PPMs readable

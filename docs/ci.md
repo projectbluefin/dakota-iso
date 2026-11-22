@@ -41,6 +41,7 @@ gh workflow run build-iso.yml --ref main
 | ShellCheck Lint + Pinned fetches | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
 | R2 Download Stats | `r2-download-stats.yml` | Daily 06:00 UTC, `workflow_dispatch` — counts public ISO downloads from R2 Data Access Logs; needs `CF_OBSERVABILITY_TOKEN` secret |
+| Re-run E2E infra failures | `rerun-e2e-infra-failures.yml` | `workflow_run` of the four E2E lanes (Dakota build, Utah build, LUKS, Plain); `workflow_dispatch` with `run_id` classifies only |
 
 ### CI alert cancellation handling (2026-11-14)
 
@@ -50,6 +51,49 @@ before opening or reopening an alert for a cancelled push. Scheduled runs do
 not supersede push runs; a cancellation without a newer push still alerts
 unless it had no jobs. API lookup failures fail the alert job rather than
 silently suppressing an alert.
+
+### Infra re-run (2026-11-22)
+
+A GHCR 5xx during an image pull, a Sigstore outage during `cosign verify` or
+signing, or a reclaimed runner turns an E2E lane red for a reason nobody here
+can fix. `rerun-e2e-infra-failures.yml` fires when one of the four E2E
+workflows completes with `failure` on `run_attempt` 1 from a `push`,
+`schedule`, `workflow_dispatch` or `repository_dispatch` event (pull request
+runs skip the E2E; a failed merge-queue entry is already out of the queue).
+`scripts/e2e-infra-rerun.py` (ported from projectbluefin/utah) downloads every
+failed, timed-out or cancelled job's log and judges only the step that printed
+the first `##[error]`, so a fault an earlier step recovered from cannot excuse a
+later product failure. The signatures live in `SIGNATURES` in the script, each
+tied to the run that showed it: runner shutdown or lost communication, a job
+with no log at all (HTTP 404/410), a registry 5xx, a Sigstore 5xx. Add one only
+with a run that shows it and a fixture under `tests/fixtures/e2e-infra/`.
+Classified against the 49 failed E2E runs between 2026-10-01 and 11-21, none
+would have been re-run: every one was a product failure.
+
+When every failed job matches, the `rerun` job runs `gh run rerun --failed`
+once. One unexplained failure leaves the run red, and nothing re-runs an
+attempt 2. After the wait the job re-checks that the run is still on attempt 1
+and is still the newest run of that workflow on its branch, from any event: a
+re-run of an older ISO build after a newer one would publish the older ISO as
+latest. A re-run of the Dakota or Utah build repeats the whole single job, so
+the R2 upload is still gated on the full E2E.
+
+The delay is the wait timer of the `e2e-infra-retry-wait` environment, not a
+`sleep`, so the waiting job holds no runner. Give the environment a 20-minute
+wait timer and no required reviewers
+(`gh api -X PUT repos/projectbluefin/dakota-iso/environments/e2e-infra-retry-wait -F wait_timer=20`).
+Without it, Actions creates the environment with no rules on first use and the
+re-run starts at once; the classify job prints a `no re-run delay` warning while
+that is so. Dispatch the workflow with a `run_id` to classify any run without
+re-running it.
+
+`ci-alert.yml` runs the same classifier on a failed first attempt of those four
+workflows and does not open or reopen an alert when the re-run will replace the
+run; the re-run's own result then opens or closes the alert. A classifier error
+leaves the alert going out as before. If the re-run then declines (a newer run
+of the workflow exists) or the `rerun` job fails, no alert is filed for that
+run; the next push or schedule run alerts as usual. Lint and Test failures are never re-run,
+so their alerts are never held back.
 
 ## build-iso.yml
 
