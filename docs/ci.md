@@ -52,6 +52,11 @@ on the serial console. This is a boot smoke check, not the GUI install,
 recovery, or installed-boot gate. The workflow never publishes the image or
 touches the Fisherman ISO.
 
+Ubuntu's hosted runner created the loop device and GPT but returned no root
+partition type through udev. The raw builder makes `lsblk` probe on-disk
+metadata first inside the build container; it still requires and verifies
+the expected GPT type instead of routing around bootc's check.
+
 ### CI alert cancellation handling (2026-11-14)
 
 Push-triggered E2E runs cancel older runs when a newer push arrives. The CI

@@ -57,14 +57,19 @@ truncate -s "${SIZE}" -- "${RAW}"
 IMAGE_ID="$(podman image inspect --format '{{.Id}}' -- "${IMAGE}")"
 podman push --format oci -- "${IMAGE_ID}" "oci:${WORK}/source"
 
+# bootc's lsblk can see an existing udev database before the loop partition
+# properties appear there. Probe the actual bytes first, for this build only.
+mkdir -- "${WORK}/bin"
+printf '%s\n' '#!/bin/sh' 'exec /usr/bin/lsblk --properties-by blkid,udev "$@"' >"${WORK}/bin/lsblk"
+chmod 0755 "${WORK}/bin/lsblk"
+
 echo ">>> Installing container image to raw disk via bootc..."
-# Keep systemd-udevd from probing the loop device while sfdisk writes its GPT.
 podman run --rm --privileged --pull=never --pid=host --ipc=host \
     --security-opt label=type:unconfined_t --env BOOTC_DIRECT_IO \
-    --env LOCK_BLOCK_DEVICE=1 \
     -v /dev:/dev -v /var/lib/containers:/var/lib/containers \
     -v "${WORK}:/out" \
-    "${IMAGE_ID}" bootc install to-disk --generic-image \
+    --entrypoint /usr/bin/bash "${IMAGE_ID}" \
+    -c 'export PATH="/out/bin:${PATH}"; exec bootc "$@"' bootc install to-disk --generic-image \
     --composefs-backend --bootloader systemd --block-setup direct --filesystem ext4 \
     --source-imgref oci:/out/source --target-transport registry --target-imgref "${UPDATE_REF}" \
     --via-loopback /out/image.raw
@@ -72,11 +77,13 @@ podman run --rm --privileged --pull=never --pid=host --ipc=host \
 echo ">>> Setting up live initrd and ESP configuration..."
 LOOPDEV="$(losetup --show --find --partscan -- "${RAW}")"
 udevadm settle
-PARTITIONS="$(lsblk -rnpo NAME,TYPE,PARTTYPE,FSTYPE -- "${LOOPDEV}")"
+PARTITIONS="$(lsblk -rnpo NAME,TYPE -- "${LOOPDEV}")"
 ESP_PART="" ROOT_PART=""
 ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
-while read -r part kind part_type fs; do
+while read -r part kind; do
     [[ "${kind}" == part ]] || continue
+    part_type="$(blkid -p -s PART_ENTRY_TYPE -o value -- "${part}")"
+    fs="$(blkid -p -s TYPE -o value -- "${part}")" || [[ $? -eq 2 ]]
     if [[ "${part_type,,}" == "${ESP_TYPE}" ]]; then
         [[ -z "${ESP_PART}" && "${fs}" == vfat ]] || die "expected exactly one vfat EFI System Partition"
         ESP_PART="${part}"
