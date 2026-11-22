@@ -310,6 +310,22 @@ dconf update || echo 'Warning: dconf update failed (will compile on first boot)'
 # of what any userspace tool requests — belt-and-suspenders for the install.
 systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
 
+# ── Disable uupd in the live session ─────────────────────────────────────────
+# The live session runs dakota's uupd updater, which has nothing valid to
+# update on live media and fails, raising "Some System Updates Failed".  Scope
+# it off for live boots only, using the same kernel-command-line marker the ISO
+# boots with (rd.live.image), so an installed system still runs uupd normally.
+#
+# This mirrors projectbluefin/utah, which ships 50-utah-live.conf drop-ins on
+# uupd.service and uupd.timer gated on ConditionKernelCommandLine=!utah.live.
+for unit in uupd.service uupd.timer; do
+    mkdir -p "/usr/lib/systemd/system/${unit}.d"
+    cat > "/usr/lib/systemd/system/${unit}.d/50-dakota-live.conf" << 'UUPOF'
+[Unit]
+ConditionKernelCommandLine=!rd.live.image
+UUPOF
+done
+
 # ── GDM autologin ─────────────────────────────────────────────────────────────
 mkdir -p /etc/gdm
 cat > /etc/gdm/custom.conf << 'GDMEOF'

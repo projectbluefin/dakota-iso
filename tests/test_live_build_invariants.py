@@ -424,6 +424,44 @@ class TestConfigureLiveSyntax(unittest.TestCase):
             f"configure-live.sh has bash syntax errors:\n{result.stderr}",
         )
 
+    def test_configure_live_disables_uupd_in_live_session(self):
+        """Live boots must scope uupd off so it never reports update failures.
+
+        On live media uupd has nothing valid to update, so it fails and raises
+        "Some System Updates Failed".  Both uupd.service and uupd.timer must carry
+        a drop-in that only runs when rd.live.image is absent — that kernel-command-
+        line marker is present on live boots and gone after install (the same
+        marker var-tmp.mount uses, positively, to stay live-only).
+        """
+        content = CONFIGURE_LIVE.read_text()
+        # The drop-ins are written in a loop over both units, so the unit name
+        # appears in the loop header and the drop-in path uses the ${unit} var.
+        self.assertIn(
+            "for unit in uupd.service uupd.timer",
+            content,
+            "configure-live.sh must loop over uupd.service and uupd.timer.",
+        )
+        self.assertIn(
+            "${unit}.d/50-dakota-live.conf",
+            content,
+            "configure-live.sh must write a 50-dakota-live.conf drop-in for each unit.",
+        )
+        # Each drop-in body runs from its heredoc start to the UUPOF terminator;
+        # assert the negated marker is inside that body, not the live-on marker
+        # var-tmp.mount uses elsewhere in the file.
+        start = content.index("<< 'UUPOF'")
+        body = content[start: content.index("\nUUPOF", start)]
+        self.assertIn(
+            "ConditionKernelCommandLine=!rd.live.image",
+            body,
+            "uupd drop-in must gate on ConditionKernelCommandLine=!rd.live.image.",
+        )
+        self.assertNotIn(
+            "ConditionKernelCommandLine=rd.live.image",
+            body,
+            "uupd drop-in must use the negated marker, not the live-on marker.",
+        )
+
     def test_configure_live_reads_variant_dir(self):
         """configure-live.sh must read config from VARIANT_DIR."""
         content = CONFIGURE_LIVE.read_text()
