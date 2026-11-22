@@ -1,0 +1,109 @@
+name: Re-run E2E infra failures
+
+# A GHCR 5xx during the image pull, a Sigstore outage during cosign verify or
+# signing, or a reclaimed runner turns an E2E lane red, and ci-alert.yml opens
+# an issue nobody can fix. This re-runs a failed first attempt once, after a
+# delay, and only when scripts/e2e-infra-rerun.py explains every failed job
+# with a known infra signature. Anything unexplained leaves the run red.
+# Ported from projectbluefin/utah rerun-e2e-infra-failures.yml (#379).
+on:
+  # Runs from the default branch and never checks out the triggering run's code.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows:
+      - "Build and Publish Dakota Live ISO"
+      - "Build and Publish Utah Live ISO"
+      - "LUKS Install End-to-End Test"
+      - "Plain Install E2E"
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: E2E run ID to classify (classification only; never re-runs)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: rerun-e2e-infra-${{ github.event.workflow_run.id || inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    # run_attempt 1 only: one recovery attempt, never a loop. Pull request
+    # runs skip the E2E, and a failed merge-queue entry is already out of the
+    # queue, so re-running either changes nothing.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'failure' &&
+       github.event.workflow_run.run_attempt == 1 &&
+       contains(fromJSON('["push", "schedule", "workflow_dispatch", "repository_dispatch"]'), github.event.workflow_run.event))
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      infra: ${{ steps.classify.outputs.infra }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Classify the failed jobs
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+        run: python3 scripts/e2e-infra-rerun.py "$RUN_ID"
+      - name: Report whether the re-run will wait
+        if: steps.classify.outputs.infra == 'true' && github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          wait=$(gh api "repos/$REPOSITORY/environments/e2e-infra-retry-wait" \
+            --jq '[.protection_rules[]? | select(.type == "wait_timer") | .wait_timer] | first // 0' \
+            2>/dev/null) || wait=0
+          if [ "$wait" -gt 0 ]; then
+            echo "The re-run waits ${wait} minutes on the e2e-infra-retry-wait environment." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=no re-run delay::environment e2e-infra-retry-wait has no wait timer; the re-run starts at once (docs/ci.md)."
+          fi
+
+  rerun:
+    needs: classify
+    if: github.event_name == 'workflow_run' && needs.classify.outputs.infra == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    # The delay is the environment's wait timer, not a sleep: a job waiting on
+    # an environment holds no runner. Without the environment configured,
+    # Actions creates it with no rules and the re-run starts at once.
+    environment: e2e-infra-retry-wait
+    permissions:
+      actions: write
+    steps:
+      - name: Re-run the failed jobs once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          # Re-check after the wait: someone may have re-run it by hand, and a
+          # newer run of the same workflow on the same branch, from any event,
+          # supersedes this one. Re-running an older ISO build after a newer
+          # one would publish the older ISO as latest.
+          state=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID" --jq '"\(.status) \(.run_attempt)"')
+          newest=$(gh api --method GET "repos/$REPOSITORY/actions/workflows/$WORKFLOW_ID/runs" \
+            -f branch="$BRANCH" -f per_page=1 --jq '.workflow_runs[0].id')
+          if [ "$state" != "completed 1" ]; then
+            echo "::notice::run $RUN_ID is now '$state' (status, attempt); not re-running."
+          elif [ "$newest" != "$RUN_ID" ]; then
+            echo "::notice::a newer run ($newest) of this workflow on $BRANCH supersedes $RUN_ID; not re-running."
+          else
+            gh run rerun "$RUN_ID" --failed --repo "$REPOSITORY"
+            echo "Re-ran the failed jobs of run $RUN_ID." >> "$GITHUB_STEP_SUMMARY"
+          fi

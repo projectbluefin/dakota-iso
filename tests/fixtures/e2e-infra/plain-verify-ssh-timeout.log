@@ -1,0 +1,14 @@
+2026-11-14T03:09:39.4460657Z Current runner version: '2.338.2'
+2026-11-14T03:09:39.4477728Z ##[group]Runner Image Provisioner
+2026-11-14T03:09:39.4478388Z Hosted Compute Agent
+2026-11-14T03:50:27.2376731Z ##[group]Run sudo env PATH="$PATH" just qemu-mem=8192 plain-boot-qemu-installed dakota
+2026-11-14T03:50:27.2377203Z sudo env PATH="$PATH" just qemu-mem=8192 plain-boot-qemu-installed dakota
+2026-11-14T03:50:27.2377581Z sudo env PATH="$PATH" just plain-verify-qemu dakota
+2026-11-14T03:51:37.9945839Z ✅ Installed system boot verified — plain composefs install succeeded
+2026-11-14T03:51:38.0258715Z Waiting for installed system SSH on port 2225...
+2026-11-14T03:59:36.1822373Z ❌ Post-boot assertions SKIPPED: could not reach installed system over SSH after 5 minutes
+2026-11-14T03:59:36.1823264Z    (debug SSH may not have been enabled, or sshd/network wasn't up in time)
+2026-11-14T03:59:36.1841601Z (qemu) qququiquit
+2026-11-14T03:59:36.1870440Z error: recipe `plain-verify-qemu` failed with exit code 2
+2026-11-14T03:59:36.1917429Z ##[error]Process completed with exit code 2.
+2026-11-14T03:59:36.1973449Z ##[group]Run sudo chmod a+r /tmp/dakota-plain-qemu-*.log /tmp/plain-screenshot-final.png 2>/dev/null || true

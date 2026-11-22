@@ -1,7 +1,8 @@
 name: CI alert
 
 on:
-  # The job handles main push and schedule metadata only and never checks out code.
+  # The job handles main push and schedule metadata only. It checks out the
+  # default branch for scripts/e2e-infra-rerun.py, never the triggering run's code.
   workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows:
       - "Build and Publish Dakota Live ISO"
@@ -59,6 +60,33 @@ jobs:
             echo "found=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # rerun-e2e-infra-failures.yml re-runs a failed first attempt of an E2E
+      # lane once when every failed job is a known infra fault. Classify the
+      # run the same way and leave the alert to the re-run's own result, so
+      # this does not open an issue and close it again. Any classification
+      # error leaves the output unset, and the alert goes out as before.
+      - name: Check out the infra classifier
+        if: >-
+          github.event.workflow_run.conclusion == 'failure' &&
+          github.event.workflow_run.run_attempt == 1 &&
+          contains(fromJSON('["Build and Publish Dakota Live ISO", "Build and Publish Utah Live ISO", "LUKS Install End-to-End Test", "Plain Install E2E"]'), github.event.workflow_run.name)
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Check whether an infra re-run will replace this run
+        if: >-
+          github.event.workflow_run.conclusion == 'failure' &&
+          github.event.workflow_run.run_attempt == 1 &&
+          contains(fromJSON('["Build and Publish Dakota Live ISO", "Build and Publish Utah Live ISO", "LUKS Install End-to-End Test", "Plain Install E2E"]'), github.event.workflow_run.name)
+        id: infra
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 scripts/e2e-infra-rerun.py "$RUN_ID"
+
       - name: Get failed jobs from the run
         if: github.event.workflow_run.conclusion != 'success'
         id: jobs
@@ -96,7 +124,7 @@ jobs:
           echo "issue_number=${ISSUE_NUM:-}" >> "$GITHUB_OUTPUT"
 
       - name: Create or reopen alert issue
-        if: github.event.workflow_run.conclusion != 'success' && (github.event.workflow_run.conclusion != 'cancelled' || (steps.jobs.outputs.count != '0' && steps.superseded.outputs.found != 'true'))
+        if: github.event.workflow_run.conclusion != 'success' && steps.infra.outputs.infra != 'true' && (github.event.workflow_run.conclusion != 'cancelled' || (steps.jobs.outputs.count != '0' && steps.superseded.outputs.found != 'true'))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
