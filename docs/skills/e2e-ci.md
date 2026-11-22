@@ -343,7 +343,7 @@ Write a systemd drop-in override during post-install (`scripts/fisherman-install
 **The fix:**
 `scripts/fisherman-install.sh --enable-debug-ssh` mounts the freshly-installed deployment (same mount/unlock logic already used for the hostname-write workaround) and patches `root:root` + a `sshd.service` system-preset + `PermitRootLogin`/`PasswordAuthentication` directly onto disk — mirroring `configure-live.sh`'s `DEBUG=1` convention but applied to the *installed* system instead of the live squashfs. `luks-boot-qemu-installed`/`plain-boot-qemu-installed` forward a second SSH port (`*-qemu-ssh-port-installed`) to this now-enabled sshd. `scripts/verify-post-install.sh` then SSHes in as `root` once the installed system reaches its boot target and asserts `efibootmgr -v`, `flatpak list --system --app`, and (LUKS only) `/proc/cmdline`. Test-only — never shipped in a production image.
 
-**Non-blocking by default:** these assertions are observability-only until fisherman #1/#2 and common#385 land. On assertion failure `scripts/verify-post-install.sh` prints `⚠️ ... NON-BLOCKING` plus a `::warning::` annotation and exits 0; only `STRICT_POST_BOOT=1` makes it exit 1 and fail the recipes, and CI does not set it. SSH unreachable is also non-blocking by default (`::warning::`, exit 0) until the debug-SSH path has a green E2E run on main; under `STRICT_POST_BOOT=1` it exits 2. The LUKS installed VM reuses the live VM's OVMF vars file so installer-written Boot#### entries survive the reboot. The plain installed VM boots from the pristine OVMF vars template by default (a carried-over NVRAM had no valid BootOrder entry for the disk and dropped OVMF to the EFI shell); set `PLAIN_CARRY_LIVE_NVRAM=1` to opt back into the carry-over when debugging installer-written entries.
+**Non-blocking by default:** each assertion is observability-only until it graduates. On failure `scripts/verify-post-install.sh` prints a `::warning::` annotation plus a machine-parseable `not ok - <id>` TAP line and exits 0, so existing machines don't regress. A check becomes strict only after the weekly graduation check (`scripts/graduation-check.py`, `.github/workflows/graduation-check.yml`) measures a green bar — 3 consecutive passes and ≤10% failures over the last 20 E2E runs on main — and a human adds its id to `STRICT_IDS`. Strictness is per-assertion (one never-greening check cannot hold back the others); CI does not set `STRICT_IDS` yet, so all three checks are currently non-blocking. SSH unreachable always fails the lane (exit 2) — it is a setup failure, not an assertion result. The LUKS installed VM reuses the live VM's OVMF vars file so installer-written Boot#### entries survive the reboot. The plain installed VM boots from the pristine OVMF vars template by default (a carried-over NVRAM had no valid BootOrder entry for the disk and dropped OVMF to the EFI shell); set `PLAIN_CARRY_LIVE_NVRAM=1` to opt back into the carry-over when debugging installer-written entries.
 
 **Lesson:** when a post-boot invariant can only be observed at runtime (firmware NVRAM state, live kernel cmdline, running daemon output), don't try to approximate it from static files during install — enable a throwaway debug path into the actual booted target instead.
 
@@ -391,7 +391,7 @@ does not itself fix the login failure.
   acceptance matrix deliberately tests both dev and stable
 - SSH connecting to a production ISO that has sshd disabled (build with `debug=1` for testing)
 - Claiming post-boot assertions (UEFI/Flatpak/LUKS cmdline, dakota#651) pass without SSHing into the *installed, booted* disk — a BLS entry or live-env check is not equivalent
-- Treating a green `plain-test-qemu`/`luks-test-qemu` run as proof the post-boot assertions passed — they soft-fail unless `STRICT_POST_BOOT=1`; grep the log for `✅ All post-boot assertions passed`
+- Treating a green `plain-test-qemu`/`luks-test-qemu` run as proof the post-boot assertions passed — each check soft-fails (a `::warning::` + `not ok - <id>`, exit 0) until it graduates into `STRICT_IDS`; grep the log for `✅ All post-boot assertions passed` to confirm none failed, and the weekly graduation-check issue for which checks have earned strict status
 
 ### Drive the auto-launched installer through AT-SPI
 
@@ -446,8 +446,9 @@ Before marking any E2E work complete:
 - [ ] `just plain-test-qemu <target>` / `just luks-test-qemu <target>` log
       `✅ All post-boot assertions passed` (UEFI entry, Flatpak exclusion, and for
       LUKS, cmdline UUID — see `scripts/verify-post-install.sh`, dakota#651).
-      Exit status alone is not enough: failures are non-blocking unless run
-      with `STRICT_POST_BOOT=1`
+      Exit status alone is not enough: a failing soft assertion exits 0 unless
+      its id is in `STRICT_IDS`; grep the log for `ok - <id>` / `not ok - <id>`
+      and the weekly graduation-check issue for which checks have graduated to strict.
 - [ ] ISO size ~5.3 GB (release) or ~6.5 GB (fast) — not 8+ GB (double-embedded store)
 - [ ] squashfs root contains `proc/`, `sys/`, `dev/` as empty dirs
 - [ ] GPT type GUID = `28732ac1...` (EFI System Partition, not Basic Data)

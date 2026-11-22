@@ -1,0 +1,24 @@
+# Graduation bar for the post-boot assertions in scripts/verify-post-install.sh.
+#
+# scripts/graduation-check.py measures each check's TAP history (the
+# `ok - <id>` / `not ok - <id>` lines the script prints) against this bar every
+# week (.github/workflows/graduation-check.yml) and opens/refreshes an issue
+# RECOMMENDING which checks have earned the right to block. A human adds each
+# check to STRICT_IDS in the justfile/CI once it graduates — enforcement is
+# always a human decision, never automatic.
+#
+# A check graduates when, over the last `lookback_runs` runs that exercised it:
+#   * its last `required_consecutive_passes` results are all "ok", AND
+#   * its failure rate over that window is <= `maximum_failure_rate`.
+#
+# Per-assertion (not a global switch): one never-greening check cannot hold
+# back the others. See projectbluefin/dakota#381.
+checks:
+  - uefi-bootcurrent
+  - no-installer-flatpak
+  - luks-uuid
+
+graduation:
+  required_consecutive_passes: 3
+  maximum_failure_rate: 0.10
+  lookback_runs: 20
