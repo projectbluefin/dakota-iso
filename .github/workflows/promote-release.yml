@@ -66,6 +66,16 @@ jobs:
             echo "dst=${VARIANT}-live-${RELEASE_NAME}.iso"
           } >> "$GITHUB_OUTPUT"
 
+          # Regex-escaped name of the workflow that signed the source checksum.
+          case "${VARIANT}" in
+            dakota) echo 'signer_re=build-iso\.yml' >> "$GITHUB_OUTPUT" ;;
+            utah) echo 'signer_re=build-iso-utah\.yml' >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::no signing workflow known for variant '${VARIANT}'"; exit 1 ;;
+          esac
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
       - name: Promote objects on R2
         env:
           RCLONE_CONFIG_R2_TYPE: s3
@@ -84,9 +94,12 @@ jobs:
           FILES="$(rclone lsf R2:testing --files-only)"
           exists() { grep -Fxq "$1" <<<"$FILES"; }
 
-          # Both halves of the pair must be present, otherwise the named release
-          # would ship an ISO whose checksum cannot be verified.
-          for f in "${SRC}" "${SRC}-CHECKSUM"; do
+          # The ISO, its checksum and the checksum's Sigstore bundle must all be
+          # present, otherwise the named release would ship an ISO that cannot be
+          # verified. The legacy .sig/.pem pair is copied when it exists.
+          REQUIRED=("${SRC}" "${SRC}-CHECKSUM" "${SRC}-CHECKSUM.sigstore.json")
+          OPTIONAL=("${SRC}-CHECKSUM.sig" "${SRC}-CHECKSUM.pem")
+          for f in "${REQUIRED[@]}"; do
             if ! exists "${f}"; then
               echo "::error::source object R2:testing/${f} not found"
               exit 1
@@ -98,11 +111,14 @@ jobs:
             exit 1
           fi
 
-          # ISO and checksum are copied in the same step so they can never drift apart.
-          rclone copyto --log-level INFO --s3-no-check-bucket \
-            "R2:testing/${SRC}" "R2:testing/${DST}"
-          rclone copyto --log-level INFO --s3-no-check-bucket \
-            "R2:testing/${SRC}-CHECKSUM" "R2:testing/${DST}-CHECKSUM"
+          # ISO, checksum and signature are copied in the same step so they can
+          # never drift apart. The signed checksum is copied byte-for-byte: any
+          # rewrite would invalidate its signature.
+          for f in "${REQUIRED[@]}" "${OPTIONAL[@]}"; do
+            exists "${f}" || continue
+            rclone copyto --log-level INFO --s3-no-check-bucket \
+              "R2:testing/${f}" "R2:testing/${DST}${f#"${SRC}"}"
+          done
 
       - name: Verify promoted pair
         env:
@@ -114,6 +130,7 @@ jobs:
           RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.RCLONE_CONFIG_R2_ENDPOINT }}
           SRC: ${{ steps.names.outputs.src }}
           DST: ${{ steps.names.outputs.dst }}
+          SIGNER_RE: ${{ steps.names.outputs.signer_re }}
         run: |
           set -euo pipefail
 
@@ -124,8 +141,16 @@ jobs:
             exit 1
           fi
 
-          # The checksum file names the object it describes; rewrite it to the
-          # promoted name so `sha256sum -c` works against the downloaded file.
+          # Verify the promoted checksum the same way a user would: against its
+          # bundle and the identity of the CI workflow that signed it.
+          rclone cat "R2:testing/${DST}-CHECKSUM" > /tmp/promoted-CHECKSUM
+          rclone cat "R2:testing/${DST}-CHECKSUM.sigstore.json" > /tmp/promoted-CHECKSUM.sigstore.json
+          cosign verify-blob \
+            --bundle /tmp/promoted-CHECKSUM.sigstore.json \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "^https://github\\.com/projectbluefin/dakota-iso/\\.github/workflows/${SIGNER_RE}@refs/heads/main\$" \
+            /tmp/promoted-CHECKSUM
+
           SRC_SUM="$(rclone cat "R2:testing/${SRC}-CHECKSUM" | awk '{print $1}')"
           DST_SUM="$(rclone cat "R2:testing/${DST}-CHECKSUM" | awk '{print $1}')"
           if [[ "${SRC_SUM}" != "${DST_SUM}" ]]; then
@@ -133,9 +158,12 @@ jobs:
             exit 1
           fi
 
-          printf '%s  %s\n' "${DST_SUM}" "${DST}" > /tmp/promoted-CHECKSUM
+          # The signed checksum names the latest object, so `sha256sum -c` cannot
+          # run against the promoted filename. Publish the renamed line as a
+          # separate, unsigned file and leave the signed checksum untouched.
+          printf '%s  %s\n' "${DST_SUM}" "${DST}" > /tmp/promoted-SHA256SUMS
           rclone copyto --log-level INFO --s3-no-check-bucket \
-            /tmp/promoted-CHECKSUM "R2:testing/${DST}-CHECKSUM"
+            /tmp/promoted-SHA256SUMS "R2:testing/${DST}-SHA256SUMS"
 
           {
             echo "## Promoted release"
@@ -145,6 +173,8 @@ jobs:
             echo "| Source | \`${SRC}\` |"
             echo "| ISO | [${DST}](https://projectbluefin.dev/${DST}) |"
             echo "| Checksum | [${DST}-CHECKSUM](https://projectbluefin.dev/${DST}-CHECKSUM) |"
+            echo "| Signature | [${DST}-CHECKSUM.sigstore.json](https://projectbluefin.dev/${DST}-CHECKSUM.sigstore.json) |"
+            echo "| SHA256SUMS | [${DST}-SHA256SUMS](https://projectbluefin.dev/${DST}-SHA256SUMS) |"
             echo "| SHA256 | \`${DST_SUM}\` |"
             echo "| Size | $((DST_SIZE / 1024 / 1024 / 1024)) GiB |"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -129,7 +129,8 @@ The `.sigstore.json` bundle is the keyless cosign signature of the `latest` chec
 (the primary artifact since cosign v3); see
 [Verifying a downloaded ISO](ci.md#verifying-a-downloaded-iso) for the check. The `.sig`/`.pem`
 pair is the same keyless signature in the older separate-file format, still published
-alongside for now. Named releases and backup slots carry no signature.
+alongside for now. Named releases carry the same signature, copied unchanged by
+`promote-release.yml`; backup slots carry no signature.
 
 The `bluefin-live-*` and `bluefin-lts-hwe-live-*` URLs are retired (#228): those matrix
 entries are commented out in `build-iso-utah.yml` and are not `promote-release.yml`
@@ -176,10 +177,12 @@ CI uploads latest objects only:
 3. `dakota-live-latest.iso-CHECKSUM.sigstore.json` / `.sig` / `.pem` — keyless cosign signature of the checksum (the `.sigstore.json` bundle is the primary artifact; `.sig`/`.pem` kept alongside)
 
 Named releases are manual snapshots copied from latest after the CI gate passes.
-Before promoting, verify the `latest` checksum signature
-([procedure](ci.md#verifying-a-downloaded-iso)): the promoted checksum is rewritten
-for the new filename and is not re-signed, so the signature on `latest` is the only
-proof that what you are promoting came out of CI.
+`promote-release.yml` copies the signed `-CHECKSUM` byte-for-byte together with its
+`.sigstore.json` bundle (and `.sig`/`.pem` when present), then runs `cosign verify-blob`
+on what landed, so a named release verifies with the same
+[procedure](ci.md#verifying-a-downloaded-iso) as `latest`. The signed checksum names
+the `latest` object; a separate, unsigned `<name>.iso-SHA256SUMS` carries the same hash
+with the promoted filename for `sha256sum -c`.
 
 ## Rotating R2 credentials
 
@@ -275,11 +278,12 @@ Key invariants codified in the workflow:
 1. **Workflow dispatch restriction**: GitHub only allows `workflow_dispatch` on the
    default branch (`main`). The workflow file must be merged to `main` before it can
    be dispatched.
-2. **Checksum rewrite**: A blind `copyto` of the checksum leaves `dakota-live-latest.iso`
-   inside the checksum payload, causing `sha256sum -c` to fail against the promoted filename.
-   The promote workflow reads the source checksum and writes a new file formatted with the
-   destination ISO name.
-3. **Source presence and size parity**: Both `.iso` and `-CHECKSUM` must exist at the source,
+2. **Signed checksum is never rewritten**: the `-CHECKSUM` is signed by the build
+   workflow, so rewriting it (as this workflow originally did, for the promoted filename)
+   breaks its Sigstore bundle and left named releases unverifiable (#383). The checksum and
+   its bundle are copied unchanged and checked with `cosign verify-blob`; the renamed
+   `sha256sum -c` line goes into a separate unsigned `-SHA256SUMS` file.
+3. **Source presence and size parity**: `.iso`, `-CHECKSUM` and `-CHECKSUM.sigstore.json` must exist at the source,
    and byte sizes are validated after copying to ensure no partial promotion occurs.
 4. **Publish race (known gap, not yet enforced)**: `build-iso.yml` rewrites
    `*-live-latest.iso` daily and the ISO and checksum copies are not atomic. A publish
