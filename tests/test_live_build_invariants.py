@@ -5,7 +5,7 @@ These tests ensure that changes made to support Fedora/CentOS-based images
 
 Covered invariants
 ------------------
-1. Boot cmdline uses LABEL=DAKOTA_LIVE, NOT CDLABEL= (cdrom_id-based) or
+1. Boot cmdline uses LABEL=<variant volume label>, NOT CDLABEL= (cdrom_id-based) or
    /dev/sr0 (optical-only).
    - CDLABEL= requires the cdrom_id udev helper, which fails with the
      Debian-built initramfs on GnomeOS native kernels.
@@ -120,7 +120,7 @@ class TestVolumeLabelPerVariant(unittest.TestCase):
 
 
 class TestBootCmdline(unittest.TestCase):
-    """Ensure LABEL=DAKOTA_LIVE is used (not CDLABEL= or /dev/sr0).
+    """Ensure LABEL=<variant volume label> is used (not CDLABEL= or /dev/sr0).
 
     /dev/sr0 is optical-only and silently fails on USB flash drive boots
     (regression post-alpha2). CDLABEL= requires cdrom_id which is broken
@@ -141,7 +141,7 @@ class TestBootCmdline(unittest.TestCase):
             self.assertNotIn(
                 "root=live:/dev/sr0", stripped,
                 f"{path.name}: found root=live:/dev/sr0 — breaks USB flash drive boots, "
-                f"use root=live:LABEL=DAKOTA_LIVE: {stripped!r}",
+                f"use root=live:LABEL=${{LABEL}}: {stripped!r}",
             )
 
     def _check_has_label(self, path: Path):
@@ -161,7 +161,7 @@ class TestBootCmdline(unittest.TestCase):
         self._check_boot_root(LIVE_BUILD_ISO)
 
     def test_live_build_iso_contains_label_root(self):
-        """live/src/build-iso.sh boot entries must use root=live:LABEL=DAKOTA_LIVE."""
+        """live/src/build-iso.sh boot entries must use root=live:LABEL=${LABEL} (the variant label)."""
         self._check_has_label(LIVE_BUILD_ISO)
 
 

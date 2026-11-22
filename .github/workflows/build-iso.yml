@@ -174,7 +174,8 @@ jobs:
           sudo bash scripts/build-debug-iso.sh \
             /var/iso-build/dakota-nvidia.rootfs.sfs \
             /var/iso-build/dakota-nvidia-boot.tar \
-            output/dakota-debug-live.iso "$(cat dakota/live_title)"
+            output/dakota-debug-live.iso "$(cat dakota/live_title)" \
+            "$(tr -d '[:space:]' < dakota/live_label)"
 
       - name: Install QEMU deps for E2E test
         run: sudo apt-get install -y qemu-system-x86 ovmf sshpass socat -qq

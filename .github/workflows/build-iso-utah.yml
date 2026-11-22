@@ -215,7 +215,8 @@ jobs:
           sudo bash scripts/build-debug-iso.sh \
             /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
             /var/iso-build/${{ matrix.live_target }}-boot.tar \
-            "output/${VARIANT}-debug-live.iso" "$(cat "${VARIANT}/live_title")"
+            "output/${VARIANT}-debug-live.iso" "$(cat "${VARIANT}/live_title")" \
+            "$(tr -d '[:space:]' < "${VARIANT}/live_label")"
 
       - name: Bound OCI media preflight (4 GiB)
         id: e2e_enospc

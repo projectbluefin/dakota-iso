@@ -1,10 +1,11 @@
 #!/usr/bin/bash
 # Enable SSH only in an E2E copy of the exact production squashfs and OCI bytes.
 set -euo pipefail
-SFS="${1:?Usage: build-debug-iso.sh <production-sfs> <boot-tar> <debug-iso> <title>}"
+SFS="${1:?Usage: build-debug-iso.sh <production-sfs> <boot-tar> <debug-iso> <title> [label]}"
 BOOT_TAR="${2:?}"
 OUTPUT="${3:?}"
 TITLE="${4:?}"
+LABEL="${5:-}"
 WORK=$(mktemp -d "$(dirname "${SFS}")/debug-iso.XXXXXX")
 trap 'rm -rf "${WORK}"' EXIT
 ROOT="${WORK}/root"
@@ -37,4 +38,5 @@ mksquashfs "${ROOT}" "${WORK}/debug.sfs" -noappend -comp zstd \
     -Xcompression-level 1 -b 1M -processors 4 -wildcards \
     -e 'proc/*' -e 'sys/*' -e 'dev/*' -e 'run/*' -e 'tmp/*'
 bash "$(dirname "${BASH_SOURCE[0]}")/../live/src/build-iso.sh" \
-    --title "${TITLE}" "${BOOT_TAR}" "${WORK}/debug.sfs" "${OUTPUT}"
+    --title "${TITLE}" ${LABEL:+--label "${LABEL}"} \
+    "${BOOT_TAR}" "${WORK}/debug.sfs" "${OUTPUT}"

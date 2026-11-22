@@ -413,6 +413,17 @@ class TestScanMount(DakotaIsofileTestCase):
         # would pull the rootfs out from under dmsquash-live-root.
         self.assertEqual(self.sandbox.calls("umount"), [])
 
+    def test_variant_label_from_cmdline_publishes_that_label(self):
+        self.sandbox.set_cmdline("root=live:LABEL=UTAH_LIVE rd.live.image")
+        self.sandbox.stage_iso("sdb1", "utah-live.iso", label="UTAH_LIVE")
+        result = self.sandbox.run(
+            f'scan_mount "{self.sandbox.root}/dev/sdb1"; echo "RC=$?"'
+        )
+        self.assertEqual(self.value(result, "RC"), "0")
+        link = self.sandbox.root / "dev" / "disk" / "by-label" / "UTAH_LIVE"
+        self.assertTrue(link.is_symlink())
+        self.assertFalse(self.sandbox.label_link.exists())
+
     def test_iso_in_a_subdirectory_is_found(self):
         self.sandbox.stage_iso("sdb1", "ISO/dakota.iso")
         result = self.sandbox.run(
