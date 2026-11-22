@@ -145,6 +145,7 @@ jobs:
       - name: Assemble ISO
         run: |
           sudo bash live/src/build-iso.sh \
+            --label "$(tr -d '[:space:]' < dakota/live_label)" \
             /var/iso-build/dakota-nvidia-boot.tar \
             /var/iso-build/dakota-nvidia.rootfs.sfs \
             /var/iso-build/dakota-live.iso

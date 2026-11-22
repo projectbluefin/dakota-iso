@@ -1,11 +1,18 @@
 #!/bin/sh
 # Locate a Dakota live ISO file on Ventoy/USB partitions and expose it as
-# /dev/disk/by-label/DAKOTA_LIVE so the standard dmsquash-live CDLABEL path works.
+# /dev/disk/by-label/<volume label> (DAKOTA_LIVE by default) so the standard dmsquash-live CDLABEL path works.
 #
 # NOTE: This label must match the "media_name" field in recipes/dakota.json so
 # that the tacklebox-built ISO carries the same ISO9660 volume label.
 
 LABEL="DAKOTA_LIVE"
+# The volume label is per variant; take it from the root=live:LABEL= argument
+# that build-iso.sh wrote on the kernel command line.
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        root=live:LABEL=*) LABEL="${arg#root=live:LABEL=}" ;;
+    esac
+done
 RUN_DIR="/run/initramfs/dakota-isofile"
 FOUND_MARKER="${RUN_DIR}/found"
 

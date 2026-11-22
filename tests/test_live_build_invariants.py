@@ -65,7 +65,7 @@ LIVE_SRC_VARIANT_FILES = [
 
 # Keys owned by the top-level <variant>/ directory. Nothing reads them from
 # live/src/<variant>/, so a copy there is an unreconciled duplicate.
-NAMESPACE_A_ONLY_FILES = ["payload_ref", "live_target", "live_title", "registry", "tag"]
+NAMESPACE_A_ONLY_FILES = ["payload_ref", "live_target", "live_title", "live_label", "registry", "tag"]
 
 # Scalar files nothing reads. flatpak_var_path is taken from images.json.
 UNREAD_LIVE_SRC_FILES = ["flatpak_var_path"]
@@ -81,6 +81,42 @@ def strip_yaml_comments(text: str) -> str:
 def active_matrix_variants(workflow_text: str) -> set:
     """Variant names present as live (uncommented) matrix entries in a workflow."""
     return set(re.findall(r"- variant:\s*(\S+)", strip_yaml_comments(workflow_text)))
+
+
+class TestVolumeLabelPerVariant(unittest.TestCase):
+    """Each variant has its own ISO volume label; build-iso.sh, the kernel
+    cmdline and the dracut hook must all use one value (no hardcoded label)."""
+
+    LABEL_RE = re.compile(r"^[A-Z0-9_]{1,32}$")
+
+    def _variant_labels(self):
+        labels = {}
+        for p in sorted(REPO.glob("*/live_title")):
+            f = p.parent / "live_label"
+            self.assertTrue(f.is_file(), f"{p.parent.name}: missing live_label")
+            labels[p.parent.name] = f.read_text().strip()
+        return labels
+
+    def test_every_variant_has_valid_unique_label(self):
+        labels = self._variant_labels()
+        self.assertTrue(labels)
+        for name, label in labels.items():
+            self.assertRegex(label, self.LABEL_RE, f"{name}: bad ISO volume label")
+        self.assertEqual(len(set(labels.values())), len(labels), f"duplicate labels: {labels}")
+        self.assertEqual(labels.get("dakota"), "DAKOTA_LIVE")
+
+    def test_build_iso_uses_label_variable_everywhere(self):
+        text = LIVE_BUILD_ISO.read_text()
+        code = [l for l in text.splitlines() if not l.strip().startswith("#")]
+        joined = "\n".join(code)
+        self.assertIn('-V "${LABEL}"', joined)
+        self.assertEqual(joined.count("root=live:LABEL=${LABEL}"), 2)
+        self.assertNotIn("root=live:LABEL=DAKOTA_LIVE", joined)
+        self.assertIn("--label)", joined)
+
+    def test_dracut_hook_reads_label_from_cmdline(self):
+        hook = (REPO / "live/src/dracut/95dakota-isofile/dakota-isofile.sh").read_text()
+        self.assertIn('root=live:LABEL=*) LABEL="${arg#root=live:LABEL=}"', hook)
 
 
 class TestBootCmdline(unittest.TestCase):
@@ -112,11 +148,11 @@ class TestBootCmdline(unittest.TestCase):
         content = path.read_text()
         label_lines = [
             ln for ln in content.splitlines()
-            if "root=live:LABEL=DAKOTA_LIVE" in ln and not ln.strip().startswith("#")
+            if "root=live:LABEL=${LABEL}" in ln and not ln.strip().startswith("#")
         ]
         self.assertGreaterEqual(
             len(label_lines), 2,
-            f"{path.name}: expected ≥2 boot entries with root=live:LABEL=DAKOTA_LIVE "
+            f"{path.name}: expected ≥2 boot entries with root=live:LABEL=${{LABEL}} "
             f"(BLS + loopback), found {len(label_lines)}.",
         )
 

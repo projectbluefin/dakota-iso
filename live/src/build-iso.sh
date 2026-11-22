@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# build-iso.sh [--title <title>] <boot-files-tar> <squashfs-img> <output-iso>
+# build-iso.sh [--title <title>] [--label <volume-label>] <boot-files-tar> <squashfs-img> <output-iso>
 #
 # Creates a UEFI-bootable systemd-boot live ISO from pre-built components.
 #
@@ -21,7 +21,7 @@
 #
 # Live boot flow:
 #   UEFI firmware → El Torito → FAT ESP → systemd-boot → kernel+initramfs
-#   dmsquash-live: scans for LABEL=DAKOTA_LIVE → mounts ISO → squashfs → overlayfs
+#   dmsquash-live: scans for LABEL=<volume label> (default DAKOTA_LIVE) → mounts ISO → squashfs → overlayfs
 #
 # Validation: serial console output on ttyS0 should show gdm.service starting.
 
@@ -30,17 +30,23 @@ set -euo pipefail
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --title) LIVE_TITLE="${2:?--title requires a string}"; shift 2 ;;
+        --label) LABEL="${2:?--label requires a string}"; shift 2 ;;
         --*)     echo "ERROR: unknown option: $1" >&2; exit 2 ;;
         *)       break ;;
     esac
 done
 
 LIVE_TITLE="${LIVE_TITLE:-Dakota Live}"
-LABEL="DAKOTA_LIVE"
+LABEL="${LABEL:-DAKOTA_LIVE}"
+# ISO 9660 volume IDs: uppercase A-Z, 0-9 and underscore, at most 32 characters.
+if [[ ! "${LABEL}" =~ ^[A-Z0-9_]{1,32}$ ]]; then
+    echo "ERROR: invalid volume label '${LABEL}' (need 1-32 chars of A-Z, 0-9, _)" >&2
+    exit 2
+fi
 
-BOOT_TAR="${1:?Usage: build-iso.sh [--title <title>] <boot-files-tar> <squashfs-img> <output-iso>}"
-SQUASHFS_SRC="${2:?Usage: build-iso.sh [--title <title>] <boot-files-tar> <squashfs-img> <output-iso>}"
-OUTPUT_ISO="${3:?Usage: build-iso.sh [--title <title>] <boot-files-tar> <squashfs-img> <output-iso>}"
+BOOT_TAR="${1:?Usage: build-iso.sh [--title <title>] [--label <label>] <boot-files-tar> <squashfs-img> <output-iso>}"
+SQUASHFS_SRC="${2:?Usage: build-iso.sh [--title <title>] [--label <label>] <boot-files-tar> <squashfs-img> <output-iso>}"
+OUTPUT_ISO="${3:?Usage: build-iso.sh [--title <title>] [--label <label>] <boot-files-tar> <squashfs-img> <output-iso>}"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/iso-build.XXXXXX")
 # shellcheck disable=SC2064  # WORK is set above; expanding now is intentional
@@ -115,7 +121,7 @@ cat > "${ESP_STAGING}/loader/entries/dakota-live.conf" << EOF
 title   ${LIVE_TITLE}
 linux   /images/pxeboot/vmlinuz
 initrd  /images/pxeboot/initrd.img
-options root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8
+options root=live:LABEL=${LABEL} rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8
 EOF
 
 # EFI fallback path on the ISO9660 root
@@ -129,7 +135,7 @@ cp "${VMLINUZ}" "${ISO_ROOT}/images/pxeboot/vmlinuz"
 cp "${INITRD}"  "${ISO_ROOT}/images/pxeboot/initrd.img"
 cat > "${ISO_ROOT}/boot/grub/loopback.cfg" << EOF
 menuentry "${LIVE_TITLE}" {
-    linux /images/pxeboot/vmlinuz root=live:LABEL=DAKOTA_LIVE rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8 rd.dakota.isofile=\${iso_path}
+    linux /images/pxeboot/vmlinuz root=live:LABEL=${LABEL} rd.live.image rd.live.overlay.overlayfs=1 enforcing=0 nvidia-drm.modeset=1 console=ttyS0,115200n8 console=ttyAMA0,115200n8 rd.dakota.isofile=\${iso_path}
     initrd /images/pxeboot/initrd.img
 }
 EOF

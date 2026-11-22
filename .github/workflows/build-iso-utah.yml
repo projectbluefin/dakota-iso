@@ -168,7 +168,8 @@ jobs:
           # The systemd-boot title comes from the variant's live_title file
           # (docs/variants.md); without --title build-iso.sh says "Dakota Live".
           LIVE_TITLE="$(cat "${VARIANT}/live_title")"
-          sudo bash live/src/build-iso.sh --title "$LIVE_TITLE" \
+          LIVE_LABEL="$(tr -d '[:space:]' < "${VARIANT}/live_label")"
+          sudo bash live/src/build-iso.sh --title "$LIVE_TITLE" --label "$LIVE_LABEL" \
             /var/iso-build/${{ matrix.live_target }}-boot.tar \
             /var/iso-build/${{ matrix.live_target }}.rootfs.sfs \
             /var/iso-build/${{ matrix.iso_name }}.iso
