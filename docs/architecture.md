@@ -328,6 +328,12 @@ already ships stock SysInstall and CryptEnroll sockets; sharing either the
 socket path or the authorization grant lets the live session reach the stock
 implementation instead of the guarded Dakota service.
 
+The live boot also inherits installed-system units from the base image.
+`image-installer/Containerfile` gates them on the live kernel argument: ESP
+automount and boot services must not mount or modify the source ESP, and update
+and package-preinstall jobs must not run in the transient session. Homebrew
+preinstall is a **user** unit; a system-manager drop-in does not gate it.
+
 `just experimental-raw-container` builds and checks the installer binaries.
 The frontend uses Fedora 44's Blueprint 0.20+ because older compilers reject
 the pinned GNOME Setup's translated expressions.
