@@ -90,7 +90,9 @@ re-running it.
 `ci-alert.yml` runs the same classifier on a failed first attempt of those four
 workflows and does not open or reopen an alert when the re-run will replace the
 run; the re-run's own result then opens or closes the alert. A classifier error
-leaves the alert going out as before. Lint and Test failures are never re-run,
+leaves the alert going out as before. If the re-run then declines (a newer run
+of the workflow exists) or the `rerun` job fails, no alert is filed for that
+run; the next push or schedule run alerts as usual. Lint and Test failures are never re-run,
 so their alerts are never held back.
 
 ## build-iso.yml
