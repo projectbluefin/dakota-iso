@@ -66,4 +66,14 @@ RUN set -euxo pipefail; \
     libs="$(ldd /usr/bin/gnome-setup /usr/libexec/dakota-sysinstall/systemd-*)"; \
     if grep -F 'not found' <<<"${libs}"; then exit 1; fi; \
     /usr/libexec/dakota-sysinstall/systemd-sysinstall --version; \
+    for unit in system/boot.automount system/efi.automount system/systemd-boot-random-seed.service \
+        system/systemd-boot-update.service system/dakota-secure-boot-update.service system/bluefin-remove-installer.service \
+        system/bootc-fetch-apply-updates.timer system/uupd.timer system/uupd-resume.timer system/uupd-on-ac.service \
+        system/uupd.service system/flatpak-preinstall.service system/flatpak-appstream-refresh.service \
+        system/ublue-booted-image.service system/brew-setup.service system/brew-update.timer \
+        system/brew-upgrade.timer user/brew-preinstall.service; do \
+        dir="/usr/lib/systemd/${unit}.d"; \
+        mkdir -p "${dir}"; \
+        printf '[Unit]\nConditionKernelCommandLine=!dakota.live.installer=gnome-setup\n' > "${dir}/50-dakota-live.conf"; \
+    done; \
     systemctl enable dakota-live-setup.service dakota-live-ready.service dakota-sysinstall.socket dakota-cryptenroll.socket
