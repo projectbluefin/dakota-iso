@@ -419,6 +419,7 @@ class IsoSdBootHarness(unittest.TestCase):
         out = Path(os.path.realpath(out_dir))
         return [
             "--title", title,
+            "--label", "DAKOTA_LIVE",  # sandbox has no <target>/live_label: script default
             str(out / f"{target}-boot-files.tar"),
             str(out / f"{target}-rootfs.sfs"),
             str(out / f"{target}-live.iso"),
