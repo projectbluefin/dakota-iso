@@ -87,7 +87,7 @@ def test_promotion_copies_signature_and_keeps_signed_checksum(tmp_path):
 
     log = (tmp_path / "cosign.log").read_text()
     assert "verify-blob" in log
-    assert r"workflows/build-iso\.yml@" in log
+    assert r"workflows/build-iso\.yml@refs/heads/main$" in log
 
 
 def test_promotion_refuses_unsigned_source(tmp_path):

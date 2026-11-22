@@ -170,10 +170,23 @@ Both commands must succeed. Pin the identity exactly as above: a regexp that onl
 anchors on the organisation would accept a signature from any projectbluefin
 workflow (the mistake `scripts/verify-image-signature.sh` fixed in #259).
 
-Only the `latest` checksum is signed. Backup slots lose the signature in rotation, and
-`promote-release.yml` rewrites the checksum for the promoted filename, so named releases
-(`dakota-live-alpha6.iso` etc.) have no `.sigstore.json` / `.sig` / `.pem` yet — verify
-those by promoting only from a `latest` whose signature you have checked first.
+Named releases (`dakota-live-alpha6.iso` etc.) are signed too: `promote-release.yml`
+copies the signed `-CHECKSUM` byte-for-byte with its `.sigstore.json` bundle (and
+`.sig`/`.pem` when present), so step 1 is identical — set `NAME` to the release file.
+The signed checksum still names the `latest` object it was built as, so step 2 must
+feed the signed hash in under the downloaded filename instead of running
+`sha256sum -c "$NAME-CHECKSUM"` directly:
+
+```bash
+NAME=dakota-live-alpha6.iso
+# ...download and run step 1 exactly as above, then:
+echo "$(awk '{print $1}' "$NAME-CHECKSUM")  $NAME" | sha256sum -c
+```
+
+The `$NAME-SHA256SUMS` file published next to a named release carries the same hash
+with the promoted filename for convenience, but it is unsigned; only trust it after
+checking its hash matches the verified `-CHECKSUM`. Backup slots lose the signature in
+rotation and cannot be verified this way.
 
 ### README table auto-refresh
 

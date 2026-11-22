@@ -148,7 +148,7 @@ jobs:
           cosign verify-blob \
             --bundle /tmp/promoted-CHECKSUM.sigstore.json \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp "^https://github\\.com/projectbluefin/dakota-iso/\\.github/workflows/${SIGNER_RE}@" \
+            --certificate-identity-regexp "^https://github\\.com/projectbluefin/dakota-iso/\\.github/workflows/${SIGNER_RE}@refs/heads/main\$" \
             /tmp/promoted-CHECKSUM
 
           SRC_SUM="$(rclone cat "R2:testing/${SRC}-CHECKSUM" | awk '{print $1}')"
