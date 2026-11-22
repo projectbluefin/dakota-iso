@@ -71,17 +71,7 @@ The same script backs `plain-verify-qemu` (encryption type `none`, skips
 assertion 3) and the new `luks-verify-qemu` recipe (encryption type
 `luks-passphrase`).
 
-> **Non-blocking by default (observability-only).** Until fisherman #1/#2 and
-> common#385 land, `verify-post-install.sh` (and so `plain-verify-qemu` /
-> `luks-verify-qemu`) exits **0** on an assertion failure, printing a
-> `⚠️ ... NON-BLOCKING` line (and a GitHub `::warning::` annotation in
-> Actions). Set `STRICT_POST_BOOT=1` to make assertion failures exit 1 and
-> fail those observations. SSH reachability and btrfs `compress=zstd[:1]` in
-> the mounted `/var` filesystem and persistent `rootflags=` are always hard
-> requirements. CI (`test-luks-install.yml`, `test-plain-install.yml`) does not
-> set `STRICT_POST_BOOT`, so green alone does not prove the older observations —
-> check the log for `✅ All post-boot assertions
-> passed`.
+> **Non-blocking by default (observability-only).** Each assertion in `verify-post-install.sh` (and so `plain-verify-qemu` / `luks-verify-qemu`) exits **0** on failure, printing a `::warning::` annotation and a machine-parseable `not ok - <id>` TAP line, so existing machines don't regress. A check becomes strict only after the weekly graduation check (`scripts/graduation-check.py`, `.github/workflows/graduation-check.yml`) measures a green bar — 3 consecutive passes and ≤10% failures over the last 20 E2E runs on main — and a human adds its id to `STRICT_IDS`. Strictness is per-assertion so one never-greening check cannot hold back the others. SSH reachability and btrfs `compress=zstd[:1]` in the mounted `/var` filesystem and persistent `rootflags=` are always hard requirements. CI does not set `STRICT_IDS` yet, so green alone does not prove the observations — grep the log for `ok - <id>` / `not ok - <id>` and `✅ All post-boot assertions passed`, and the weekly graduation-check issue for which checks have graduated.
 
 ### Key paths
 

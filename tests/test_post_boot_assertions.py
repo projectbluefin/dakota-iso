@@ -280,16 +280,40 @@ class TestJustfileWiring(unittest.TestCase):
                 header,
             )
 
-    def test_soft_fail_lives_in_script_and_only_covers_assertion_failures(self):
+    def test_soft_assertions_emit_tap_and_block_only_in_strict_ids(self):
         text = VERIFY_SCRIPT.read_text()
+        # The soft() helper is the only place a failed assertion becomes a lane
+        # failure, and it gates that on STRICT_IDS membership (per-assertion).
+        self.assertIn('soft() {', text)
+        self.assertIn('STRICT_IDS', text)
+        # One TAP line per soft assertion, machine-parseable by the weekly
+        # graduation check.
+        self.assertIn('echo "ok - ${id}"', text)
+        self.assertIn('echo "not ok - ${id}"', text)
+        # The old global STRICT_POST_BOOT switch is gone.
+        self.assertNotIn('STRICT_POST_BOOT', text)
+        # The three post-boot assertions are soft, each gated by its own id.
+        for check_id in ('uefi-bootcurrent', 'no-installer-flatpak', 'luks-uuid'):
+            self.assertIn(
+                f'soft {check_id} ', text, f'{check_id} is not a soft assertion'
+            )
+        # The tail after the final FAIL check is the success/fail exit, with no
+        # remaining observability-only escape hatch.
         tail = text[text.rindex('if [[ "$FAIL" -eq 0 ]]'):]
-        self.assertIn('"${STRICT_POST_BOOT:-0}" != "1"', tail)
-        self.assertIn("NON-BLOCKING", tail)
-        self.assertTrue(tail.rstrip().endswith("exit 1"))
-        for header in ("luks-verify-qemu target:", "plain-verify-qemu target:"):
+        self.assertTrue(tail.rstrip().endswith('exit 1'))
+        # SSH-unreachable (rc 2) is handled above, before the soft assertions,
+        # and is never a soft assertion (it is a setup failure, not an
+        # assertion result).
+        unreachable = text[text.rindex('could not reach installed system over SSH'):]
+        self.assertIn('exit 2', unreachable)
+        self.assertNotIn('STRICT_IDS', unreachable)
+        # The justfile recipes never set the strict list, so every check stays
+        # observability-only in CI; a green run still does not prove the
+        # invariants until a check graduates into STRICT_IDS.
+        for header in ('luks-verify-qemu target:', 'plain-verify-qemu target:'):
             body = self._recipe_body(header)
-            self.assertNotIn("STRICT_POST_BOOT:-0", body, header)
-            self.assertNotIn("exit 0", body, header)
+            self.assertNotIn('STRICT_IDS=', body, header)
+            self.assertNotIn('exit 0', body, header)
 
     def test_installed_boot_carry_over_is_opt_in(self):
         # Both installed-boot recipes gate the live-NVRAM carry-over behind an

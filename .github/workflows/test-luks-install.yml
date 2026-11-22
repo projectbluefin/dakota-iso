@@ -140,7 +140,6 @@ jobs:
           # Use the same pinned backend shipped in the live image.
           just luks-test-qemu ${{ matrix.variant }} ${{ matrix.installer_channel }}
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
-        continue-on-error: true
 
       - name: Convert and publish screenshots
         if: always()

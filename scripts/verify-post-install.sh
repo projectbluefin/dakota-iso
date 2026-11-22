@@ -21,18 +21,24 @@
 #
 # Usage: verify-post-install.sh <ssh_port> <encryption_type: none|luks-passphrase>
 #
-# Exit code: 0 if all applicable assertions pass, 1 if any fails, 2 if the
-# installed system was never reachable over SSH (setup failure, not an
-# assertion result).
+# Exit code: 0 if every applicable soft assertion passes (or only non-strict
+# ones fail), 1 if any STRICT_IDS assertion fails or a hard requirement is
+# unmet, 2 if the installed system was never reachable over SSH (setup
+# failure, not an assertion result).
 #
-# Assertion failures are OBSERVABILITY-ONLY by default: they print a warning
-# (plus a ::warning:: annotation under GitHub Actions) and exit 0 until the
-# upstream dependencies (fisherman #1, #2, common#385) land. Set
-# STRICT_POST_BOOT=1 to make them exit 1. CI does not set it, so a green run
-# does NOT prove the invariants.
+# Three post-boot assertions are soft (observability-only): the UEFI
+# BootCurrent entry, the installer Flatpak being absent, and the LUKS cmdline
+# UUID. Each prints a TAP line (`ok - <id>` / `not ok - <id>`) and, on failure,
+# blocks the lane only when its id is in the STRICT_IDS list. STRICT_IDS is
+# empty by default, so a failing soft assertion is a ::warning:: and exits 0;
+# a check graduates into STRICT_IDS only after the weekly graduation check
+# (scripts/graduation-check.py) measures a green bar over the last 20 runs on
+# main. SSH reachability and btrfs zstd compression/rootflags are hard
+# requirements and always fail the lane regardless of STRICT_IDS.
 #
-# SSH reachability and btrfs zstd compression/rootflags are hard requirements.
-# The older UEFI/Flatpak/LUKS observations retain STRICT_POST_BOOT semantics.
+# Per-assertion strictness (STRICT_IDS) is used rather than one global switch,
+# so one never-greening check cannot hold back the others. Adapted from the
+# tunaOS/tunaOS green-criteria design (see projectbluefin/dakota-iso#381).
 
 set -uo pipefail
 
@@ -83,6 +89,57 @@ check_btrfs_compression() {
             [[ ",${flags}," =~ ,compress=zstd(:1)?, ]] && return 0
         fi
     done
+    return 1
+}
+
+# soft <id> <command...>: run a post-boot assertion that is observability-only
+# until it graduates into the STRICT_IDS list. Prints a TAP line (`ok - <id>`
+# / `not ok - <id>`) so the weekly graduation check can measure the check's
+# pass rate across runs. A failure blocks the lane only when <id> is in
+# STRICT_IDS; otherwise it emits a ::warning:: annotation and the script still
+# exits 0. Hard requirements (SSH reachability, btrfs compression) are
+# deliberately NOT soft: they always fail the lane. Per-assertion strictness is
+# used rather than one global switch so one never-greening check cannot hold
+# back the others.
+soft() {
+    local id="$1"; shift
+    if "$@"; then
+        echo "ok - ${id}"
+    else
+        echo "not ok - ${id}"
+        if [[ " ${STRICT_IDS:-} " == *" ${id} "* ]]; then
+            FAIL=1
+        else
+            echo "::warning title=Post-boot assertion '${id}' failed (non-blocking)::$id failed; add it to STRICT_IDS to block on it"
+        fi
+    fi
+}
+
+# check_no_installer_flatpak <flatpak_exit_code> <flatpak_output>
+# Succeeds only if flatpak list ran (rc 0) and does not report the installer's
+# own Flatpak (org.bootcinstaller). A flatpak list failure is a real problem,
+# not a clean exclusion, so it fails too.
+check_no_installer_flatpak() {
+    local rc="$1" out="$2"
+    if [[ "$rc" -ne 0 ]]; then
+        echo "   flatpak list failed with code ${rc}: ${out}"
+        return 1
+    fi
+    if printf '%s\n' "$out" | grep -q 'org.bootcinstaller'; then
+        echo "   installer flatpak leaked: $(printf '%s\n' "$out" | grep 'org.bootcinstaller')"
+        return 1
+    fi
+    return 0
+}
+
+# check_luks_uuid <kernel cmdline>
+# Succeeds only if the cmdline carries a well-formed rd.luks.uuid= or
+# rd.luks.name= UUID (8-4-4-4-12 hex).
+check_luks_uuid() {
+    local cmdline="$1"
+    if printf '%s\n' "$cmdline" | grep -qE 'rd\.luks\.(uuid=(luks-)?[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}([[:space:]]|$)|name=[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}=)'; then
+        return 0
+    fi
     return 1
 }
 
@@ -152,36 +209,18 @@ TOTAL=2
 echo "=== Assertion 1/${TOTAL}: UEFI boot entry (fisherman #2) ==="
 EFIBOOTMGR_OUT=$($SSH 'efibootmgr -v' 2>&1) || true
 echo "$EFIBOOTMGR_OUT"
-if check_uefi_boot_entry "$EFIBOOTMGR_OUT"; then
-    echo "✅ Booted via installer-written UEFI NVRAM entry"
-else
-    echo "❌ BootCurrent does not reference an installer-written UEFI entry (HD() + \\EFI\\<vendor>\\*.efi)"
-    FAIL=1
-fi
+soft uefi-bootcurrent check_uefi_boot_entry "$EFIBOOTMGR_OUT"
 
 echo "=== Assertion 2/${TOTAL}: installer Flatpak excluded (fisherman #1) ==="
 FLATPAK_RC=0
 FLATPAK_OUT=$($SSH 'flatpak list --system --app 2>&1') || FLATPAK_RC=$?
-if [[ "$FLATPAK_RC" -ne 0 ]]; then
-    echo "❌ flatpak list command failed with code ${FLATPAK_RC}: ${FLATPAK_OUT}"
-    FAIL=1
-elif echo "$FLATPAK_OUT" | grep -q 'org.bootcinstaller'; then
-    echo "❌ Installer Flatpak leaked onto installed system: $(echo "$FLATPAK_OUT" | grep 'org.bootcinstaller')"
-    FAIL=1
-else
-    echo "✅ Installer Flatpak (org.bootcinstaller) not present on installed system"
-fi
+soft no-installer-flatpak check_no_installer_flatpak "$FLATPAK_RC" "$FLATPAK_OUT"
 
 if [[ "$ENCRYPTION_TYPE" == "luks-passphrase" ]]; then
     echo "=== Assertion 3/${TOTAL}: LUKS cmdline UUID parseable (common#385) ==="
     CMDLINE=$($SSH 'cat /proc/cmdline' 2>&1) || true
     echo "$CMDLINE"
-    if echo "$CMDLINE" | grep -qE 'rd\.luks\.(uuid=(luks-)?[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}([[:space:]]|$)|name=[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}=)'; then
-        echo "✅ /proc/cmdline contains a well-formed rd.luks.uuid=/rd.luks.name= UUID"
-    else
-        echo "❌ /proc/cmdline missing a well-formed (8-4-4-4-12) rd.luks.uuid=/rd.luks.name= UUID"
-        FAIL=1
-    fi
+    soft luks-uuid check_luks_uuid "$CMDLINE"
 fi
 
 if [[ "$FAIL" -eq 0 ]]; then
@@ -190,9 +229,4 @@ if [[ "$FAIL" -eq 0 ]]; then
 fi
 
 echo "❌ One or more post-boot assertions failed" >&2
-if [[ "${STRICT_POST_BOOT:-0}" != "1" ]]; then
-    echo "⚠️ Post-boot assertions FAILED but are NON-BLOCKING (observability-only until fisherman #1/#2 and common#385 land). Set STRICT_POST_BOOT=1 to fail hard." >&2
-    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::warning title=Post-boot assertions failed (non-blocking)::verify-post-install.sh assertions failed; see log. Set STRICT_POST_BOOT=1 to gate."
-    exit 0
-fi
 exit 1

@@ -1036,11 +1036,11 @@ luks-unlock-qemu target:
 luks-verify-qemu target:
     #!/usr/bin/bash
     set -euo pipefail
-    # Post-boot assertions (projectbluefin/dakota#651). Assertion failures are
-    # observability-only unless STRICT_POST_BOOT=1 (handled inside
-    # verify-post-install.sh; CI does not set it, so a green run does NOT
-    # prove the invariants). SSH unreachable is also non-blocking unless
-    # STRICT_POST_BOOT=1 (then rc 2).
+    # Post-boot assertions (projectbluefin/dakota#651). Each soft assertion is
+    # observability-only unless its id is in STRICT_IDS (handled inside
+    # verify-post-install.sh); the weekly graduation check only recommends
+    # promoting checks to STRICT_IDS once they pass a green bar — a human
+    # enforces. SSH unreachable is always blocking (rc 2).
     bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase"
 
 # Run Python unit tests.
@@ -1440,10 +1440,11 @@ plain-verify-qemu target:
             bash "live/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
             # Post-boot assertions (projectbluefin/dakota#651): UEFI entry +
             # Flatpak exclusion, over SSH into the now-booted installed system.
-            # Assertion failures are observability-only unless
-            # STRICT_POST_BOOT=1 (handled inside verify-post-install.sh; CI
-            # does not set it); SSH unreachable is likewise non-blocking
-            # unless STRICT_POST_BOOT=1 (then rc 2).
+            # Each soft assertion is observability-only unless its id is in
+            # STRICT_IDS (handled inside verify-post-install.sh); the weekly
+            # graduation check only recommends promoting checks to STRICT_IDS
+            # on a green bar — a human enforces. SSH unreachable is always
+            # blocking (rc 2).
             POST_BOOT_RC=0
             bash "scripts/verify-post-install.sh" "{{plain-qemu-ssh-port-installed}}" "none" || POST_BOOT_RC=$?
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true

@@ -1,0 +1,41 @@
+name: Graduation Check
+
+# Weekly measured bar for the post-boot assertions in scripts/verify-post-install.sh.
+# Measures each soft check's TAP history over the last 20 scheduled E2E runs on
+# main and opens/refreshes an issue RECOMMENDING which checks qualify to graduate
+# to strict (dakota#381). Only recommends; a human adds the id to STRICT_IDS.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Mondays 07:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  graduation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: pip install --disable-pip-version-check pyyaml==6.0.3
+      - name: Measure post-boot assertions
+        env:
+          # Scoped to this step only. gh needs auth for run listing and log
+          # download, but the token must never sit in the environment of the
+          # pip install step, where an unpinned/compromised dependency could
+          # read it and exfiltrate it.
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/graduation-check.py --json
+      - name: Open or refresh graduation issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/graduation-check.py

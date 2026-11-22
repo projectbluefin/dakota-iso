@@ -39,7 +39,7 @@ esac
         **os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "COUNT": str(tmp_path / "count"), "READY_AFTER": str(ready_after),
         "ERROR_MESSAGE": message, "ERROR_STATUS": str(status), "MOUNT": mount,
-        "TMPDIR": str(tmp_path), "STRICT_POST_BOOT": "0",
+        "TMPDIR": str(tmp_path), "STRICT_IDS": "",
     }
     env.update(extra_env or {})
     result = subprocess.run(["bash", str(SCRIPT), "2225", "none"],
