@@ -20,6 +20,23 @@ def load_module(name, path):
 
 
 class ExperimentalRawInstallerContractTest(unittest.TestCase):
+    def test_bootc_loop_inventory_uses_gpt_only_for_missing_types(self):
+        module = load_module("lsblk_bootc", TRACK / "lsblk-bootc.py")
+        disk = "/dev/loop5"
+        device = {"path": disk, "children": [
+            {"path": disk + "p2", "type": "part", "parttype": "reported-esp"},
+            {"path": disk + "p3", "type": "part", "parttype": None},
+        ]}
+        table = {"label": "gpt", "device": disk, "partitions": [
+            {"node": disk + "p3", "type": "4f68bce3-e8cd-4db1-96e7-fbcaf984b709"},
+            {"node": disk + "p2", "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"},
+        ]}
+        with self.assertRaisesRegex(ValueError, "requested loop device"):
+            module.complete_partition_types(device, dict(table, device="/dev/loop6"))
+        module.complete_partition_types(device, table)
+        self.assertEqual(device["children"][0]["parttype"], "reported-esp")
+        self.assertEqual(device["children"][1]["parttype"], "4f68bce3-e8cd-4db1-96e7-fbcaf984b709")
+
     def test_builder_inputs_are_commit_pinned_and_self_checking(self):
         text = (TRACK / "Containerfile").read_text()
         for ref in ("SYSTEMD_REF", "GNOME_SETUP_REF"):

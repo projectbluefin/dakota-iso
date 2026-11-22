@@ -57,10 +57,9 @@ truncate -s "${SIZE}" -- "${RAW}"
 IMAGE_ID="$(podman image inspect --format '{{.Id}}' -- "${IMAGE}")"
 podman push --format oci -- "${IMAGE_ID}" "oci:${WORK}/source"
 
-# bootc's lsblk can see an existing udev database before the loop partition
-# properties appear there. Probe the actual bytes first, for this build only.
+# Hosted loop partitions may lack PARTTYPE in lsblk; read the new GPT directly.
 mkdir -- "${WORK}/bin"
-printf '%s\n' '#!/bin/sh' 'exec /usr/bin/lsblk --properties-by blkid,udev "$@"' >"${WORK}/bin/lsblk"
+cp -- "${HERE}/lsblk-bootc.py" "${WORK}/bin/lsblk"
 chmod 0755 "${WORK}/bin/lsblk"
 
 echo ">>> Installing container image to raw disk via bootc..."

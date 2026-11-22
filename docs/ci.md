@@ -52,10 +52,10 @@ on the serial console. This is a boot smoke check, not the GUI install,
 recovery, or installed-boot gate. The workflow never publishes the image or
 touches the Fisherman ISO.
 
-Ubuntu's hosted runner created the loop device and GPT but returned no root
-partition type through udev. The raw builder makes `lsblk` probe on-disk
-metadata first inside the build container; it still requires and verifies
-the expected GPT type instead of routing around bootc's check.
+Ubuntu's hosted runner returned no root `PARTTYPE` from `lsblk` even with
+blkid probing enabled. The raw builder fills missing loop partition types
+from `sfdisk --json` on the parent disk and leaves bootc's UUID validation in
+place. It does not replace reported types or change the installed tools.
 
 ### CI alert cancellation handling (2026-11-14)
 
