@@ -18,10 +18,6 @@ permissions:
 jobs:
   graduation:
     runs-on: ubuntu-latest
-    env:
-      # gh reads GH_TOKEN; grant it explicitly so run listing and log download
-      # are authenticated (and actions: read allows them).
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -32,6 +28,14 @@ jobs:
       - name: Install dependencies
         run: pip install PyYAML
       - name: Measure post-boot assertions
+        env:
+          # Scoped to this step only. gh needs auth for run listing and log
+          # download, but the token must never sit in the environment of the
+          # pip install step, where an unpinned/compromised dependency could
+          # read it and exfiltrate it.
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/graduation-check.py --json
       - name: Open or refresh graduation issue
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/graduation-check.py
