@@ -235,17 +235,16 @@ When a new image is ready to publish:
 
 ### Pipeline steps
 
-1. Ensure `ci-screenshots` branch exists
-2. Free disk space
-3. Install deps (adds `qemu-system-x86 ovmf socat sshpass`)
-4. Configure podman storage (`configure_podman_storage.sh`)
-5. Build ISO with `debug=1` and the matrix `installer_channel`
-6. Boot live ISO in QEMU (daemonized) + wait for ready
-7. SSH into live env, write recipe, run `fisherman` LUKS install
-8. Patch BLS entries for dual console (`console=tty0 console=ttyS0`)
-9. Boot installed disk, send LUKS passphrase via QEMU monitor
-10. Verify boot success via serial log
-11. Save screenshots to `ci-screenshots` branch + post PR comment
+1. Free disk space
+2. Install deps (adds `qemu-system-x86 ovmf socat sshpass`)
+3. Configure podman storage (`configure_podman_storage.sh`)
+4. Build ISO with `debug=1` and the matrix `installer_channel`
+5. Boot live ISO in QEMU (daemonized) + wait for ready
+6. SSH into live env, write recipe, run `fisherman` LUKS install
+7. Patch BLS entries for dual console (`console=tty0 console=ttyS0`)
+8. Boot installed disk, send LUKS passphrase via QEMU monitor
+9. Verify boot success via serial log
+10. Publish screenshots to the `ci-screenshots` branch + post PR comment
 
 ### Configure podman storage script
 
@@ -258,11 +257,28 @@ driver based on the host filesystem:
 
 ### Screenshots
 
-LUKS test screenshots are saved to the `ci-screenshots` branch and linked in PR
+LUKS test screenshots are published to the `ci-screenshots` branch and linked in PR
 comments. Key screenshots:
 - Live boot (after `DAKOTA_LIVE_READY`)
 - Plymouth LUKS passphrase prompt
 - Final boot (after passphrase unlock)
+
+`.github/scripts/publish_screenshots.sh` keeps that branch at **one parentless
+commit** holding only the newest run, under `luks-e2e/<run id>/<variant>/<channel>/`.
+Each publish rebuilds the commit from the current tip, keeping only the current
+run's directory (so the other matrix leg's screenshots survive) and dropping
+older runs, then force-pushes it with `--force-with-lease` on the tip it read.
+A leg that loses the race to the other leg re-reads the tip and retries. The
+script creates the branch on first use.
+
+Links in older PR comments stop resolving once a later run publishes.
+
+#### Lesson: committing screenshots through the contents API grows the branch forever (2026-11-22)
+
+The workflow used to `PUT /repos/.../contents/<path>` once per screenshot, which
+adds one commit per image per run and never removes anything, so every clone
+that fetches all refs downloaded every PNG ever taken (#382). Publish a
+replaced orphan commit instead; never append to `ci-screenshots`.
 
 ## test-plain-install.yml
 
