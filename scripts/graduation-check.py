@@ -79,8 +79,15 @@ def fetch_run_log(repo: str, run_id: int) -> str | None:
 
     The REST logs endpoint returns a zip of per-job logs, so open it and join
     the top-level entries (each job's combined log).
+
+    ``gh api`` takes no ``--repo`` flag (unlike ``gh run list`` / ``gh issue``),
+    so the endpoint is embedded in the URL and we call ``gh`` directly instead
+    of through ``run_gh``, which would prepend ``--repo`` and fail.
     """
-    proc = run_gh(["api", f"repos/{repo}/actions/runs/{run_id}/logs"], repo)
+    proc = subprocess.run(
+        ["gh", "api", f"repos/{repo}/actions/runs/{run_id}/logs"],
+        capture_output=True,
+    )
     if proc.returncode != 0 or not proc.stdout:
         return None
     try:

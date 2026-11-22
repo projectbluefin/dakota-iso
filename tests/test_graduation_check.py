@@ -119,5 +119,49 @@ class TestOfflineRun(unittest.TestCase):
         self.assertNotIn("no repository", proc.stderr)
 
 
+class TestLiveGhCalls(unittest.TestCase):
+    """The live gh path is not exercised by the offline fixture, so assert the
+    exact argv here. ``gh api`` takes no ``--repo`` flag (unlike ``gh run list``
+    / ``gh issue``), so the endpoint carries the repo and we call ``gh``
+    directly instead of through ``run_gh`` (dakota#392)."""
+
+    def _run_with_stub(self, fn):
+        calls = []
+
+        def fake_run(cmd, *a, **k):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+        orig = subprocess.run
+        subprocess.run = fake_run
+        try:
+            fn()
+        finally:
+            subprocess.run = orig
+        return calls
+
+    def test_fetch_run_log_calls_api_without_repo_flag(self):
+        calls = self._run_with_stub(
+            lambda: mod.fetch_run_log("projectbluefin/dakota-iso", 12345)
+        )
+        self.assertEqual(len(calls), 1)
+        cmd = calls[0]
+        self.assertEqual(cmd[0], "gh")
+        self.assertNotIn("--repo", cmd)          # gh api has no --repo flag
+        self.assertEqual(cmd[1], "api")
+        self.assertTrue(cmd[2].endswith("/actions/runs/12345/logs"))
+
+    def test_list_runs_keeps_repo_flag(self):
+        calls = self._run_with_stub(
+            lambda: mod.list_runs("projectbluefin/dakota-iso")
+        )
+        self.assertEqual(len(calls), 2)          # one per E2E workflow
+        for cmd in calls:
+            self.assertEqual(cmd[0], "gh")
+            self.assertIn("--repo", cmd)          # gh run list accepts --repo
+            self.assertIn("run", cmd)             # gh run list
+            self.assertIn("--workflow", cmd)
+
+
 if __name__ == "__main__":
     unittest.main()
