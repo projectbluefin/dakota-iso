@@ -129,7 +129,8 @@ The `.sigstore.json` bundle is the keyless cosign signature of the `latest` chec
 (the primary artifact since cosign v3); see
 [Verifying a downloaded ISO](ci.md#verifying-a-downloaded-iso) for the check. The `.sig`/`.pem`
 pair is the same keyless signature in the older separate-file format, still published
-alongside for now. Named releases and backup slots carry no signature.
+alongside for now. Named releases carry the same signature, copied unchanged by
+`promote-release.yml`; backup slots carry no signature.
 
 The `bluefin-live-*` and `bluefin-lts-hwe-live-*` URLs are retired (#228): those matrix
 entries are commented out in `build-iso-utah.yml` and are not `promote-release.yml`
