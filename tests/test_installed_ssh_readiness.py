@@ -10,11 +10,12 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts/verify-post-install.sh"
 
 
 def run_gate(tmp_path, message, status, ready_after=999, mount="btrfs rw,compress=zstd:1",
-             extra_env=None):
+             extra_env=None, with_key=True):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    transport = bin_dir / "sshpass"
+    transport = bin_dir / "ssh"
     transport.write_text('''#!/bin/bash
+printf '%s\\n' "$*" >> "$ARGS_LOG"
 case "${!#}" in
     true)
         n=0
@@ -32,26 +33,37 @@ case "${!#}" in
 esac
 ''')
     transport.chmod(0o755)
+    # A vsock-capable socat, so the dialer check passes on hosts without
+    # systemd-ssh-proxy; the stubbed ssh never runs the ProxyCommand.
+    socat = bin_dir / "socat"
+    socat.write_text("#!/bin/bash\necho '#define WITH_VSOCK 1'\n")
+    socat.chmod(0o755)
     sleep = bin_dir / "sleep"
     sleep.write_text("#!/bin/bash\nexit 0\n")
     sleep.chmod(0o755)
+    state = tmp_path / "vsock"
+    if with_key:
+        state.mkdir()
+        (state / "key").write_text("private\n")
+        (state / "cid").write_text("3225\n")
     env = {
         **os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "COUNT": str(tmp_path / "count"), "READY_AFTER": str(ready_after),
         "ERROR_MESSAGE": message, "ERROR_STATUS": str(status), "MOUNT": mount,
         "TMPDIR": str(tmp_path), "STRICT_IDS": "",
+        "ARGS_LOG": str(tmp_path / "ssh-args"),
     }
     env.update(extra_env or {})
-    result = subprocess.run(["bash", str(SCRIPT), "2225", "none"],
+    result = subprocess.run(["bash", str(SCRIPT), str(state), "none"],
                             env=env, capture_output=True, text=True, timeout=10)
     count = tmp_path / "count"
     return result, int(count.read_text()) if count.exists() else 0
 
 
 @pytest.mark.parametrize(("message", "status"), [
-    ("ssh: connect to host 127.0.0.1 port 2225: Connection refused", 255),
+    ("kex_exchange_identification: Connection closed by remote host", 255),
     ("Connection timed out during banner exchange", 255),
-    ("Permission denied, please try again.", 5),
+    ("root@vsock-3225: Permission denied (publickey).", 255),
 ])
 def test_unreachable_reports_last_error_and_fails_closed(tmp_path, message, status):
     result, attempts = run_gate(tmp_path, message, status)
@@ -64,7 +76,27 @@ def test_unreachable_reports_last_error_and_fails_closed(tmp_path, message, stat
     assert "after 5 minutes" not in result.stderr
     assert "Installed /var mount:" not in result.stdout
     assert not list(tmp_path.glob("installed-ssh.*"))
-    assert "sshpass -p" not in result.stderr
+
+
+def test_guest_is_reached_over_vsock_with_the_per_run_key(tmp_path):
+    result, _ = run_gate(tmp_path, "", 255, ready_after=1)
+    assert result.returncode == 0, result.stderr
+    args = (tmp_path / "ssh-args").read_text().splitlines()
+    assert args
+    for line in args:
+        assert f"-i {tmp_path / 'vsock' / 'key'}" in line
+        assert "IdentitiesOnly=yes" in line
+        assert "BatchMode=yes" in line
+        # Either dialer, but always the CID recorded at boot time.
+        assert "vsock/3225 22" in line or "VSOCK-CONNECT:3225:22" in line
+        assert "127.0.0.1" not in line
+
+
+def test_guest_booted_without_key_is_a_setup_failure(tmp_path):
+    result, attempts = run_gate(tmp_path, "", 0, ready_after=1, with_key=False)
+    assert result.returncode == 2
+    assert attempts == 0
+    assert "No per-run vsock key" in result.stderr
 
 
 def test_transient_failure_still_runs_required_assertions(tmp_path):

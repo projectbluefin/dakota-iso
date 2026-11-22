@@ -325,6 +325,21 @@ class TestComposefsRecipe(LuksInstallHarness):
         self.assertTrue((self.capture / "fisherman-install.sh").exists())
         self.assertIn("bash /tmp/fisherman-install.sh /tmp/luks-recipe.json", self.stub_log())
 
+    def test_installed_disk_is_left_without_debug_ssh_by_default(self):
+        """Post-boot checks use AF_VSOCK; the tested disk must match users' (#380)."""
+        self.extra_env = {"E2E_DEBUG_SSH": "0"}
+        self.run_script(self.target, image_exists=True)
+        self.assertIn("fisherman-install.sh /tmp/luks-recipe.json", self.stub_log())
+        self.assertNotIn("--enable-debug-ssh", self.stub_log())
+
+    def test_debug_ssh_is_a_local_opt_in(self):
+        self.extra_env = {"E2E_DEBUG_SSH": "1"}
+        self.run_script(self.target, image_exists=True)
+        self.assertIn(
+            "fisherman-install.sh /tmp/luks-recipe.json --enable-debug-ssh",
+            self.stub_log(),
+        )
+
     def test_scratch_disk_is_mounted_over_var_tmp(self):
         self.run_script(self.target, image_exists=True)
         log = self.stub_log()

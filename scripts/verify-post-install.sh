@@ -4,9 +4,11 @@
 # projectbluefin/dakota#651 ("[fisherman] e2e: add post-boot assertions for
 # UEFI entries, Flatpak exclusion, and LUKS cmdline format").
 #
-# Connects over SSH (enabled by scripts/fisherman-install.sh's
-# --enable-debug-ssh path — root:root, mirroring the live ISO's DEBUG=1
-# convention) to the freshly-installed, rebooted system and checks:
+# Connects as root over AF_VSOCK with the per-run key that the
+# *-boot-qemu-installed recipe handed the guest as a systemd credential
+# (scripts/guest-vsock.sh, #380). Nothing is patched onto the installed disk
+# for this, so the system under test is the one users get. It checks the
+# freshly-installed, rebooted system:
 #
 #   1. efibootmgr -v shows BootCurrent pointing at a Boot#### entry that the
 #      installer wrote to NVRAM (fisherman #2: /sys/firmware/efi/efivars
@@ -19,7 +21,8 @@
 #      (8-4-4-4-12 hex) via rd.luks.uuid=[luks-]<uuid> or
 #      rd.luks.name=<uuid>=<name> (projectbluefin/common#385).
 #
-# Usage: verify-post-install.sh <ssh_port> <encryption_type: none|luks-passphrase>
+# Usage: verify-post-install.sh <vsock_state_dir> <encryption_type: none|luks-passphrase>
+#   vsock_state_dir is the directory guest_vsock_prepare filled (key + CID).
 #
 # Exit code: 0 if every applicable soft assertion passes (or only non-strict
 # ones fail), 1 if any STRICT_IDS assertion fails or a hard requirement is
@@ -147,17 +150,20 @@ check_luks_uuid() {
 (return 0 2>/dev/null) && return 0
 
 if [[ $# -lt 2 ]]; then
-    echo "Usage: $0 <ssh_port> <encryption_type: none|luks-passphrase>" >&2
+    echo "Usage: $0 <vsock_state_dir> <encryption_type: none|luks-passphrase>" >&2
     exit 1
 fi
 
-SSH_PORT="$1"
+VSOCK_DIR="$1"
 ENCRYPTION_TYPE="$2"
 
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o PreferredAuthentications=password -o ServerAliveInterval=10 -o ServerAliveCountMax=6"
-SSH="sshpass -p root ssh $SSH_OPTS root@127.0.0.1 -p ${SSH_PORT}"
+# shellcheck source=scripts/guest-vsock.sh
+source "$(dirname "${BASH_SOURCE[0]}")/guest-vsock.sh"
+# A guest that was never given a key cannot be reached: setup failure.
+guest_vsock_ssh "$VSOCK_DIR" || exit 2
+SSH=("${GUEST_VSOCK_SSH[@]}")
 
-echo "Waiting for installed system SSH on port ${SSH_PORT}..."
+echo "Waiting for installed system SSH over AF_VSOCK (CID $(cat "$VSOCK_DIR/cid"))..."
 READY=0
 if ! SSH_ERROR=$(mktemp "${TMPDIR:-/tmp}/installed-ssh.XXXXXX"); then
     echo "❌ Cannot create temporary file for SSH diagnostics in ${TMPDIR:-/tmp}" >&2
@@ -167,9 +173,8 @@ trap 'rm -f "$SSH_ERROR"' EXIT
 START_SECONDS=$SECONDS
 SSH_RC=0
 for ATTEMPT in $(seq 1 60); do
-    # Keep only the last attempt's error in a private file. Do not use shell
-    # tracing or sshpass verbose output: either could expose the test password.
-    if $SSH true 2>"$SSH_ERROR"; then
+    # Keep only the last attempt's error in a private file.
+    if "${SSH[@]}" true 2>"$SSH_ERROR"; then
         READY=1
         break
     else
@@ -192,8 +197,8 @@ fi
 rm -f "$SSH_ERROR"
 trap - EXIT
 
-MOUNT_OPTIONS=$($SSH 'findmnt -rn -o FSTYPE,OPTIONS -T /var') || exit 1
-BOOT_CMDLINE=$($SSH 'cat /proc/cmdline') || exit 1
+MOUNT_OPTIONS=$("${SSH[@]}" 'findmnt -rn -o FSTYPE,OPTIONS -T /var') || exit 1
+BOOT_CMDLINE=$("${SSH[@]}" 'cat /proc/cmdline') || exit 1
 echo "Installed /var mount: ${MOUNT_OPTIONS}"
 echo "Installed cmdline: ${BOOT_CMDLINE}"
 if ! check_btrfs_compression "${MOUNT_OPTIONS}" "${BOOT_CMDLINE}"; then
@@ -207,18 +212,18 @@ TOTAL=2
 [[ "$ENCRYPTION_TYPE" == "luks-passphrase" ]] && TOTAL=3
 
 echo "=== Assertion 1/${TOTAL}: UEFI boot entry (fisherman #2) ==="
-EFIBOOTMGR_OUT=$($SSH 'efibootmgr -v' 2>&1) || true
+EFIBOOTMGR_OUT=$("${SSH[@]}" 'efibootmgr -v' 2>&1) || true
 echo "$EFIBOOTMGR_OUT"
 soft uefi-bootcurrent check_uefi_boot_entry "$EFIBOOTMGR_OUT"
 
 echo "=== Assertion 2/${TOTAL}: installer Flatpak excluded (fisherman #1) ==="
 FLATPAK_RC=0
-FLATPAK_OUT=$($SSH 'flatpak list --system --app 2>&1') || FLATPAK_RC=$?
+FLATPAK_OUT=$("${SSH[@]}" 'flatpak list --system --app 2>&1') || FLATPAK_RC=$?
 soft no-installer-flatpak check_no_installer_flatpak "$FLATPAK_RC" "$FLATPAK_OUT"
 
 if [[ "$ENCRYPTION_TYPE" == "luks-passphrase" ]]; then
     echo "=== Assertion 3/${TOTAL}: LUKS cmdline UUID parseable (common#385) ==="
-    CMDLINE=$($SSH 'cat /proc/cmdline' 2>&1) || true
+    CMDLINE=$("${SSH[@]}" 'cat /proc/cmdline' 2>&1) || true
     echo "$CMDLINE"
     soft luks-uuid check_luks_uuid "$CMDLINE"
 fi

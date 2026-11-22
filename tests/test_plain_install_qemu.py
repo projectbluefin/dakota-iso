@@ -147,7 +147,8 @@ class PlainInstallHarness(unittest.TestCase):
             (variant / "bootloader").write_text(bootloader + "\n")
         return variant
 
-    def run_script(self, target, image_exists=False, fisherman_rc=0, args=None):
+    def run_script(self, target, image_exists=False, fisherman_rc=0, args=None,
+                   debug_ssh="0"):
         env = {
             **os.environ,
             "PATH": f"{self.bindir}:{os.environ['PATH']}",
@@ -155,6 +156,7 @@ class PlainInstallHarness(unittest.TestCase):
             "STUB_CAPTURE": str(self.capture),
             "STUB_IMAGE_EXISTS": "0" if image_exists else "1",
             "STUB_FISHERMAN_RC": str(fisherman_rc),
+            "E2E_DEBUG_SSH": debug_ssh,
         }
         if args is None:
             args = [str(target), "2222", str(self.monitor)]
@@ -327,6 +329,19 @@ class TestBootcDirectRecipe(PlainInstallHarness):
         self.assertNotIn("go build", self.stub_log())
         self.assertNotIn("FISHERMAN_BIN=", self.stub_log())
         self.assertIn("sudo bash /tmp/fisherman-install.sh", self.stub_log())
+
+    def test_installed_disk_is_left_without_debug_ssh_by_default(self):
+        """Post-boot checks use AF_VSOCK; the tested disk must match users' (#380)."""
+        self.run_script(self.target)
+        self.assertIn("fisherman-install.sh /tmp/plain-recipe.json", self.stub_log())
+        self.assertNotIn("--enable-debug-ssh", self.stub_log())
+
+    def test_debug_ssh_is_a_local_opt_in(self):
+        self.run_script(self.target, debug_ssh="1")
+        self.assertIn(
+            "fisherman-install.sh /tmp/plain-recipe.json --enable-debug-ssh",
+            self.stub_log(),
+        )
 
     def test_install_failure_exits_1_and_dumps_diagnostics(self):
         result = self.run_script(self.target, image_exists=True, fisherman_rc=1)

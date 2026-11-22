@@ -105,12 +105,18 @@ jobs:
             qemu-system-x86 ovmf sshpass socat imagemagick \
             libguestfs-tools just
 
-      - name: Enable KVM access
+      - name: Enable KVM and vhost-vsock access
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+          # vhost-vsock: post-boot assertions reach the installed guest over
+          # AF_VSOCK (scripts/guest-vsock.sh) and QEMU runs unprivileged.
+          printf '%s\n' \
+            'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666", OPTIONS+="static_node=vhost-vsock"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo modprobe vhost_vsock
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          sudo udevadm trigger --name-match=vhost-vsock
           sudo adduser "$USER" kvm || true
 
       - name: Log in to GHCR
