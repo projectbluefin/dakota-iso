@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: '3.x'
       - name: Install dependencies
-        run: pip install PyYAML
+        run: pip install --disable-pip-version-check pyyaml==6.0.3
       - name: Measure post-boot assertions
         env:
           # Scoped to this step only. gh needs auth for run listing and log
