@@ -39,7 +39,10 @@ jobs:
       - name: Build prototype from a signature-verified base
         run: |
           mkdir -p output
-          sudo env -u XDG_RUNTIME_DIR "PATH=$PATH" just experimental-raw-medium output/dakota-raw.img
+          if ! sudo env -u XDG_RUNTIME_DIR "PATH=$PATH" just experimental-raw-medium output/dakota-raw.img; then
+            sudo journalctl -u systemd-udevd.service -n 80 --no-pager
+            exit 1
+          fi
 
       - name: Boot the read-only medium without networking
         run: |

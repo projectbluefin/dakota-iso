@@ -58,8 +58,10 @@ IMAGE_ID="$(podman image inspect --format '{{.Id}}' -- "${IMAGE}")"
 podman push --format oci -- "${IMAGE_ID}" "oci:${WORK}/source"
 
 echo ">>> Installing container image to raw disk via bootc..."
+# Keep systemd-udevd from probing the loop device while sfdisk writes its GPT.
 podman run --rm --privileged --pull=never --pid=host --ipc=host \
     --security-opt label=type:unconfined_t --env BOOTC_DIRECT_IO \
+    --env LOCK_BLOCK_DEVICE=1 \
     -v /dev:/dev -v /var/lib/containers:/var/lib/containers \
     -v "${WORK}:/out" \
     "${IMAGE_ID}" bootc install to-disk --generic-image \
