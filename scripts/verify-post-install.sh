@@ -38,7 +38,7 @@
 #
 # Per-assertion strictness (STRICT_IDS) is used rather than one global switch,
 # so one never-greening check cannot hold back the others. Adapted from the
-# tunaOS/tunaOS green-criteria design (see projectbluefin/dakota#381).
+# tunaOS/tunaOS green-criteria design (see projectbluefin/dakota-iso#381).
 
 set -uo pipefail
 

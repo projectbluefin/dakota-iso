@@ -24,13 +24,14 @@ Actions GITHUB_TOKEN / GITHUB_REPOSITORY are picked up automatically.
 from __future__ import annotations
 
 import argparse
-import gzip
+import io
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,7 +40,10 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CRITERIA_PATH = REPO_ROOT / ".github" / "post-boot-criteria.yml"
 E2E_WORKFLOWS = ("test-plain-install.yml", "test-luks-install.yml")
-TAP_RE = re.compile(r"^(?P<status>ok|not ok) - (?P<id>\S+)\s*$", re.MULTILINE)
+# Actions logs prefix every line with an ISO timestamp
+# (2026-11-22T07:00:01.1234567Z), so allow an optional leading timestamp
+# before the TAP verdict. A raw ``ok - id`` line (no timestamp) still matches.
+TAP_RE = re.compile(r"^(?:\S+Z )?(?P<status>ok|not ok) - (?P<id>\S+)\s*$", re.MULTILINE)
 
 
 def load_criteria(path: Path = CRITERIA_PATH) -> dict:
@@ -52,29 +56,42 @@ def run_gh(args: list[str], repo: str, *, input_bytes: bytes | None = None) -> s
 
 
 def list_runs(repo: str, *, limit: int = 100) -> list[dict]:
-    proc = run_gh(
-        ["run", "list", "--branch", "main", "--json",
-         "number,createdAt,conclusion,path", "--limit", str(limit)],
-        repo,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"gh run list failed: {proc.stderr.decode(errors='replace')}")
-    runs = json.loads(proc.stdout or "[]")
-    return [r for r in runs if any(r.get("path", "").endswith(w) for w in E2E_WORKFLOWS)]
+    # `gh run list` has no `path` field, so list each E2E workflow separately
+    # with --workflow. Restrict to scheduled, completed runs so the report
+    # matches the "last N scheduled E2E runs" description. databaseId is the
+    # run id the logs endpoint (and fetch_run_log) expects.
+    runs: list[dict] = []
+    for wf in E2E_WORKFLOWS:
+        proc = run_gh(
+            ["run", "list", "--workflow", wf, "--branch", "main",
+             "--event", "schedule", "--status", "completed", "--json",
+             "databaseId,createdAt,conclusion", "--limit", str(limit)],
+            repo,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"gh run list failed: {proc.stderr.decode(errors='replace')}")
+        runs.extend(json.loads(proc.stdout or "[]"))
+    return runs
 
 
-def fetch_run_log(repo: str, run_number: int) -> str | None:
-    """Return the combined run log text, or None if it cannot be fetched."""
-    proc = run_gh([f"runs/{run_number}/logs"], repo)
+def fetch_run_log(repo: str, run_id: int) -> str | None:
+    """Return the combined run log text, or None if it cannot be fetched.
+
+    The REST logs endpoint returns a zip of per-job logs, so open it and join
+    the top-level entries (each job's combined log).
+    """
+    proc = run_gh(["api", f"repos/{repo}/actions/runs/{run_id}/logs"], repo)
     if proc.returncode != 0 or not proc.stdout:
         return None
-    data = proc.stdout
-    if data.startswith(b"\x1f\x8b"):  # gzip
-        try:
-            data = gzip.decompress(data)
-        except gzip.BadGzipFile:
-            return None
-    return data.decode("utf-8", "replace")
+    try:
+        with zipfile.ZipFile(io.BytesIO(proc.stdout)) as zf:
+            return "\n".join(
+                zf.read(name).decode("utf-8", "replace")
+                for name in zf.namelist()
+                if "/" not in name
+            )
+    except zipfile.BadZipFile:
+        return None
 
 
 def parse_tap(log: str | None) -> dict[str, str]:
@@ -88,7 +105,7 @@ def parse_tap(log: str | None) -> dict[str, str]:
 def gather(checks: list[str], runs: list[dict], repo: str) -> dict[str, list[tuple[str, str]]]:
     results: dict[str, list[tuple[str, str]]] = {c: [] for c in checks}
     for run in runs:
-        tap = parse_tap(fetch_run_log(repo, run["number"]))
+        tap = parse_tap(fetch_run_log(repo, run["databaseId"]))
         for cid in checks:
             if cid in tap:
                 results[cid].append((run["createdAt"], tap[cid]))
@@ -202,9 +219,12 @@ def upsert_issue(repo: str, title: str, body: str, dry_run: bool) -> int | None:
         print(body)
         return None
     number = find_existing_issue(repo, title)
-    args = ["issue", "update", str(number), "--repo", repo, "--title", title]
+    # run_gh already prepends --repo, so it must not be passed again here.
     if number is None:
-        args = ["issue", "create", "--repo", repo, "--title", title]
+        args = ["issue", "create", "--title", title]
+    else:
+        # `gh issue edit` is the real command; `gh issue update` does not exist.
+        args = ["issue", "edit", str(number), "--title", title]
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
         fh.write(body)
         body_file = fh.name

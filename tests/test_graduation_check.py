@@ -71,6 +71,18 @@ class TestParseTap(unittest.TestCase):
     def test_only_id_lines_parsed(self):
         self.assertEqual(mod.parse_tap("ok - a\nsome log\n::warning:: b\n"), {"a": "ok"})
 
+    def test_timestamp_prefixed_lines_match(self):
+        # Actions logs prefix each line with an ISO timestamp; the verdict must
+        # still be parsed.
+        log = (
+            "2026-11-22T07:00:01.1234567Z ok - luks-uuid\n"
+            "2026-11-22T07:00:02.6543210Z not ok - uefi-bootcurrent\n"
+        )
+        self.assertEqual(
+            mod.parse_tap(log),
+            {"luks-uuid": "ok", "uefi-bootcurrent": "not ok"},
+        )
+
 
 class TestOfflineRun(unittest.TestCase):
     def run_cli(self, fixture, *extra):

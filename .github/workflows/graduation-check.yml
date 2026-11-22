@@ -11,12 +11,17 @@ on:
   workflow_dispatch: {}
 
 permissions:
+  actions: read
   contents: read
   issues: write
 
 jobs:
   graduation:
     runs-on: ubuntu-latest
+    env:
+      # gh reads GH_TOKEN; grant it explicitly so run listing and log download
+      # are authenticated (and actions: read allows them).
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

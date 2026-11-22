@@ -12,7 +12,7 @@
 #   * its failure rate over that window is <= `maximum_failure_rate`.
 #
 # Per-assertion (not a global switch): one never-greening check cannot hold
-# back the others. See projectbluefin/dakota#381.
+# back the others. See projectbluefin/dakota-iso#381.
 checks:
   - uefi-bootcurrent
   - no-installer-flatpak
