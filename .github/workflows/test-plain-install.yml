@@ -93,6 +93,13 @@ jobs:
         with:
           submodules: false
 
+      # Give the harness a wall-clock deadline 10 minutes before the job's
+      # timeout so a hang exits 75 and the evidence uploads still run.
+      - name: Set the job deadline
+        env:
+          TIMEOUT_MINUTES: "120"  # keep equal to this job's timeout-minutes
+        run: echo "E2E_WALL_CLOCK_DEADLINE=$(( $(date +%s) + (TIMEOUT_MINUTES - 10) * 60 ))" >> "$GITHUB_ENV"
+
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
         with:
@@ -157,12 +164,21 @@ jobs:
         timeout-minutes: 60
         env:
           INSTALLER_CHANNEL: ${{ matrix.installer_channel }}
+          STEP_TIMEOUT_MINUTES: "60"  # keep equal to this step's timeout-minutes
         run: |
           START=$SECONDS
+          # The step timeout is tighter than the job's; take the earlier deadline.
+          STEP_DEADLINE=$(( $(date +%s) + (STEP_TIMEOUT_MINUTES - 10) * 60 ))
+          if (( STEP_DEADLINE < E2E_WALL_CLOCK_DEADLINE )); then
+            export E2E_WALL_CLOCK_DEADLINE=$STEP_DEADLINE
+          fi
           # 4096 MiB: tight overlay tmpfs to expose ENOSPC-class bugs
           # Use the same pinned backend shipped in the live image.
-          just qemu-mem=4096 installer_channel="$INSTALLER_CHANNEL" plain-test-qemu ${{ matrix.variant }}
+          rc=0
+          just qemu-mem=4096 installer_channel="$INSTALLER_CHANNEL" plain-test-qemu ${{ matrix.variant }} || rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
           echo "duration=$((SECONDS - START))" >> "$GITHUB_OUTPUT"
+          exit "$rc"
 
       - name: Capture serial logs and screenshot
         if: always()
@@ -242,6 +258,7 @@ jobs:
             echo "| ISO size     | $(numfmt --to=iec ${{ steps.build.outputs.iso_size }} 2>/dev/null || echo N/A) |"
             echo "| Build time   | ${{ steps.build.outputs.duration }}s |"
             echo "| Plain E2E    | ${{ steps.plain_test.outputs.duration }}s |"
+            echo "| Exit code    | ${{ steps.plain_test.outputs.exit_code || 'N/A' }} ($(source scripts/e2e-exit.sh; e2e_phase_name '${{ steps.plain_test.outputs.exit_code }}')) |"
             echo "| QEMU RAM     | 4096 MiB |"
           } >> "$GITHUB_STEP_SUMMARY"
 

@@ -769,12 +769,32 @@ luks-test-qemu target installer_channel="dev":
     rm -f "$DISK" "$SCRATCH" "{{luks-qemu-monitor-live}}" \
           "{{luks-qemu-monitor-installed}}" "{{luks-qemu-serial-live}}" \
           "{{luks-qemu-serial-installed}}"
+    # Numbered phase exit codes + wall-clock deadline (scripts/e2e-exit.sh).
+    source scripts/e2e-exit.sh
+    e2e_require qemu-system-x86_64 socat sshpass
+    on_deadline() {
+        local m p
+        for m in "{{luks-qemu-monitor-installed}}" "{{luks-qemu-monitor-live}}"; do
+            [[ -S "$m" ]] || continue
+            p=""; [[ -w "$m" ]] || p="sudo"
+            printf 'screendump /tmp/luks-screenshot-deadline.ppm\n' | $p socat - "UNIX-CONNECT:$m" >/dev/null 2>&1 || true
+            break
+        done
+        e2e_exit "$E2E_EXIT_DEADLINE" "wall-clock deadline reached in phase $E2E_PHASE_EXIT ($(e2e_phase_name "$E2E_PHASE_EXIT"))"
+    }
+    trap 'rc=$(e2e_status $?); (( rc == 0 )) || echo "LUKS E2E failed: exit $rc ($(e2e_phase_name "$rc"))" >&2; exit "$rc"' EXIT
+    e2e_deadline_start on_deadline
+    E2E_PHASE_EXIT=11
     just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-boot-qemu-live {{target}}
+    E2E_PHASE_EXIT=12
     just luks-qemu-ssh-port={{luks-qemu-ssh-port}} luks-install-qemu {{target}}
+    E2E_PHASE_EXIT=13
     just luks-qemu-disk="$DISK" luks-scratch-disk="$SCRATCH" luks-qemu-ssh-port-installed={{luks-qemu-ssh-port-installed}} luks-boot-qemu-installed {{target}}
+    E2E_PHASE_EXIT=14
     just luks-qemu-monitor-installed={{luks-qemu-monitor-installed}} \
          luks-qemu-serial-installed={{luks-qemu-serial-installed}} \
          luks-unlock-qemu {{target}}
+    E2E_PHASE_EXIT=15
     just luks-qemu-ssh-port-installed={{luks-qemu-ssh-port-installed}} luks-verify-qemu {{target}}
 
 # Boot the live ISO in QEMU (daemonized) with a blank install disk attached.
@@ -1118,20 +1138,39 @@ plain-test-qemu target:
     rm -f "{{plain-qemu-disk}}" "{{plain-scratch-disk}}" \
            "{{plain-qemu-monitor-live}}" "{{plain-qemu-monitor-installed}}" \
            "{{plain-qemu-serial-live}}" "{{plain-qemu-serial-installed}}"
+    # Numbered phase exit codes + wall-clock deadline (scripts/e2e-exit.sh).
+    source scripts/e2e-exit.sh
+    e2e_require qemu-system-x86_64 socat sshpass
+    on_deadline() {
+        local m p
+        for m in "{{plain-qemu-monitor-installed}}" "{{plain-qemu-monitor-live}}"; do
+            [[ -S "$m" ]] || continue
+            p=""; [[ -w "$m" ]] || p="sudo"
+            printf 'screendump /tmp/plain-screenshot-final.ppm\n' | $p socat - "UNIX-CONNECT:$m" >/dev/null 2>&1 || true
+            break
+        done
+        e2e_exit "$E2E_EXIT_DEADLINE" "wall-clock deadline reached in phase $E2E_PHASE_EXIT ($(e2e_phase_name "$E2E_PHASE_EXIT"))"
+    }
+    trap 'rc=$(e2e_status $?); (( rc == 0 )) || echo "Plain E2E failed: exit $rc ($(e2e_phase_name "$rc"))" >&2; exit "$rc"' EXIT
+    e2e_deadline_start on_deadline
+    E2E_PHASE_EXIT=11
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-live={{plain-qemu-monitor-live}} \
          plain-qemu-serial-live={{plain-qemu-serial-live}} \
          plain-qemu-ssh-port={{plain-qemu-ssh-port}} \
          plain-boot-qemu-live {{target}}
+    E2E_PHASE_EXIT=12
     just output_dir={{output_dir}} plain-qemu-ssh-port={{plain-qemu-ssh-port}} \
          plain-qemu-monitor-live={{plain-qemu-monitor-live}} \
          plain-qemu-disk={{plain-qemu-disk}} \
          plain-install-qemu {{target}}
+    E2E_PHASE_EXIT=13
     just output_dir={{output_dir}} qemu-mem={{qemu-mem}} plain-qemu-disk={{plain-qemu-disk}} \
          plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
          plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
          plain-boot-qemu-installed {{target}}
+    E2E_PHASE_EXIT=15
     just output_dir={{output_dir}} plain-qemu-monitor-installed={{plain-qemu-monitor-installed}} \
          plain-qemu-serial-installed={{plain-qemu-serial-installed}} \
          plain-qemu-ssh-port-installed={{plain-qemu-ssh-port-installed}} \
