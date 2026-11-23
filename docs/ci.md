@@ -366,6 +366,34 @@ This workflow builds a debug Dakota ISO and runs the full plain-install QEMU pat
 (`just ... plain-test-qemu dakota`) to catch unencrypted installer regressions,
 including the tight-memory ENOSPC class.
 
+### E2E exit codes and wall-clock deadline (2026-11-22)
+
+Before this, a hung LUKS or plain lane (Plymouth, a stuck SSH) was killed by
+GitHub at `timeout-minutes`, which cancels the `if: always()` uploads, so the
+serial logs and screenshots were lost on exactly the runs that needed them,
+and every failure was a bare `exit 1`.
+
+`plain-test-qemu` and `luks-test-qemu` now source `scripts/e2e-exit.sh`
+(ported from projectbluefin/utah `iso/scripts/e2e-exit.sh`):
+
+| Exit | Meaning |
+|---|---|
+| 11 | live ISO boot |
+| 12 | install (fisherman) |
+| 13 | installed-disk boot |
+| 14 | LUKS unlock (LUKS lane only) |
+| 15 | post-install verification |
+| 75 | wall-clock deadline reached; screenshot taken, evidence kept |
+| 77 | host dependency missing (`qemu-system-x86_64`, `socat`, `sshpass`) |
+
+Each workflow's "Set the job deadline" step exports `E2E_WALL_CLOCK_DEADLINE`
+as job start + `TIMEOUT_MINUTES` − 10 min. **Keep `TIMEOUT_MINUTES` equal to
+the job's `timeout-minutes`** (and the plain step's `STEP_TIMEOUT_MINUTES`
+equal to its step `timeout-minutes`); `tests/test_e2e_exit.py` enforces it.
+When the deadline passes, a watcher signals the harness, which screendumps the
+running VM and exits 75; if a child is still blocking after 30 s the watcher
+terminates it. The job summary maps the exit code to the phase name.
+
 ## scheduled-gui-installer.yml
 
 **Matrix:** `dakota × installer_channel: [dev, stable]` (fail-fast: false)

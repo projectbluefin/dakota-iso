@@ -78,6 +78,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Give the harness a wall-clock deadline 10 minutes before the job's
+      # timeout so a hang exits 75 and the evidence uploads still run.
+      - name: Set the job deadline
+        env:
+          TIMEOUT_MINUTES: "120"  # keep equal to this job's timeout-minutes
+        run: echo "E2E_WALL_CLOCK_DEADLINE=$(( $(date +%s) + (TIMEOUT_MINUTES - 10) * 60 ))" >> "$GITHUB_ENV"
+
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
         with:
@@ -138,8 +145,11 @@ jobs:
         run: |
           START=$(date +%s)
           # Use the same pinned backend shipped in the live image.
-          just luks-test-qemu ${{ matrix.variant }} ${{ matrix.installer_channel }}
+          rc=0
+          just luks-test-qemu ${{ matrix.variant }} ${{ matrix.installer_channel }} || rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
           echo "duration=$(( $(date +%s) - START ))" >> "$GITHUB_OUTPUT"
+          exit "$rc"
 
       - name: Convert and publish screenshots
         if: always()
@@ -241,12 +251,13 @@ jobs:
             echo "| ISO size | $(numfmt --to=iec ${{ steps.build.outputs.iso_size }} 2>/dev/null || echo N/A) |"
             echo "| Build time | ${{ steps.build.outputs.duration }}s |"
             echo "| LUKS test time | ${{ steps.luks_test.outputs.duration }}s |"
+            echo "| Exit code | ${{ steps.luks_test.outputs.exit_code || 'N/A' }} ($(source scripts/e2e-exit.sh; e2e_phase_name '${{ steps.luks_test.outputs.exit_code }}')) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload serial logs
         if: always()
         run: |
-          sudo chmod a+r /tmp/dakota-qemu-*.log 2>/dev/null || true
+          sudo chmod a+r /tmp/dakota-qemu-*.log /tmp/luks-screenshot-deadline.ppm 2>/dev/null || true
 
       - name: Upload serial logs artifact
         if: always()
@@ -256,6 +267,7 @@ jobs:
           path: |
             /tmp/dakota-qemu-live-serial.log
             /tmp/dakota-qemu-installed-serial.log
+            /tmp/luks-screenshot-deadline.ppm
           if-no-files-found: warn
           retention-days: 14
 
