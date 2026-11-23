@@ -183,5 +183,54 @@ class TestLiveGhCalls(unittest.TestCase):
         self.assertNotIn("all", cmd)
 
 
+class TestIssueDedupe(unittest.TestCase):
+    """The weekly run must refresh the open recommendation issue, not open a
+    new one every Monday."""
+
+    TITLE = "Post-boot assertion ready to graduate to strict"
+
+    def _stub(self, responses):
+        calls = []
+
+        def fake_run(cmd, *a, **k):
+            calls.append(cmd)
+            out = responses.pop(0) if responses else b""
+            return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr=b"")
+
+        orig = subprocess.run
+        subprocess.run = fake_run
+        self.addCleanup(setattr, subprocess, "run", orig)
+        return calls
+
+    def test_search_uses_lowercase_title_qualifier(self):
+        # GitHub only recognises the lowercase `in:title` qualifier; with
+        # `In:title:` the search returns no results even for an open issue
+        # whose title matches exactly, so the lookup never finds it.
+        calls = self._stub([b"[]"])
+        mod.find_existing_issue("projectbluefin/dakota-iso", self.TITLE)
+        search = calls[0][calls[0].index("--search") + 1]
+        self.assertTrue(search.startswith("in:title:"), search)
+
+    def test_finds_open_issue_with_exact_title(self):
+        listing = json.dumps([
+            {"number": 7, "title": self.TITLE + " (old)"},
+            {"number": 9, "title": self.TITLE},
+        ]).encode()
+        self._stub([listing])
+        self.assertEqual(mod.find_existing_issue("o/r", self.TITLE), 9)
+
+    def test_upsert_edits_the_open_issue_instead_of_creating(self):
+        listing = json.dumps([{"number": 9, "title": self.TITLE}]).encode()
+        calls = self._stub([listing, b""])
+        self.assertEqual(mod.upsert_issue("o/r", self.TITLE, "body", False), 9)
+        self.assertEqual(calls[1][3:6], ["issue", "edit", "9"])
+        self.assertNotIn("create", calls[1])
+
+    def test_upsert_creates_when_none_is_open(self):
+        calls = self._stub([b"[]", b""])
+        self.assertIsNone(mod.upsert_issue("o/r", self.TITLE, "body", False))
+        self.assertEqual(calls[1][3:5], ["issue", "create"])
+
+
 if __name__ == "__main__":
     unittest.main()
