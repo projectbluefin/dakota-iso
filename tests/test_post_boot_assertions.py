@@ -17,8 +17,6 @@ from pathlib import Path
 REPO = Path(__file__).parent.parent
 VERIFY_SCRIPT = REPO / "scripts" / "verify-post-install.sh"
 FISHERMAN_INSTALL = REPO / "scripts" / "fisherman-install.sh"
-PLAIN_INSTALL_QEMU = REPO / "scripts" / "plain-install-qemu.sh"
-LUKS_INSTALL_QEMU = REPO / "scripts" / "luks-install-qemu.sh"
 JUSTFILE = REPO / "justfile"
 
 
@@ -202,15 +200,6 @@ class TestFishermanInstallDebugSSH(unittest.TestCase):
             self.assertNotIn(
                 marker, before_guard,
                 f"{marker!r} appears (in code) before the ENABLE_DEBUG_SSH guard — must not leak unconditionally",
-            )
-
-    def test_install_qemu_scripts_pass_enable_debug_ssh_flag(self):
-        for path in (PLAIN_INSTALL_QEMU, LUKS_INSTALL_QEMU):
-            text = path.read_text()
-            self.assertIn(
-                "--enable-debug-ssh", text,
-                f"{path.name} must invoke fisherman-install.sh with --enable-debug-ssh "
-                "so post-boot SSH assertions (dakota#651) can reach the installed system",
             )
 
 

@@ -32,14 +32,29 @@ luks-test-qemu dakota
 
 ### Post-boot assertions (dakota#651)
 
-`luks-install-qemu`/`plain-install-qemu` call `fisherman-install.sh --enable-debug-ssh`,
-which (mirroring `live/src/configure-live.sh`'s `DEBUG=1` convention) patches the
-*installed* deployment directly on disk to set `root:root` and force-enable
-`sshd.service`, purely for E2E use — this is never part of a shipped image.
+The installed disk is left exactly as the installer wrote it: no password, no
+sshd config. `luks-boot-qemu-installed`/`plain-boot-qemu-installed` instead
+source `scripts/guest-vsock.sh`, which generates a fresh ed25519 key for the
+boot and adds to QEMU:
+
+- a `vhost-vsock-pci` device, guest CID = installed SSH port + 1000
+  (`3224` LUKS, `3225` plain);
+- the systemd credential `ssh.ephemeral-authorized_keys-all` (the public key),
+  which the sshd units `systemd-ssh-generator` creates for `vsock::22` accept
+  for any user;
+- the credential `systemd.unit-dropin.sshd-vsock.socket`, a drop-in running
+  `ssh-keygen -A` before that socket listens. The image only creates host keys
+  from `sshd.service`, which it does not enable, so without it every
+  connection ends with `sshd: no hostkeys available -- exiting`.
+
+Both credentials travel as SMBIOS type 11 strings, so nothing is written to the
+disk. The key and CID are kept in `*-qemu-vsock-dir`
+(`/tmp/dakota-e2e-vsock-<installed port>`).
 
 After the installed system boots (and, for LUKS, is unlocked),
-`scripts/verify-post-install.sh <ssh_port> <encryption_type>` SSHes in as
-`root` and checks:
+`scripts/verify-post-install.sh <vsock_state_dir> <encryption_type>` connects
+as `root` over AF_VSOCK (dialer: `/usr/lib/systemd/systemd-ssh-proxy`, else a
+socat built with VSOCK support) and checks:
 
 1. `efibootmgr -v` shows `BootCurrent` pointing at an installer-written NVRAM
    entry — an `HD()` device path with a `\EFI\<vendor>\*.efi` loader. OVMF's
@@ -64,8 +79,17 @@ the EFI shell and the unlock automation types the passphrase into the shell —
 the LUKS E2E failure of 2026-11-09 (same #267 mode the plain recipe already
 avoided). Set `LUKS_CARRY_LIVE_NVRAM=1` (LUKS) or `PLAIN_CARRY_LIVE_NVRAM=1`
 (plain) to opt back into the carry-over when debugging installer-written
-Boot#### entries. The installed VM's SSH port is forwarded on `127.0.0.1`
-only.
+Boot#### entries.
+
+The host needs `/dev/vhost-vsock` writable by whoever runs QEMU
+(`sudo modprobe vhost_vsock`; the E2E workflows add a udev rule). Recipes fail
+before booting when it is missing.
+
+**Local debugging only:** `E2E_DEBUG_SSH=1 just plain-test-qemu dakota` (or
+`luks-test-qemu`) also runs `fisherman-install.sh --enable-debug-ssh`, which
+patches `root:root` and an enabled `sshd.service` onto the installed
+deployment, so you can `ssh -p 2225 root@127.0.0.1` (2224 for LUKS; the port is
+forwarded on `127.0.0.1` only). CI never sets it.
 
 The same script backs `plain-verify-qemu` (encryption type `none`, skips
 assertion 3) and the new `luks-verify-qemu` recipe (encryption type
@@ -79,7 +103,8 @@ assertion 3) and the new `luks-verify-qemu` recipe (encryption type
 |---|---|
 | `luks-qemu-disk` | `/var/tmp/dakota-luks-install.qcow2` |
 | `luks-qemu-ssh-port` | `2222` |
-| `luks-qemu-ssh-port-installed` | `2224` (forwarded post-reboot for post-boot assertions) |
+| `luks-qemu-ssh-port-installed` | `2224` (TCP forward, used only with `E2E_DEBUG_SSH=1`; vsock CID = port + 1000) |
+| `luks-qemu-vsock-dir` | `/tmp/dakota-e2e-vsock-2224` (per-run key + CID) |
 | `luks-qemu-monitor-live` | `/tmp/dakota-qemu-live.sock` |
 | `luks-qemu-monitor-installed` | `/tmp/dakota-qemu-installed.sock` |
 | `luks-qemu-serial-live` | `/tmp/dakota-qemu-live-serial.log` |

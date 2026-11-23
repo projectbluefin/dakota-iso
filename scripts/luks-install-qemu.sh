@@ -50,7 +50,13 @@ printf 'live\n' | $SSH 'sudo -S -p "" bash -c "
 
 $SCP "${RECIPE_TMP}" liveuser@127.0.0.1:/tmp/luks-recipe.json
 $SCP "scripts/fisherman-install.sh" liveuser@127.0.0.1:/tmp/fisherman-install.sh
-if ! $SSH 'sudo bash /tmp/fisherman-install.sh /tmp/luks-recipe.json --enable-debug-ssh'; then
+# Post-boot assertions reach the installed system over AF_VSOCK with a per-run
+# key (scripts/guest-vsock.sh), so the installed disk is left as users get it.
+# E2E_DEBUG_SSH=1 also patches a root password and sshd onto it, for local
+# debugging only (ssh root@127.0.0.1 -p <installed port>, password root).
+DEBUG_SSH_FLAG=""
+[[ "${E2E_DEBUG_SSH:-0}" == "1" ]] && DEBUG_SSH_FLAG=" --enable-debug-ssh"
+if ! $SSH "sudo bash /tmp/fisherman-install.sh /tmp/luks-recipe.json${DEBUG_SSH_FLAG}"; then
     echo "=== INSTALL FAILURE DIAGNOSTICS ==="
     $SSH 'sudo dmesg | tail -n 100' || true
     $SSH 'sudo journalctl -n 100 --no-pager' || true

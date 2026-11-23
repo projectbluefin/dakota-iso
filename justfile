@@ -720,6 +720,10 @@ luks-qemu-ssh-port := "2222"
 # SSH port forwarded to the *installed* system after reboot, for post-boot
 # assertions (see verify-post-install.sh / projectbluefin/dakota#651).
 luks-qemu-ssh-port-installed := "2224"
+# Per-run AF_VSOCK access to the installed system for those assertions
+# (scripts/guest-vsock.sh, #380): the key and guest CID live in this directory,
+# and the CID is the installed port + 1000, so each lane gets its own.
+luks-qemu-vsock-dir := "/tmp/dakota-e2e-vsock-" + luks-qemu-ssh-port-installed
 
 # ── Plain (no-encryption) install test paths ─────────────────────────────────
 # Uses port 2223 and separate socket/disk paths so both tests can run concurrently.
@@ -735,6 +739,7 @@ plain-qemu-ssh-port := "2223"
 # SSH port forwarded to the *installed* system after reboot, for post-boot
 # assertions (see verify-post-install.sh / projectbluefin/dakota#651).
 plain-qemu-ssh-port-installed := "2225"
+plain-qemu-vsock-dir := "/tmp/dakota-e2e-vsock-" + plain-qemu-ssh-port-installed
 
 # Full end-to-end test: build the ISO then run the LUKS install + boot test.
 # This is the primary integration test — mirrors .github/workflows/test-luks-install.yml.
@@ -1011,6 +1016,10 @@ luks-boot-qemu-installed target:
     if [[ "$QEMU_ACCEL" =~ tcg ]]; then
         CPU_FLAG="-cpu qemu64"
     fi
+    # Per-run key handed to the guest as SMBIOS credentials, for the post-boot
+    # assertions over AF_VSOCK; nothing is written to the installed disk (#380).
+    source scripts/guest-vsock.sh
+    guest_vsock_prepare "{{luks-qemu-vsock-dir}}" "$(( {{luks-qemu-ssh-port-installed}} + 1000 ))" "$QEMU_PREFIX"
     $QEMU_PREFIX "$QEMU" \
         -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
         -drive "if=pflash,format=raw,readonly=on,file=${OVMF_CODE}" \
@@ -1019,6 +1028,7 @@ luks-boot-qemu-installed target:
         -device virtio-blk-pci,drive=disk \
         -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:{{luks-qemu-ssh-port-installed}}-:22" \
         -device virtio-net-pci,netdev=net0 \
+        "${GUEST_VSOCK_QEMU_ARGS[@]}" \
         -monitor "unix:{{luks-qemu-monitor-installed}},server,nowait" \
         -serial "file:{{luks-qemu-serial-installed}}" \
         -display none \
@@ -1056,12 +1066,13 @@ luks-unlock-qemu target:
 luks-verify-qemu target:
     #!/usr/bin/bash
     set -euo pipefail
-    # Post-boot assertions (projectbluefin/dakota#651). Each soft assertion is
-    # observability-only unless its id is in STRICT_IDS (handled inside
-    # verify-post-install.sh); the weekly graduation check only recommends
-    # promoting checks to STRICT_IDS once they pass a green bar — a human
-    # enforces. SSH unreachable is always blocking (rc 2).
-    bash "scripts/verify-post-install.sh" "{{luks-qemu-ssh-port-installed}}" "luks-passphrase"
+    # Post-boot assertions (projectbluefin/dakota#651) over AF_VSOCK. Each
+    # soft assertion is observability-only unless its id is in STRICT_IDS
+    # (handled inside verify-post-install.sh); the weekly graduation check only
+    # recommends promoting checks to STRICT_IDS once they pass a green bar — a
+    # human enforces. An unreachable installed system always fails (rc 2), as
+    # does missing btrfs compression (rc 1).
+    bash "scripts/verify-post-install.sh" "{{luks-qemu-vsock-dir}}" "luks-passphrase"
 
 # Run Python unit tests.
 # Note: pytest passing means source-file invariants and mocked logic are OK.
@@ -1434,6 +1445,10 @@ plain-boot-qemu-installed target:
     fi
     CPU_FLAG="-cpu host"
     [[ "$QEMU_ACCEL" =~ tcg ]] && CPU_FLAG="-cpu qemu64"
+    # Per-run key handed to the guest as SMBIOS credentials, for the post-boot
+    # assertions over AF_VSOCK; nothing is written to the installed disk (#380).
+    source scripts/guest-vsock.sh
+    guest_vsock_prepare "{{plain-qemu-vsock-dir}}" "$(( {{plain-qemu-ssh-port-installed}} + 1000 ))" "$QEMU_PREFIX"
     echo "Booting installed disk: {{plain-qemu-disk}} (qemu-mem={{qemu-mem}} MiB)"
     $QEMU_PREFIX "$QEMU" \
         -machine q35 $CPU_FLAG -m {{qemu-mem}} -smp {{qemu-smp}} $QEMU_ACCEL \
@@ -1443,6 +1458,7 @@ plain-boot-qemu-installed target:
         -device virtio-blk-pci,drive=disk \
         -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:{{plain-qemu-ssh-port-installed}}-:22" \
         -device virtio-net-pci,netdev=net0 \
+        "${GUEST_VSOCK_QEMU_ARGS[@]}" \
         -monitor "unix:{{plain-qemu-monitor-installed}},server,nowait" \
         -serial "file:{{plain-qemu-serial-installed}}" \
         -display none \
@@ -1478,14 +1494,15 @@ plain-verify-qemu target:
             echo "screendump $SCREENSHOT" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
             bash "live/src/show-screenshot.sh" "$SCREENSHOT" "Installed system" 2>/dev/null || true
             # Post-boot assertions (projectbluefin/dakota#651): UEFI entry +
-            # Flatpak exclusion, over SSH into the now-booted installed system.
-            # Each soft assertion is observability-only unless its id is in
-            # STRICT_IDS (handled inside verify-post-install.sh); the weekly
-            # graduation check only recommends promoting checks to STRICT_IDS
-            # on a green bar — a human enforces. SSH unreachable is always
-            # blocking (rc 2).
+            # Flatpak exclusion, over AF_VSOCK into the now-booted installed
+            # system. Each soft assertion is observability-only unless its id
+            # is in STRICT_IDS (handled inside verify-post-install.sh); the
+            # weekly graduation check only recommends promoting checks to
+            # STRICT_IDS on a green bar — a human enforces. An unreachable
+            # installed system always fails (rc 2), as does missing btrfs
+            # compression (rc 1).
             POST_BOOT_RC=0
-            bash "scripts/verify-post-install.sh" "{{plain-qemu-ssh-port-installed}}" "none" || POST_BOOT_RC=$?
+            bash "scripts/verify-post-install.sh" "{{plain-qemu-vsock-dir}}" "none" || POST_BOOT_RC=$?
             echo "quit" | $SOCAT_PREFIX socat - "UNIX-CONNECT:$MONITOR" 2>/dev/null || true
             exit "$POST_BOOT_RC"
         fi
