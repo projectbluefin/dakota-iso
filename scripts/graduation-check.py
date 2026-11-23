@@ -217,7 +217,10 @@ This recommendation is automated by scripts/graduation-check.py
 def find_existing_issue(repo: str, title: str) -> int | None:
     proc = run_gh(
         ["issue", "list", "--state", "open", "--json", "number,title",
-         "--search", f"In:title:{title!r}"],
+         # GitHub search qualifiers are lowercase: `In:title:` is read as
+         # plain text and matches nothing, so the weekly run would open a
+         # duplicate issue instead of refreshing the open one.
+         "--search", f"in:title:{title!r}"],
         repo,
     )
     if proc.returncode != 0:
