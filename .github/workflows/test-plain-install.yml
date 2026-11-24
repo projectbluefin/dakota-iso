@@ -62,7 +62,7 @@ jobs:
       - uses: taiki-e/install-action@25f51f6b1bf4e18876107cece836f4f77ac17c8c # v2.90.7 (just)
         with:
           tool: just
-      - run: pip install pytest PyYAML jsonschema
+      - run: pip install -r .github/requirements-ci.txt
       - run: just test
 
   plain-e2e:
