@@ -25,7 +25,7 @@ jobs:
         run: sudo apt-get install -y xorriso dosfstools mtools squashfs-tools
 
       - name: Install Python dependencies
-        run: pip install pytest PyYAML jsonschema
+        run: pip install -r .github/requirements-ci.txt
 
       - name: Run tests
         run: pytest tests/ -v

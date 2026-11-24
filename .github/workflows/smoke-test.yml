@@ -27,7 +27,7 @@ jobs:
           tool: just
 
       - name: Install test dependencies
-        run: pip install pytest PyYAML jsonschema
+        run: pip install -r .github/requirements-ci.txt
 
       - name: Validate scripts and recipes
         run: |
