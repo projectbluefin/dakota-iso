@@ -7,8 +7,9 @@ deployment branch rule allows `main` only. Without one, a `workflow_dispatch`
 of a side branch runs that branch's copy of the workflow with the
 repository-scoped secret, and a collaborator with write access can read it.
 
-The credential may be read by a job or by a single step of a long build; both
-count, and both are checked here.
+`environment` is a job-level key — GitHub Actions has no step-level form — so
+the environment sits on the job that reads the credential, and a step-level
+`environment:` is invalid workflow syntax that GitHub rejects outright.
 """
 
 from pathlib import Path
@@ -67,9 +68,10 @@ def _readers(workflow):
     """Every job or step that reads a protected credential.
 
     Each entry says which secrets it reads and which deployment environment
-    gates it: the step's own environment, or the job's when the step declares
-    none. A reader with no environment is a credential a side-branch dispatch
-    can still reach.
+    gates it. The gate is the job's environment: GitHub Actions has no
+    step-level ``environment`` key, so a step inherits the environment of the
+    job it runs in and nothing else. A reader in a job with no environment is
+    a credential a side-branch dispatch can still reach.
     """
     readers = []
     for job_name, job in (workflow.get("jobs") or {}).items():
@@ -84,7 +86,7 @@ def _readers(workflow):
                 "location": f"{job_name} / {step.get('name') or index}",
                 "job": job_name,
                 "secrets": secrets,
-                "environment": step.get("environment") or job_environment,
+                "environment": job_environment,
             })
         # A credential read by the job itself (a job-level `env:` block, a
         # matrix expansion) is a reader too.
@@ -130,9 +132,7 @@ def test_environment_names_match_the_repository_settings(workflow_name):
 
     for job_name, environment_name in expected.items():
         job = workflow["jobs"][job_name]
-        declared = job.get("environment") or next(
-            (step.get("environment") for step in job.get("steps") or []
-             if step.get("environment")), None)
+        declared = job.get("environment")
         assert declared == environment_name, (
             f"job {job_name!r} in {workflow_name} must use the "
             f"{environment_name!r} environment, got {declared!r}"
@@ -141,13 +141,12 @@ def test_environment_names_match_the_repository_settings(workflow_name):
 
 @pytest.mark.parametrize("workflow_name", sorted(EXPECTED_ENVIRONMENTS))
 def test_the_environment_sits_on_the_reader(workflow_name):
-    # The environment must sit on the job or step that reads the credential,
-    # not on a neighbour that reads nothing: an environment on a neighbour
-    # gates the wrong code.
+    # The environment must sit on the job that reads the credential, not on a
+    # neighbour that reads nothing: an environment on a neighbour gates the
+    # wrong code.
     workflow = _load(workflow_name)
     readers = _readers(workflow)
     reading_jobs = {reader["job"] for reader in readers}
-    reading_locations = {reader["location"] for reader in readers}
 
     for job_name, job in workflow["jobs"].items():
         if job.get("environment"):
@@ -156,13 +155,23 @@ def test_the_environment_sits_on_the_reader(workflow_name):
                 f"reads no protected credential; the environment must sit on the "
                 f"job that reads it"
             )
-        for step in job.get("steps") or []:
-            if step.get("environment"):
-                location = f"{job_name} / {step.get('name')}"
-                assert location in reading_locations, (
-                    f"step {step.get('name')!r} in {workflow_name} declares an "
-                    f"environment but reads no protected credential; the "
-                    f"environment must sit on the step that reads it"
+
+
+def test_no_workflow_declares_a_step_level_environment():
+    # GitHub Actions defines `environment` only under `jobs.<job_id>`. A
+    # step-level key is not a narrower gate — it is invalid workflow syntax,
+    # and GitHub rejects the whole workflow file ("Unexpected value
+    # 'environment'"). Both ISO publish workflows carried it on their upload
+    # step once and stopped running altogether (#407).
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text())
+        for job_name, job in (workflow.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                assert "environment" not in step, (
+                    f"step {step.get('name')!r} in job {job_name!r} of "
+                    f"{path.name} declares a step-level environment:, which "
+                    f"GitHub Actions rejects as invalid workflow syntax; put "
+                    f"the environment on the job"
                 )
 
 

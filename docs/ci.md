@@ -53,8 +53,8 @@ environment:
 |---|---|---|---|
 | `r2-download-stats.yml` | `count` job | `r2-observability` | `CF_OBSERVABILITY_TOKEN` |
 | `promote-release.yml` | `promote` job | `r2-production` | `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_R2_ENDPOINT` |
-| `build-iso.yml` | `Upload ISO to Cloudflare R2` step | `r2-production` | the same three |
-| `build-iso-utah.yml` | `Upload ISO to Cloudflare R2` step | `r2-production` | the same three |
+| `build-iso.yml` | `build-and-publish` job | `r2-production` | the same three |
+| `build-iso-utah.yml` | `build-and-publish` job | `r2-production` | the same three |
 
 The reason is the dispatch model. A `workflow_dispatch` needs the workflow file to
 exist on the default branch, but the run then executes the copy of the workflow on
@@ -62,11 +62,20 @@ the branch you picked. A collaborator with write access could put altered workfl
 code on a side branch, dispatch it, and read credentials that live at repository
 scope. With the credentials at environment scope and the environment's deployment
 branch rule set to `main` only, that dispatch gets no credentials at all. The two
-publish lanes carry the environment on the upload step, because the ISO build and
-its E2E gates read no credential.
+publish lanes carry the environment on their `build-and-publish` job, because
+`environment:` is a job-level key: GitHub Actions has no step-level form. The
+cost of that is that a dispatch from any other branch is refused the
+environment and the whole job does not run — not just the upload step.
 
-Two rules for anyone changing these workflows:
+Three rules for anyone changing these workflows:
 
+- **`environment:` is job-level only.** GitHub Actions defines it under
+  `jobs.<job_id>`, never under a step. A step-level `environment:` is not a
+  narrower gate, it is invalid workflow syntax, and GitHub rejects the whole
+  workflow file ("Unexpected value 'environment'") — both ISO publish
+  workflows stopped running that way (#407). Put the environment on the job
+  that reads the credential; `tests/test_workflow_protected_environments.py`
+  fails on a step-level key in any workflow.
 - **A new job or step that reads a credential needs an environment that gates it.**
   `tests/test_workflow_protected_environments.py` fails when a reader in any of
   these files reads a protected secret without one, and when a workflow outside

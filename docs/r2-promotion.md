@@ -195,13 +195,17 @@ rule allows `main` only.
 | Environment | Reader | Secret | Deployment branch rule |
 |---|---|---|---|
 | `r2-production` | `promote` job in `promote-release.yml` | `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_R2_ENDPOINT` | `main` only |
-| `r2-production` | `Upload ISO to Cloudflare R2` step in `build-iso.yml` (nightly Dakota publish) | the same three | `main` only |
-| `r2-production` | `Upload ISO to Cloudflare R2` step in `build-iso-utah.yml` (monthly Utah publish) | the same three | `main` only |
+| `r2-production` | `build-and-publish` job in `build-iso.yml` (nightly Dakota publish) | the same three | `main` only |
+| `r2-production` | `build-and-publish` job in `build-iso-utah.yml` (monthly Utah publish) | the same three | `main` only |
 | `r2-observability` | `count` job in `r2-download-stats.yml` | `CF_OBSERVABILITY_TOKEN` | `main` only |
 
-The two publish lanes carry the environment on the upload step rather than on
-the job: the ISO build and its E2E gates read no credential, and only the
-upload does.
+The two publish lanes carry the environment on their `build-and-publish`
+job. `environment:` is a job-level key — GitHub Actions has no step-level
+form, and a step-level key is rejected as invalid workflow syntax, which
+stopped both ISO publish workflows from running at all (#407). The
+environment therefore gates the whole job: a dispatch from any other branch
+is refused the environment and the job does not start, rather than starting
+and skipping only the upload.
 
 **Why an environment:** a `workflow_dispatch` needs the workflow file to exist on
 the default branch, but the run executes the copy of the workflow on the branch
@@ -274,6 +278,11 @@ A new job or step that reads one of these credentials needs an environment that
 gates it. `tests/test_workflow_protected_environments.py` fails when a reader
 in any of these workflows has none, and when a workflow outside that list reads
 a protected credential at all.
+
+Put that environment on the **job**, never on the step. GitHub Actions defines
+`environment:` only under `jobs.<job_id>`; a step-level key is invalid
+workflow syntax and GitHub rejects the whole file, so the upload step of both
+ISO publish workflows once took the lane down with it (#407).
 
 ## Rotating R2 credentials
 
@@ -428,11 +437,44 @@ only. A dispatch from any other branch then gets no credentials.
 What an agent or maintainer should do differently:
 
 - A job that reads a credential gets an `environment:`. `tests/test_workflow_protected_environments.py`
-  enforces this for both workflows.
+  enforces this for all four workflows that read one.
 - The environment must exist in the repository settings **before** the workflow
   that names it is merged. GitHub creates a missing environment on first use with
   no protection rules, so the order is settings first, merge second.
 - A scheduled job cannot wait for a human approval, so an environment that a
-  scheduled workflow uses must not require reviewers. `r2-observability` carries
-  the daily stats run and therefore stays reviewer-free; `r2-production` may
-  require a reviewer because it is dispatched by a person.
+  scheduled workflow uses must not require reviewers. Both environments stay
+  reviewer-free: `r2-observability` carries the daily stats run, and
+  `r2-production` now carries the nightly and monthly publish lanes as well,
+  which run on a schedule too. A required reviewer on `r2-production` would
+  hang the nightly publish job forever, so a reviewer for the manual promotion
+  tool needs an environment of its own.
+
+### `environment:` is job-level only — a step-level key takes the whole lane down (2026-11-25)
+
+**What failed:** the protected-environment change (#404) put
+`environment: r2-production` on the `Upload ISO to Cloudflare R2` **step** of
+`build-iso.yml` and `build-iso-utah.yml`, to gate only the step that reads the
+R2 credentials. GitHub Actions has no step-level `environment:` key — it exists
+only under `jobs.<job_id>` — so GitHub rejected both workflow files outright
+("Unexpected value 'environment'"). Both ISO publish lanes stopped running, and
+the nightly upload of the live ISO stopped with them (#407).
+
+**Why:** a narrower gate looked like a better design, but the Actions workflow
+schema has no place to put it. The workflow file is validated as a whole, so an
+unknown key anywhere in it takes the entire workflow down, not just the step.
+
+**Fix:** put `environment: r2-production` on the `build-and-publish` job of both
+publish workflows, and leave the upload step with no `environment:` of its own.
+The job is then the smallest unit that can be gated, and a dispatch from a
+branch the environment does not allow never starts the job.
+
+What an agent or maintainer should do differently:
+
+- Put the environment on the job, never on a step.
+- `tests/test_workflow_protected_environments.py` now asserts that no step in
+  any workflow carries an `environment:` key, and that the job that declares one
+  is the job that reads the credential.
+- A workflow that reads a protected secret but declares no environment fails
+  the same test — deleting the `environment:` line is not a way out.
+- `actionlint` (via `pre-commit run --all-files`) catches the step-level key as
+  a workflow syntax error; run it before committing a workflow change.
