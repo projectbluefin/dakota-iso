@@ -1,0 +1,267 @@
+name: Utah image installer (experimental)
+
+# Builds Utah's gnome-setup medium (image-installer/utah/, moved here from
+# projectbluefin/utah) on the current utah:testing digest and drives a whole
+# install through its window: live boot -> GUI install into LUKS2 -> unlock ->
+# gnome-initial-setup -> desktop -> bootc switch -> bootc rollback, with a
+# screenshot of every stage. It is NOT a gate, publishes nothing and moves no
+# tag. Screenshots and logs are uploaded; the medium and disks never are (CI
+# media carry test credentials). projectbluefin/utah still runs its nightly and
+# publishes the medium until the cutover (image-installer/utah/README.md).
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: Exact image to install (repo@sha256:...); default each flavor's current :testing digest
+        type: string
+        default: ''
+      install:
+        description: gui drives the installer's window; script runs the same install over SSH
+        type: choice
+        options: [gui, script]
+        default: gui
+      tpm:
+        description: Give the VMs a software TPM 2.0 (off = no TPM; gnome-setup asks for a disk passphrase)
+        type: boolean
+        default: true
+      backend:
+        description: bootc backend of the medium (auto = composefs if the image's kernel has the btrfs fs-verity fix, else ostree; composefs fails on an unfixed kernel)
+        type: choice
+        options: [auto, composefs, ostree]
+        default: auto
+      btrfs_compress:
+        description: Compress the medium's btrfs root after the Flatpak bake (defragment -c<algorithm>, default level); off = uncompressed (empty = the default)
+        type: string
+        default: 'zstd:3'
+      flatpaks:
+        description: Bake the image's preinstall Flatpaks into the medium's /var (off = online first-boot preinstall)
+        type: boolean
+        default: true
+      formats:
+        description: Download formats to measure (image-installer/utah/iso/raw/measure_medium.py; xz-9 adds ~20 min)
+        type: string
+        default: zstd-3,zstd-19-long
+  pull_request:
+    paths:
+      - image-installer/utah/**
+      - .github/workflows/utah-image-installer.yml
+      - tests/test_utah_image_installer.py
+
+permissions: {}
+
+concurrency:
+  group: utah-image-installer-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        timeout-minutes: 10
+        with:
+          persist-credentials: false
+      - id: matrix
+        timeout-minutes: 10
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+        run: |
+          set -euo pipefail
+          # The bootc switch target: the newest testing-YYYYMMDD-* digest that is not the baseline.
+          candidate() {
+            local repo="$1" base="$2" tag d
+            for tag in $(skopeo list-tags "docker://$repo" | jq -r '.Tags[]' | grep -E '^testing-[0-9]{8}-' | sort -r | head -8); do
+              d=$(skopeo inspect --format '{{.Digest}}' "docker://$repo:$tag")
+              if [[ "$d" != "$base" ]]; then echo "$repo@$d"; return; fi
+            done
+            echo "no candidate digest for $repo" >&2; return 1
+          }
+          entries=()
+          if [[ -n "$IMAGE_REF" ]]; then
+            [[ "$IMAGE_REF" =~ ^ghcr\.io/projectbluefin/[a-z0-9-]+@sha256:[0-9a-f]{64}$ ]] \
+              || { echo "image_ref must be ghcr.io/projectbluefin/<image>@sha256:<digest>" >&2; exit 1; }
+            images=("$(basename "${IMAGE_REF%@*}")")
+          else
+            images=(utah)
+          fi
+          for image in "${images[@]}"; do
+            repo="ghcr.io/projectbluefin/$image"
+            if [[ -n "$IMAGE_REF" ]]; then digest="${IMAGE_REF#*@}"
+            else digest=$(skopeo inspect --format '{{.Digest}}' "docker://$repo:testing"); fi
+            entries+=("$(jq -cn --arg image "$image" --arg ref "$repo@$digest" --arg digest "$digest" \
+              --arg candidate "$(candidate "$repo" "$digest")" '{image:$image,ref:$ref,digest:$digest,candidate:$candidate}')")
+          done
+          matrix=$(printf '%s\n' "${entries[@]}" | jq -cs '{include: .}')
+          echo "$matrix" | jq .
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    name: e2e (${{ matrix.image }})
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    env:
+      WORK: /mnt/image-installer
+      INSTALL: ${{ inputs.install || 'gui' }}
+      # Scheduled and PR runs pick the backend from the image's kernel (auto:
+      # composefs only with the btrfs fs-verity fix, image-installer/utah/scripts/kernel_verity.py),
+      # compress the root and bake the Flatpaks; a dispatch can force a backend
+      # or turn either off (btrfs_compress off, flatpaks false). GitHub puts
+      # the default in for an empty input, so "off" is the explicit way out;
+      # the first step turns it into an empty BTRFS_COMPRESS.
+      BACKEND: ${{ inputs.backend || 'auto' }}
+      BTRFS_COMPRESS_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.btrfs_compress || 'zstd:3' }}
+      FLATPAKS: ${{ github.event_name != 'workflow_dispatch' || inputs.flatpaks }}
+      FORMATS: ${{ inputs.formats || 'zstd-3,zstd-19-long' }}
+      TPM: ${{ github.event_name != 'workflow_dispatch' || inputs.tpm }}
+    steps:
+      - name: Resolve the btrfs compression
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          case "$BTRFS_COMPRESS_INPUT" in
+            off) compress="" ;;
+            *) compress="$BTRFS_COMPRESS_INPUT" ;;
+          esac
+          echo "btrfs compression: ${compress:-off}"
+          echo "BTRFS_COMPRESS=$compress" >>"$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        timeout-minutes: 10
+        with:
+          persist-credentials: false
+      - name: Prepare host (podman storage and work dir on /mnt, QEMU, KVM)
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get update
+          sudo apt-get install -y podman skopeo qemu-system-x86 qemu-utils ovmf sshpass ffmpeg imagemagick zstd xz-utils tesseract-ocr swtpm swtpm-tools
+          # Ubuntu confines swtpm to libvirt's paths with AppArmor, so it could not create its
+          # socket and state under $WORK (raw_e2e.py --tpm): unload that profile.
+          if [[ -f /etc/apparmor.d/usr.bin.swtpm ]]; then sudo apparmor_parser -R /etc/apparmor.d/usr.bin.swtpm || true; fi
+          sudo mkdir -p /mnt/containers /var/lib/containers "$WORK"
+          sudo mount --bind /mnt/containers /var/lib/containers
+          sudo chown "$USER" "$WORK"
+          test -c /dev/kvm && sudo chmod a+rw /dev/kvm
+          df -h / /mnt
+      - name: Build the live-capable image layer
+        timeout-minutes: 60
+        env:
+          SOURCE_REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          sudo podman pull -q "$SOURCE_REF"
+          sudo podman build --layers=false -t localhost/utah-raw:ci \
+            --build-arg SOURCE_IMAGE="$SOURCE_REF" -f image-installer/utah/iso/raw/Containerfile image-installer/utah/iso/raw 2>&1 | tail -150
+          echo "IMAGE_BUILD_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+      # ADR-0001 decision 6: Flatpaks live on the medium's stateful /var, never
+      # in an image, so bootc updates cannot bring them back.
+      - name: Assert the published image and the live layer carry no Flatpaks
+        env:
+          SOURCE_REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          for ref in "$SOURCE_REF" localhost/utah-raw:ci; do
+            sudo podman run --rm --entrypoint sh "$ref" -c \
+              'test ! -e /var/lib/flatpak || test -z "$(ls -A /var/lib/flatpak)"' \
+              || { echo "::error::$ref has content in /var/lib/flatpak"; exit 1; }
+          done
+      - name: Build the raw medium (bootc install to-filesystem, once)
+        env:
+          SOURCE_REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          ssh-keygen -q -t ed25519 -N '' -f "$WORK/id_ed25519"
+          # Diagnostics for the CI live entry only: journal on the serial console,
+          # no Plymouth hiding it. SELinux stays enforcing: the raw image is labeled.
+          sudo env UTAH_RAW_LIVE_KARGS="utah.live.debug systemd.journald.forward_to_console=1 plymouth.enable=0 rd.plymouth=0" \
+            UTAH_RAW_SSH_PUBKEY="$WORK/id_ed25519.pub" UTAH_RAW_DEBUG_SSHD=1 UTAH_RAW_EVIDENCE="$WORK/raw-evidence" \
+            UTAH_RAW_BACKEND="$BACKEND" \
+            bash image-installer/utah/iso/raw/build-raw-image.sh localhost/utah-raw:ci "$WORK/medium.raw" "${SOURCE_REF%@*}:testing"
+          # The backend the build chose (backend.json), for the steps below.
+          echo "MEDIUM_BACKEND=$(jq -r .backend "$WORK/raw-evidence/backend.json")" >> "$GITHUB_ENV"
+      - name: Bake the Flatpaks into the medium and shrink it
+        id: medium
+        run: |
+          set -euo pipefail
+          ev="$WORK/raw-evidence"
+          sudo python3 image-installer/utah/iso/raw/measure_medium.py "$WORK/medium.raw" "$ev/size-1-installed.json" \
+            --label "after bootc install" --formats zstd-3
+          if [[ "$FLATPAKS" == true ]]; then
+            # The trade-off: the same medium without Flatpaks (online first-boot
+            # preinstall instead), shrunk and measured, then discarded. Dispatch
+            # with flatpaks=false to run the E2E on that medium.
+            sudo cp --sparse=always "$WORK/medium.raw" "$WORK/no-flatpaks.raw"
+            sudo env UTAH_RAW_EVIDENCE="$ev/no-flatpaks" UTAH_RAW_BTRFS_COMPRESS="$BTRFS_COMPRESS" \
+              bash image-installer/utah/iso/raw/shrink-raw-image.sh localhost/utah-raw:ci "$WORK/no-flatpaks.raw"
+            sudo python3 image-installer/utah/iso/raw/measure_medium.py "$WORK/no-flatpaks.raw" "$ev/size-2-no-flatpaks.json" \
+              --label "$MEDIUM_BACKEND, ${BTRFS_COMPRESS:-uncompressed}: shrunk, no Flatpaks (not tested)" --formats zstd-3,zstd-19-long
+            sudo rm -f "$WORK/no-flatpaks.raw"
+            sudo env UTAH_RAW_EVIDENCE="$ev" bash image-installer/utah/iso/raw/bake-flatpaks.sh localhost/utah-raw:ci "$WORK/medium.raw"
+          fi
+          sudo env UTAH_RAW_EVIDENCE="$ev" UTAH_RAW_BTRFS_COMPRESS="$BTRFS_COMPRESS" \
+            bash image-installer/utah/iso/raw/shrink-raw-image.sh localhost/utah-raw:ci "$WORK/medium.raw"
+          sudo chown "$USER" "$WORK/medium.raw"
+          sudo chown -R "$USER" "$ev"
+          sudo podman rmi -af >/dev/null || true
+          df -h / /mnt
+      - name: End-to-end with screenshots
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          baked=()
+          [[ "$FLATPAKS" != true ]] || baked=(--flatpaks "$WORK/raw-evidence/flatpak-apps.txt")
+          # gnome-setup binds the root to a TPM2 when there is one: give the VMs swtpm
+          # unless the dispatch turned it off (the no-TPM disk passphrase path).
+          tpm=()
+          [[ "$TPM" != true ]] || tpm=(--tpm)
+          python3 image-installer/utah/iso/raw/raw_e2e.py --raw "$WORK/medium.raw" --work "$WORK/e2e" --install "$INSTALL" \
+            "${tpm[@]}" \
+            --candidate "$CANDIDATE" --ssh-key "$WORK/id_ed25519" --backend "$MEDIUM_BACKEND" \
+            --backend-decision "$WORK/raw-evidence/backend.json" "${baked[@]}" 2>&1 | tee "$WORK/e2e.log"
+      - name: Measure the medium
+        # A medium whose bake or shrink failed is not the one under test.
+        if: always() && steps.medium.outcome == 'success'
+        run: |
+          set -euo pipefail
+          medium="$MEDIUM_BACKEND, ${BTRFS_COMPRESS:-uncompressed}"
+          if [[ "$FLATPAKS" == true ]]; then out=size-3-flatpaks.json label="$medium: shrunk + Flatpaks (tested medium)"
+          else out=size-3-no-flatpaks.json label="$medium: shrunk, no Flatpaks (tested medium)"; fi
+          python3 image-installer/utah/iso/raw/measure_medium.py "$WORK/medium.raw" "$WORK/raw-evidence/$out" \
+            --label "$label" --formats "$FORMATS"
+      - name: Contact sheet
+        if: always()
+        run: |
+          set -euo pipefail
+          cd "$WORK/e2e/screenshots" 2>/dev/null || exit 0
+          shopt -s nullglob
+          shots=(./*.png)
+          (( ${#shots[@]} )) || exit 0
+          montage -font DejaVu-Sans -pointsize 14 -label '%t' "${shots[@]}" \
+            -tile 4x -geometry 480x270+8+8 -background '#202020' -fill white contact-sheet.png
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: utah-image-installer-${{ matrix.image }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            ${{ env.WORK }}/e2e/screenshots/
+            ${{ env.WORK }}/e2e/evidence/
+            ${{ env.WORK }}/e2e/debug/
+            ${{ env.WORK }}/e2e/*.log
+            ${{ env.WORK }}/e2e.log
+            ${{ env.WORK }}/raw-evidence/
