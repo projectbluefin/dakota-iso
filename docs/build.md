@@ -193,6 +193,24 @@ step, producing zstd-15 compression. Local `just iso-sd-boot` defaults to `compr
 just compression=release iso-sd-boot dakota
 ```
 
+### `sudo -E` no longer forwards env on ubuntu-26.04 (sudo-rs) (2026-11-19)
+
+Ubuntu 25.10+/26.04 ships **sudo-rs**, which always sets `env_reset` and ignores
+`-E`/`--preserve-env`. A `SUPERISO_COMPRESSION`/`SUPERISO_TMPDIR` passed via
+`sudo -E bash scripts/build-live-squashfs.sh` is silently dropped, so the script
+falls back to `fast` (zstd-3) and the ISO is ~0.7 GB larger (5.6 → 6.3 GB).
+Pass them with an explicit `env`:
+
+```bash
+sudo env SUPERISO_COMPRESSION=release SUPERISO_TMPDIR=/var/iso-build \
+  bash scripts/build-live-squashfs.sh --oci-image … <image> <sfs> <boot-tar>
+```
+
+The CI build workflows now do this (`build-iso.yml`, `build-iso-utah.yml`) and
+assert the artifact: `unsquashfs -s <sfs> | grep -q 'Block size 1048576'`
+(release = 1M blocks, fast = 128K), so a zstd-3 fallback fails the build.
+`test-plain-install.yml` needs no env and uses plain `sudo bash`.
+
 ### `dakota/src/flatpaks` diverged from `live/src/flatpaks` (2026-06, resolved)
 
 `dakota/src/flatpaks` contained `be.alexandervanhee.gradia` while `live/src/flatpaks`

@@ -115,16 +115,29 @@ jobs:
         run: df -h /
 
       - name: Build live squashfs + boot tar
-        env:
-          SUPERISO_COMPRESSION: release
-          SUPERISO_TMPDIR: /var/iso-build
         run: |
           sudo mkdir -p /var/iso-build
-          sudo -E bash scripts/build-live-squashfs.sh \
+          # sudo-rs (ubuntu-26.04) ignores -E and resets env, so a step `env:`
+          # block never reaches the script. Pass the values inside the sudo
+          # command, hardcoded — never a $VAR self-reference, which silently
+          # expands to empty (→ zstd-3) if the env block is removed.
+          sudo env \
+            SUPERISO_COMPRESSION=release \
+            SUPERISO_TMPDIR=/var/iso-build \
+            bash scripts/build-live-squashfs.sh \
             --oci-image ghcr.io/projectbluefin/dakota-nvidia:stable \
             localhost/dakota-nvidia-live:latest \
             /var/iso-build/dakota-nvidia.rootfs.sfs \
             /var/iso-build/dakota-nvidia-boot.tar
+
+      - name: Assert release compression (zstd-15)
+        run: |
+          # Regression guard for the whole env-plumbing class: release uses 1M
+          # squashfs blocks, fast uses 128K. Fail the build if we silently got
+          # zstd-3 (ISO balloons ~0.7 GB and R2 ships the bigger artifact).
+          sudo unsquashfs -s /var/iso-build/dakota-nvidia.rootfs.sfs \
+            | grep -q 'Block size 1048576' \
+            || { echo "ERROR: squashfs is not zstd-15 (block size != 1048576)" >&2; exit 1; }
 
       - name: Verify bound OCI media receipt is embedded
         run: |

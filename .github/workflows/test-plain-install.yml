@@ -147,7 +147,7 @@ jobs:
           # Prepare the single offline layout consumed by the shipped fisherman.
           PAYLOAD_IMAGE=$(cat ${{ matrix.variant }}/payload_ref | tr -d '[:space:]')
           sudo podman pull "$PAYLOAD_IMAGE"
-          sudo -E bash scripts/build-live-squashfs.sh \
+          sudo bash scripts/build-live-squashfs.sh \
             --target ${{ matrix.variant }} \
             --installer-channel "$INSTALLER_CHANNEL" \
             --debug 1 \

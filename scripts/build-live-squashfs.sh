@@ -4,7 +4,7 @@
 # Two usage modes:
 #
 # 1. Target mode (used by test-plain-install.yml):
-#      sudo -E bash scripts/build-live-squashfs.sh \
+#      sudo bash scripts/build-live-squashfs.sh \
 #          --target <name> \
 #          [--installer-channel dev|stable] \
 #          [--oci-image ghcr.io/projectbluefin/dakota-nvidia:stable] \
@@ -15,7 +15,7 @@
 #    Outputs: <dir>/<target>-live.squashfs  and  <dir>/<target>-boot-files.tar
 #
 # 2. Positional mode (used by build-iso.yml):
-#      sudo -E bash scripts/build-live-squashfs.sh \
+#      sudo bash scripts/build-live-squashfs.sh \
 #          [--oci-image ghcr.io/projectbluefin/dakota-nvidia:stable] \
 #          localhost/dakota-nvidia-live:latest \
 #          /out/dakota-nvidia.rootfs.sfs \
