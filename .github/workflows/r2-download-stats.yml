@@ -19,6 +19,11 @@ permissions:
 jobs:
   count:
     runs-on: ubuntu-latest
+    # The Cloudflare token lives in the r2-observability environment, whose
+    # deployment branch rule allows main only. A workflow_dispatch from any other
+    # branch therefore gets no token, so modified workflow code on a side branch
+    # cannot read observability data (#404).
+    environment: r2-observability
     steps:
       - name: Query R2 download counts
         env:

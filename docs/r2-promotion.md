@@ -184,6 +184,68 @@ on what landed, so a named release verifies with the same
 the `latest` object; a separate, unsigned `<name>.iso-SHA256SUMS` carries the same hash
 with the promoted filename for `sha256sum -c`.
 
+## Credential scope: protected deployment environments
+
+`promote-release.yml` is dispatched by a person and writes to the release bucket,
+so its R2 credentials are the most valuable secret in this repo. Since #404 the
+`promote` job runs behind the **`r2-production`** deployment environment, and the
+scheduled `r2-download-stats.yml` job runs behind **`r2-observability`**.
+
+| Environment | Job | Secret | Deployment branch rule |
+|---|---|---|---|
+| `r2-production` | `promote` in `promote-release.yml` | `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_R2_ENDPOINT` | `main` only |
+| `r2-observability` | `count` in `r2-download-stats.yml` | `CF_OBSERVABILITY_TOKEN` | `main` only |
+
+**Why an environment:** a `workflow_dispatch` needs the workflow file to exist on
+the default branch, but the run executes the copy of the workflow on the branch
+that was picked. With repository-scoped secrets, a collaborator with write access
+could put altered workflow code on a side branch, dispatch it, and read the
+credentials — the reviewed copy on `main` never runs. At environment scope, with
+the deployment branch rule set to `main` only, that dispatch receives no
+credentials.
+
+**Repository settings a maintainer applies (before the workflow change is merged):**
+
+```bash
+# 1. Create the two environments and restrict deployment to main only.
+#    (gh api -F takes typed scalars; nested objects use key[subkey]=value.)
+gh api -X PUT repos/projectbluefin/dakota-iso/environments/r2-production \
+  -F 'deployment_branch_policy[protected_branches]=false' \
+  -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X PUT repos/projectbluefin/dakota-iso/environments/r2-observability \
+  -F 'deployment_branch_policy[protected_branches]=false' \
+  -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X POST repos/projectbluefin/dakota-iso/environments/r2-production/deployment-branch-policies \
+  -F name='main' -F type='branch'
+gh api -X POST repos/projectbluefin/dakota-iso/environments/r2-observability/deployment-branch-policies \
+  -F name='main' -F type='branch'
+
+# 2. Move the secrets to environment scope (values come from the password
+#    manager; the CLI prompts for each value).
+gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID     --env r2-production     --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --env r2-production     --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_ENDPOINT          --env r2-production     --repo projectbluefin/dakota-iso
+gh secret set CF_OBSERVABILITY_TOKEN             --env r2-observability  --repo projectbluefin/dakota-iso
+
+# 3. Only then delete the repository-scoped copies.
+gh secret delete RCLONE_CONFIG_R2_ACCESS_KEY_ID     --repo projectbluefin/dakota-iso
+gh secret delete RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --repo projectbluefin/dakota-iso
+gh secret delete RCLONE_CONFIG_R2_ENDPOINT          --repo projectbluefin/dakota-iso
+gh secret delete CF_OBSERVABILITY_TOKEN             --repo projectbluefin/dakota-iso
+```
+
+Order matters: GitHub creates a missing environment on first use with no
+protection rules, so merging the workflow change before the environment exists
+would leave the credentials unprotected under the environment's name.
+
+`r2-production` may also require an approving reviewer. `r2-observability` must
+not, because the stats job also runs on a daily schedule and a scheduled run
+cannot collect a human approval.
+
+A new job that reads one of these credentials needs its own environment.
+`tests/test_workflow_protected_environments.py` fails when a job in either
+workflow reads a protected secret without one.
+
 ## Rotating R2 credentials
 
 Use this procedure when credentials are compromised or as routine rotation.
@@ -195,16 +257,18 @@ Use this procedure when credentials are compromised or as routine rotation.
 
 **Step 2 — Update GitHub secrets:**
 ```bash
-gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID --repo projectbluefin/dakota-iso
-gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID     --env r2-production --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --env r2-production --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_ENDPOINT          --env r2-production --repo projectbluefin/dakota-iso
 # each prompts for the value — paste, Enter, done
+# the credentials live in the r2-production environment (see above)
 ```
 
 **Step 3 — Revoke old token** in the Cloudflare dashboard.
 
 **Step 4 — Verify:**
 ```bash
-gh secret list --repo projectbluefin/dakota-iso
+gh secret list --env r2-production --repo projectbluefin/dakota-iso
 # RCLONE_CONFIG_R2_ACCESS_KEY_ID and RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
 # should show today's timestamp
 ```
@@ -275,9 +339,12 @@ operator with local R2 credentials. `.github/workflows/promote-release.yml` codi
 this as a GitHub Actions workflow using repository R2 secrets.
 
 Key invariants codified in the workflow:
-1. **Workflow dispatch restriction**: GitHub only allows `workflow_dispatch` on the
-   default branch (`main`). The workflow file must be merged to `main` before it can
-   be dispatched.
+1. **Workflow dispatch restriction**: the workflow file must exist on the default
+   branch (`main`) before it can be dispatched at all. That is *not* the same as
+   "the dispatch runs the reviewed copy": a dispatch can select another branch, and
+   the run then executes that branch's copy of the workflow file. Credential scope
+   is what protects the run — see the deployment-environment section above and the
+   2026-11-25 lesson below.
 2. **Signed checksum is never rewritten**: the `-CHECKSUM` is signed by the build
    workflow, so rewriting it (as this workflow originally did, for the promoted filename)
    breaks its Sigstore bundle and left named releases unverifiable (#383). The checksum and
@@ -290,3 +357,29 @@ Key invariants codified in the workflow:
    landing between them promotes a mixed pair that current verification cannot detect,
    because it compares the two checksum files rather than hashing the promoted ISO.
    Until that is fixed, dispatch promotions well clear of the daily build window.
+
+### A dispatch runs the branch's workflow code, not main's (2026-11-25)
+
+The `promote-release.yml` and `r2-download-stats.yml` jobs read long-lived
+Cloudflare credentials. A `workflow_dispatch` requires the workflow file to exist
+on the default branch, but the run executes the workflow file **from the branch
+that was dispatched** — so a collaborator with write access could push altered
+workflow code to a side branch, dispatch it, and read the credentials that the
+reviewed `main` copy never touches.
+
+Fix (#404): each job declares a deployment environment — `r2-production` for the
+promotion job, `r2-observability` for the stats job — the credentials live at
+environment scope, and the environment's deployment branch rule allows `main`
+only. A dispatch from any other branch then gets no credentials.
+
+What an agent or maintainer should do differently:
+
+- A job that reads a credential gets an `environment:`. `tests/test_workflow_protected_environments.py`
+  enforces this for both workflows.
+- The environment must exist in the repository settings **before** the workflow
+  that names it is merged. GitHub creates a missing environment on first use with
+  no protection rules, so the order is settings first, merge second.
+- A scheduled job cannot wait for a human approval, so an environment that a
+  scheduled workflow uses must not require reviewers. `r2-observability` carries
+  the daily stats run and therefore stays reviewer-free; `r2-production` may
+  require a reviewer because it is dispatched by a person.

@@ -40,8 +40,39 @@ gh workflow run build-iso.yml --ref main
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
 | ShellCheck Lint + Pinned fetches | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
-| R2 Download Stats | `r2-download-stats.yml` | Daily 06:00 UTC, `workflow_dispatch` — counts public ISO downloads from R2 Data Access Logs; needs `CF_OBSERVABILITY_TOKEN` secret |
+| R2 Download Stats | `r2-download-stats.yml` | Daily 06:00 UTC, `workflow_dispatch` — counts public ISO downloads from R2 Data Access Logs; reads the `CF_OBSERVABILITY_TOKEN` secret from the `r2-observability` environment |
 | Re-run E2E infra failures | `rerun-e2e-infra-failures.yml` | `workflow_run` of the four E2E lanes (Dakota build, Utah build, LUKS, Plain); `workflow_dispatch` with `run_id` classifies only |
+
+### Protected deployment environments for the manual tools (2026-11-25)
+
+`r2-download-stats.yml` and `promote-release.yml` are the two workflows a person
+dispatches by hand, and they are the two that read long-lived Cloudflare
+credentials. Both jobs now sit behind a GitHub deployment environment:
+
+| Workflow | Job | Environment | Secret it reads |
+|---|---|---|---|
+| `r2-download-stats.yml` | `count` | `r2-observability` | `CF_OBSERVABILITY_TOKEN` |
+| `promote-release.yml` | `promote` | `r2-production` | `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_R2_ENDPOINT` |
+
+The reason is the dispatch model. A `workflow_dispatch` needs the workflow file to
+exist on the default branch, but the run then executes the copy of the workflow on
+the branch you picked. A collaborator with write access could put altered workflow
+code on a side branch, dispatch it, and read credentials that live at repository
+scope. With the credentials at environment scope and the environment's deployment
+branch rule set to `main` only, that dispatch gets no credentials at all.
+
+Two rules for anyone changing these workflows:
+
+- **A new job that reads a credential needs its own environment.** `tests/test_workflow_protected_environments.py`
+  fails when a job in either file reads a protected secret without an `environment:`.
+- **The environment must exist before the workflow that names it.** GitHub creates a
+  missing environment on first use with no protection rules, so the repository
+  settings come first: create the environment, restrict it to `main`, move the
+  secret to environment scope, and only then merge the workflow change.
+  See [`docs/r2-promotion.md`](r2-promotion.md) for the exact steps.
+
+The daily stats run is a schedule on the default branch, so the `main`-only rule
+does not block it.
 
 ### CI alert cancellation handling (2026-11-14)
 
