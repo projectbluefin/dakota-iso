@@ -93,6 +93,16 @@ fi
 useradd --create-home --uid 1000 --user-group \
     --comment "Live User" liveuser || true
 passwd --delete liveuser
+# liveuser has no password by design. Dakota's PAM accepts an empty password
+# only while a password change is enforced (pam_unix nullresetok), so allow it
+# again on the live image only, or logging back in after a logout fails.
+# Installed systems come from the payload image and keep the stricter setting.
+# Only touches files that use nullresetok (authselect symlinks elsewhere stay).
+for pam_file in /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+    if grep -Eq '^auth[[:space:]]+sufficient[[:space:]]+pam_unix\.so.*[[:space:]]nullresetok([[:space:]]|$)' "$pam_file" 2>/dev/null; then
+        sed -i --follow-symlinks -E '/^auth[[:space:]]+sufficient[[:space:]]+pam_unix\.so/ s/(^|[[:space:]])nullresetok($|[[:space:]])/\1nullok\2/' "$pam_file"
+    fi
+done
 
 # Debug builds only: enable SSH so the live session is reachable for testing.
 # Never enabled in production ISOs.
