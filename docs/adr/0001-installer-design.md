@@ -2,6 +2,7 @@
 
 - **Status:** Proposed. Nothing here is decided until castrojo and ahmedadan agree.
 - **Date:** 2026-11-25
+- **Discussion:** https://github.com/projectbluefin/dakota-iso/issues/413
 - **Deciders:** castrojo, ahmedadan (Dakota); hanthor (Utah)
 
 ## Context
