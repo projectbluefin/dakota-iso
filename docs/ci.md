@@ -33,8 +33,8 @@ gh workflow run build-iso.yml --ref main
 
 | Workflow | File | Trigger |
 |---|---|---|
-| Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch`, `repository_dispatch` (`dakota-release`, `client_payload.image_ref`) |
-| Utah Build & Publish | `build-iso-utah.yml` | Monthly 8th 04:00 UTC, `workflow_dispatch` (bluefin entries retired in #228) |
+| Dakota Build & Publish | `build-iso.yml` | Daily 03:00 UTC, `workflow_dispatch`, `repository_dispatch` (`dakota-release`, `client_payload.image_ref`); reads the R2 credentials from the `r2-production` environment |
+| Utah Build & Publish | `build-iso-utah.yml` | Monthly 8th 04:00 UTC, `workflow_dispatch` (bluefin entries retired in #228); reads the R2 credentials from the `r2-production` environment |
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), merge queue (stable leg only), PRs (the `Plain E2E gate` check only), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
@@ -43,36 +43,46 @@ gh workflow run build-iso.yml --ref main
 | R2 Download Stats | `r2-download-stats.yml` | Daily 06:00 UTC, `workflow_dispatch` — counts public ISO downloads from R2 Data Access Logs; reads the `CF_OBSERVABILITY_TOKEN` secret from the `r2-observability` environment |
 | Re-run E2E infra failures | `rerun-e2e-infra-failures.yml` | `workflow_run` of the four E2E lanes (Dakota build, Utah build, LUKS, Plain); `workflow_dispatch` with `run_id` classifies only |
 
-### Protected deployment environments for the manual tools (2026-11-25)
+### Protected deployment environments for the release tools (2026-11-25)
 
-`r2-download-stats.yml` and `promote-release.yml` are the two workflows a person
-dispatches by hand, and they are the two that read long-lived Cloudflare
-credentials. Both jobs now sit behind a GitHub deployment environment:
+Four workflows read long-lived Cloudflare credentials, and all four take a
+`workflow_dispatch`. Every reader now sits behind a GitHub deployment
+environment:
 
-| Workflow | Job | Environment | Secret it reads |
+| Workflow | Reader | Environment | Secret it reads |
 |---|---|---|---|
-| `r2-download-stats.yml` | `count` | `r2-observability` | `CF_OBSERVABILITY_TOKEN` |
-| `promote-release.yml` | `promote` | `r2-production` | `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_R2_ENDPOINT` |
+| `r2-download-stats.yml` | `count` job | `r2-observability` | `CF_OBSERVABILITY_TOKEN` |
+| `promote-release.yml` | `promote` job | `r2-production` | `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_R2_ENDPOINT` |
+| `build-iso.yml` | `Upload ISO to Cloudflare R2` step | `r2-production` | the same three |
+| `build-iso-utah.yml` | `Upload ISO to Cloudflare R2` step | `r2-production` | the same three |
 
 The reason is the dispatch model. A `workflow_dispatch` needs the workflow file to
 exist on the default branch, but the run then executes the copy of the workflow on
 the branch you picked. A collaborator with write access could put altered workflow
 code on a side branch, dispatch it, and read credentials that live at repository
 scope. With the credentials at environment scope and the environment's deployment
-branch rule set to `main` only, that dispatch gets no credentials at all.
+branch rule set to `main` only, that dispatch gets no credentials at all. The two
+publish lanes carry the environment on the upload step, because the ISO build and
+its E2E gates read no credential.
 
 Two rules for anyone changing these workflows:
 
-- **A new job that reads a credential needs its own environment.** `tests/test_workflow_protected_environments.py`
-  fails when a job in either file reads a protected secret without an `environment:`.
+- **A new job or step that reads a credential needs an environment that gates it.**
+  `tests/test_workflow_protected_environments.py` fails when a reader in any of
+  these files reads a protected secret without one, and when a workflow outside
+  that list reads a protected secret at all.
 - **The environment must exist before the workflow that names it.** GitHub creates a
   missing environment on first use with no protection rules, so the repository
-  settings come first: create the environment, restrict it to `main`, move the
-  secret to environment scope, and only then merge the workflow change.
+  settings come first: create the environment, restrict it to `main`, copy the
+  secret to environment scope, merge the workflow change, and only then delete
+  the repository-scoped copies — those copies are what the publish lanes read
+  until they declare the environment, so deleting them earlier breaks the
+  nightly upload.
   See [`docs/r2-promotion.md`](r2-promotion.md) for the exact steps.
 
-The daily stats run is a schedule on the default branch, so the `main`-only rule
-does not block it.
+The daily stats run and the nightly publish run are schedules on the default
+branch, so the `main`-only rule does not block them — and neither environment
+may require an approving reviewer, because a scheduled run cannot collect one.
 
 ### CI alert cancellation handling (2026-11-14)
 

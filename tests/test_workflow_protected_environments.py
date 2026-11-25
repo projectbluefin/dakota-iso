@@ -1,21 +1,14 @@
-"""Regression tests for the protected deployment environments of the manual
-release tools (#404).
+"""Regression tests for the protected deployment environments of the release
+workflows.
 
-``r2-download-stats.yml`` and ``promote-release.yml`` are ``workflow_dispatch``
-workflows that read long-lived Cloudflare and R2 credentials. GitHub lets a
-collaborator dispatch a workflow from any branch that holds the workflow file,
-and the code that runs is the code on that branch — the reviewed copy on ``main``
-is not what executes. With repository-scoped secrets, altered workflow code on a
-side branch can therefore read or exfiltrate those credentials.
+Every credential that can write to the published ISO bucket, or read the
+download statistics, must sit behind a GitHub deployment environment whose
+deployment branch rule allows `main` only. Without one, a `workflow_dispatch`
+of a side branch runs that branch's copy of the workflow with the
+repository-scoped secret, and a collaborator with write access can read it.
 
-A deployment environment fixes that: the job declares ``environment:``, the
-credentials live at environment scope, and the environment's deployment branch
-rule allows ``main`` only. A dispatch from another branch then gets no
-credentials.
-
-These tests pin that wiring, so an edit that drops the ``environment:`` key or
-adds a second secret-reading job without one fails here instead of silently
-reopening the hole.
+The credential may be read by a job or by a single step of a long build; both
+count, and both are checked here.
 """
 
 from pathlib import Path
@@ -30,6 +23,10 @@ WORKFLOWS = REPO / ".github" / "workflows"
 # deployment branch rule "main" only. The workflow and the repository setting
 # must name the same environment, otherwise the job runs with no credentials.
 EXPECTED_ENVIRONMENTS = {
+    # The nightly publish lanes write the live ISO to the release bucket, so
+    # they read the same R2 write credentials as the manual promotion tool.
+    "build-iso-utah.yml": {"build-and-publish": "r2-production"},
+    "build-iso.yml": {"build-and-publish": "r2-production"},
     "r2-download-stats.yml": {"count": "r2-observability"},
     "promote-release.yml": {"promote": "r2-production"},
 }
@@ -66,32 +63,61 @@ def _secret_names(node):
     return names
 
 
-def _secret_reading_jobs(workflow):
-    """Return ``{job_name: {secret_name, ...}}`` for jobs that read a secret."""
-    reading = {}
+def _readers(workflow):
+    """Every job or step that reads a protected credential.
+
+    Each entry says which secrets it reads and which deployment environment
+    gates it: the step's own environment, or the job's when the step declares
+    none. A reader with no environment is a credential a side-branch dispatch
+    can still reach.
+    """
+    readers = []
     for job_name, job in (workflow.get("jobs") or {}).items():
-        secrets = _secret_names(job)
-        if secrets:
-            reading[job_name] = secrets
-    return reading
+        job_environment = job.get("environment")
+        step_secrets = set()
+        for index, step in enumerate(job.get("steps") or []):
+            secrets = _secret_names(step)
+            if not secrets:
+                continue
+            step_secrets |= secrets
+            readers.append({
+                "location": f"{job_name} / {step.get('name') or index}",
+                "job": job_name,
+                "secrets": secrets,
+                "environment": step.get("environment") or job_environment,
+            })
+        # A credential read by the job itself (a job-level `env:` block, a
+        # matrix expansion) is a reader too.
+        outside = _secret_names(job) - step_secrets
+        if outside:
+            readers.append({
+                "location": job_name,
+                "job": job_name,
+                "secrets": outside,
+                "environment": job_environment,
+            })
+    return readers
 
 
 @pytest.mark.parametrize("workflow_name", sorted(EXPECTED_ENVIRONMENTS))
-def test_secret_reading_jobs_declare_their_environment(workflow_name):
-    # Every job that reads a protected credential must sit behind a deployment
-    # environment. A job added later without one fails here.
+def test_every_credential_reader_is_gated_by_the_environment(workflow_name):
+    # Every job or step that reads a protected credential must sit behind a
+    # deployment environment. A reader added later without one fails here.
     workflow = _load(workflow_name)
-    reading = _secret_reading_jobs(workflow)
-    assert reading, f"{workflow_name} reads no protected secret any more — " \
+    readers = _readers(workflow)
+    assert readers, f"{workflow_name} reads no protected secret any more — " \
                      "re-check whether it still needs the environment"
 
-    for job_name in reading:
-        job = workflow["jobs"][job_name]
-        environment = job.get("environment")
-        assert environment, (
-            f"job {job_name!r} in {workflow_name} reads {sorted(reading[job_name])} "
+    for reader in readers:
+        assert reader["environment"], (
+            f"{reader['location']} in {workflow_name} reads {sorted(reader['secrets'])} "
             f"but declares no environment, so a dispatch from an unreviewed branch "
             f"would still receive the credentials"
+        )
+        assert reader["environment"] == EXPECTED_ENVIRONMENTS[workflow_name][reader["job"]], (
+            f"{reader['location']} in {workflow_name} must be gated by the "
+            f"{EXPECTED_ENVIRONMENTS[workflow_name][reader['job']]!r} environment, "
+            f"got {reader['environment']!r}"
         )
 
 
@@ -104,23 +130,51 @@ def test_environment_names_match_the_repository_settings(workflow_name):
 
     for job_name, environment_name in expected.items():
         job = workflow["jobs"][job_name]
-        assert job.get("environment") == environment_name, (
+        declared = job.get("environment") or next(
+            (step.get("environment") for step in job.get("steps") or []
+             if step.get("environment")), None)
+        assert declared == environment_name, (
             f"job {job_name!r} in {workflow_name} must use the "
-            f"{environment_name!r} environment, got {job.get('environment')!r}"
+            f"{environment_name!r} environment, got {declared!r}"
         )
 
 
 @pytest.mark.parametrize("workflow_name", sorted(EXPECTED_ENVIRONMENTS))
-def test_the_protected_job_is_the_one_that_reads_the_secret(workflow_name):
-    # Pin which job carries the environment: the environment must sit on the job
-    # that reads the credential, not on a neighbour that reads nothing.
+def test_the_environment_sits_on_the_reader(workflow_name):
+    # The environment must sit on the job or step that reads the credential,
+    # not on a neighbour that reads nothing: an environment on a neighbour
+    # gates the wrong code.
     workflow = _load(workflow_name)
-    reading = _secret_reading_jobs(workflow)
-    expected = EXPECTED_ENVIRONMENTS[workflow_name]
+    readers = _readers(workflow)
+    reading_jobs = {reader["job"] for reader in readers}
+    reading_locations = {reader["location"] for reader in readers}
 
-    for job_name, environment_name in expected.items():
-        assert job_name in reading, (
-            f"job {job_name!r} in {workflow_name} no longer reads a protected "
-            f"secret — the {environment_name!r} environment may have been moved "
-            f"off the job that needs it"
+    for job_name, job in workflow["jobs"].items():
+        if job.get("environment"):
+            assert job_name in reading_jobs, (
+                f"job {job_name!r} in {workflow_name} declares an environment but "
+                f"reads no protected credential; the environment must sit on the "
+                f"job that reads it"
+            )
+        for step in job.get("steps") or []:
+            if step.get("environment"):
+                location = f"{job_name} / {step.get('name')}"
+                assert location in reading_locations, (
+                    f"step {step.get('name')!r} in {workflow_name} declares an "
+                    f"environment but reads no protected credential; the "
+                    f"environment must sit on the step that reads it"
+                )
+
+
+def test_no_other_workflow_reads_a_protected_credential():
+    # A new workflow that reads one of these credentials inherits the same
+    # exposure: it must declare an environment of its own, and be named in
+    # EXPECTED_ENVIRONMENTS so this check covers it.
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text())
+        if not _secret_names(workflow):
+            continue
+        assert path.name in EXPECTED_ENVIRONMENTS, (
+            f"{path.name} reads a protected credential but is not covered by the "
+            f"environment contract; add it to EXPECTED_ENVIRONMENTS"
         )

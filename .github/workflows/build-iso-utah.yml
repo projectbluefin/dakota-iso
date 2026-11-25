@@ -356,6 +356,14 @@ jobs:
           inputs.skip_upload != true &&
           github.event_name != 'pull_request' &&
           steps.boot_verify.outcome == 'success' && steps.e2e_enospc.outcome == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success'
+        # The R2 write credentials live in the r2-production environment, whose
+        # deployment branch rule allows main only. This workflow also takes a
+        # workflow_dispatch, and GitHub runs the copy of the workflow on the
+        # branch that was picked: a dispatch from any other branch is refused
+        # the environment, this step never runs, and the credentials are never
+        # handed to it (#404). The step, not the whole job, carries the
+        # environment because only this step reads the credentials.
+        environment: r2-production
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare

@@ -186,15 +186,22 @@ with the promoted filename for `sha256sum -c`.
 
 ## Credential scope: protected deployment environments
 
-`promote-release.yml` is dispatched by a person and writes to the release bucket,
-so its R2 credentials are the most valuable secret in this repo. Since #404 the
-`promote` job runs behind the **`r2-production`** deployment environment, and the
-scheduled `r2-download-stats.yml` job runs behind **`r2-observability`**.
+The R2 write credentials can publish or replace the live ISO objects, so they
+are the most valuable secret in this repo. Four workflows read them or the
+download statistics, and every one of them takes a `workflow_dispatch`. Since
+#404 each reader sits behind a deployment environment whose deployment branch
+rule allows `main` only.
 
-| Environment | Job | Secret | Deployment branch rule |
+| Environment | Reader | Secret | Deployment branch rule |
 |---|---|---|---|
-| `r2-production` | `promote` in `promote-release.yml` | `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_R2_ENDPOINT` | `main` only |
-| `r2-observability` | `count` in `r2-download-stats.yml` | `CF_OBSERVABILITY_TOKEN` | `main` only |
+| `r2-production` | `promote` job in `promote-release.yml` | `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_R2_ENDPOINT` | `main` only |
+| `r2-production` | `Upload ISO to Cloudflare R2` step in `build-iso.yml` (nightly Dakota publish) | the same three | `main` only |
+| `r2-production` | `Upload ISO to Cloudflare R2` step in `build-iso-utah.yml` (monthly Utah publish) | the same three | `main` only |
+| `r2-observability` | `count` job in `r2-download-stats.yml` | `CF_OBSERVABILITY_TOKEN` | `main` only |
+
+The two publish lanes carry the environment on the upload step rather than on
+the job: the ISO build and its E2E gates read no credential, and only the
+upload does.
 
 **Why an environment:** a `workflow_dispatch` needs the workflow file to exist on
 the default branch, but the run executes the copy of the workflow on the branch
@@ -204,7 +211,20 @@ credentials — the reviewed copy on `main` never runs. At environment scope, wi
 the deployment branch rule set to `main` only, that dispatch receives no
 credentials.
 
-**Repository settings a maintainer applies (before the workflow change is merged):**
+A repository-scoped copy of the same secret is the fallback a step reads when
+it declares no environment, so the copies have to go (step 4 below). While they
+exist, the environment is the only thing standing between a side branch and
+the key, and a side branch that drops the `environment:` line still gets it.
+
+**Repository settings a maintainer applies:**
+
+The order matters at every step. The environments must exist and hold the
+secrets before the workflows that name them are merged: GitHub creates a
+missing environment on first use with no protection rules, so merging first
+would leave the credentials unprotected under the environment's name. The
+repository-scoped copies may only be deleted once every reader has moved to
+the environment — the nightly publish lanes included — and after a publish
+from `main` has proved that lane works on the environment's copy.
 
 ```bash
 # 1. Create the two environments and restrict deployment to main only.
@@ -220,62 +240,95 @@ gh api -X POST repos/projectbluefin/dakota-iso/environments/r2-production/deploy
 gh api -X POST repos/projectbluefin/dakota-iso/environments/r2-observability/deployment-branch-policies \
   -F name='main' -F type='branch'
 
-# 2. Move the secrets to environment scope (values come from the password
-#    manager; the CLI prompts for each value).
+# 2. Copy the secrets to environment scope (values come from the password
+#    manager; the CLI prompts for each value). The repository-scoped copies
+#    stay for now: the publish lanes still read them until this change is
+#    merged, and deleting them earlier would break the nightly upload.
 gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID     --env r2-production     --repo projectbluefin/dakota-iso
 gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --env r2-production     --repo projectbluefin/dakota-iso
 gh secret set RCLONE_CONFIG_R2_ENDPOINT          --env r2-production     --repo projectbluefin/dakota-iso
 gh secret set CF_OBSERVABILITY_TOKEN             --env r2-observability  --repo projectbluefin/dakota-iso
 
-# 3. Only then delete the repository-scoped copies.
+# 3. Merge this change. Every reader now declares an environment, so the
+#    environment is what hands out the credentials.
+
+# 4. Confirm a publish from main still works, then delete the
+#    repository-scoped copies. Until this step they are live credentials that
+#    a workflow reading them without an environment still receives.
+gh workflow run build-iso.yml --ref main
+#    let the run finish and check the upload step succeeded (the
+#    r2-production environment lists the deployment), then:
 gh secret delete RCLONE_CONFIG_R2_ACCESS_KEY_ID     --repo projectbluefin/dakota-iso
 gh secret delete RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --repo projectbluefin/dakota-iso
 gh secret delete RCLONE_CONFIG_R2_ENDPOINT          --repo projectbluefin/dakota-iso
 gh secret delete CF_OBSERVABILITY_TOKEN             --repo projectbluefin/dakota-iso
 ```
 
-Order matters: GitHub creates a missing environment on first use with no
-protection rules, so merging the workflow change before the environment exists
-would leave the credentials unprotected under the environment's name.
+`r2-production` must not require an approving reviewer: the nightly publish
+lanes share it, they run on a schedule, and a scheduled run cannot collect a
+human approval. `r2-observability` must not either, because the stats job also
+runs on a daily schedule. If a reviewer is wanted for the manual promotion
+tool, give that job an environment of its own.
 
-`r2-production` may also require an approving reviewer. `r2-observability` must
-not, because the stats job also runs on a daily schedule and a scheduled run
-cannot collect a human approval.
-
-A new job that reads one of these credentials needs its own environment.
-`tests/test_workflow_protected_environments.py` fails when a job in either
-workflow reads a protected secret without one.
+A new job or step that reads one of these credentials needs an environment that
+gates it. `tests/test_workflow_protected_environments.py` fails when a reader
+in any of these workflows has none, and when a workflow outside that list reads
+a protected credential at all.
 
 ## Rotating R2 credentials
 
 Use this procedure when credentials are compromised or as routine rotation.
+
+The rule the whole procedure exists to keep: **no reader may still hold the
+old key when it is revoked.** A scope that keeps a copy of the old value while
+the new key sits in the environment keeps working until the old token is
+revoked, and then fails at the next nightly publish.
 
 **Step 1 — Create new token (Cloudflare dashboard, ~60 seconds):**
 1. `dash.cloudflare.com → R2 → Manage R2 API Tokens → Create token`
 2. Set permissions: `Object Read & Write` on the `testing` bucket
 3. Copy the new `access_key_id` and `secret_access_key`
 
-**Step 2 — Update GitHub secrets:**
+**Step 2 — Find every scope that holds a copy:**
+```bash
+gh secret list --repo projectbluefin/dakota-iso
+gh secret list --env r2-production --repo projectbluefin/dakota-iso
+```
+Every scope listed above holds a copy of the key and must be updated in step 3.
+After the setup above, the only scope is the `r2-production` environment; a
+repository-scoped copy means that setup was not finished.
+
+**Step 3 — Update every scope that holds a copy:**
 ```bash
 gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID     --env r2-production --repo projectbluefin/dakota-iso
 gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --env r2-production --repo projectbluefin/dakota-iso
 gh secret set RCLONE_CONFIG_R2_ENDPOINT          --env r2-production --repo projectbluefin/dakota-iso
 # each prompts for the value — paste, Enter, done
 # the credentials live in the r2-production environment (see above)
+#
+# If step 2 still listed a repository-scoped copy, update or delete it too:
+gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID     --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_ENDPOINT          --repo projectbluefin/dakota-iso
 ```
 
-**Step 3 — Revoke old token** in the Cloudflare dashboard.
-
-**Step 4 — Verify:**
+**Step 4 — Verify every scope now holds the new key, then publish once:**
 ```bash
 gh secret list --env r2-production --repo projectbluefin/dakota-iso
+gh secret list --repo projectbluefin/dakota-iso
 # RCLONE_CONFIG_R2_ACCESS_KEY_ID and RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
 # should show today's timestamp
 ```
+Then publish once from `main` (`gh workflow run build-iso.yml --ref main`) and
+confirm the upload step succeeded, so the nightly lane is known to work on the
+new key before the old one disappears.
+
+**Step 5 — Revoke old token** in the Cloudflare dashboard. Only now: revoking
+it while a reader still holds the old value breaks that reader.
 
 > Note: `wrangler` cannot create or revoke R2 API tokens — the OAuth token from
-> `wrangler login` does not carry the `api_tokens:edit` scope. Steps 1 and 3
-> require the Cloudflare dashboard. Only step 2 is CLI-automatable.
+> `wrangler login` does not carry the `api_tokens:edit` scope. Steps 1 and 5
+> require the Cloudflare dashboard. Only steps 2 to 4 are CLI-automatable.
 
 ---
 
