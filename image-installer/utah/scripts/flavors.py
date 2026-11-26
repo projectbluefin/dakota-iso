@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""The image flavors Utah builds, in the shapes each workflow needs.
+
+There are four places that have to agree about this: the build matrix, the
+promote matrix, the release matrix, and whether the kernel cache image is worth
+building at all. They were four separate literals, so narrowing the set in one
+would have left the others promoting images that no longer exist.
+
+config/flavors.json is the single source. "retired" is not commentary -- it is
+what a flavor moves to when it is switched off, so the reason it is off stays
+next to the list rather than in a commit message.
+
+    flavors.py list       ["main"]
+    flavors.py images     [{"image": "utah"}, ...]         promote
+    flavors.py releases   [{"image": "utah", "source_tag": ...}, ...]  release
+    flavors.py needs-kernel   true / false
+    flavors.py list-main      ["main"]            main, submitted as its own build matrix
+    flavors.py list-kernel    ["nvidia", ...]     the OGC/NVIDIA flavors, the other matrix
+    flavors.py image FLAVOR   utah / utah-nvidia  published image name for flavor
+    flavors.py flavor IMAGE   main / nvidia       the configured flavor that publishes IMAGE
+    flavors.py suites     [{"image": "utah", "suites": "smoke,common"}, ...]  matrix
+"""
+import json
+import sys
+from pathlib import Path
+
+CONFIG = Path(__file__).resolve().parent.parent / "config" / "flavors.json"
+IMAGE = {
+    "main": "utah",
+    "nvidia": "utah-nvidia",
+    "gaming": "utah-gaming",
+    "nvidia-gaming": "utah-nvidia-gaming",
+}
+
+config = json.loads(CONFIG.read_text())
+flavors = config["flavors"]
+unknown = [f for f in flavors if f not in IMAGE]
+if unknown:
+    raise SystemExit(f"unknown flavor(s) in {CONFIG.name}: {', '.join(unknown)}")
+
+what = sys.argv[1] if len(sys.argv) > 1 else "list"
+if what == "list":
+    print(json.dumps(flavors))
+elif what == "images":
+    print(json.dumps([{"image": IMAGE[f]} for f in flavors]))
+elif what == "releases":
+    print(json.dumps([{"image": IMAGE[f], "source_tag": "testing", "target_tag": "stable"}
+                      for f in flavors]))
+elif what == "needs-kernel":
+    # Every flavor builds on the kernel cache image: its distribution kernel is
+    # Fedora's rebuilt with the btrfs fs-verity fix (install-fedora-kernel.sh),
+    # and the OGC and NVIDIA flavors unpack their kernel and module from it too.
+    print("true" if flavors else "false")
+elif what == "list-main":
+    # main waits for the kernel cache like the rest. The build workflow still
+    # submits it as its own matrix: the reusable build keys cancel-in-progress
+    # on brand_name, and main's required check names its own call.
+    print(json.dumps([f for f in flavors if f == "main"]))
+elif what == "list-kernel":
+    print(json.dumps([f for f in flavors if f != "main"]))
+elif what == "suites":
+    # The testsuite suites run against each flavor's exact digest for
+    # asynchronous quality reporting. They live beside the flavor list so
+    # adding a flavor is one config edit, not a code edit here.
+    suites = config.get("suites", {})
+    missing = [f for f in flavors if f not in suites]
+    if missing:
+        raise SystemExit(f"no suites in {CONFIG.name} for flavor(s): {', '.join(missing)}")
+    print(json.dumps([{"image": IMAGE[f], "suites": suites[f]} for f in flavors]))
+elif what == "image":
+    if len(sys.argv) < 3:
+        raise SystemExit("usage: flavors.py image FLAVOR")
+    flavor = sys.argv[2]
+    if flavor not in IMAGE:
+        raise SystemExit(f"unknown flavor: {flavor}")
+    print(IMAGE[flavor])
+elif what == "flavor":
+    # The reverse of `image`, for a harness that holds an image reference and
+    # needs the flavor the installed system must report (iso/raw/raw_e2e.py).
+    if len(sys.argv) < 3:
+        raise SystemExit("usage: flavors.py flavor IMAGE")
+    matches = [f for f in flavors if IMAGE[f] == sys.argv[2]]
+    if not matches:
+        raise SystemExit(f"no configured flavor publishes image: {sys.argv[2]}")
+    print(matches[0])
+else:
+    raise SystemExit(f"unknown query: {what}")
