@@ -7,11 +7,12 @@ concurrency:
 # Retired / Disabled: Bluefin and Bluefin-LTS ISOs are no longer built or
 # published from dakota-iso. This repository exclusively produces Dakota and Utah ISOs.
 # The Bluefin/Bluefin-LTS matrix entries below are disabled.
+#
+# Retired from the schedule: Utah installs with upstream gnome-setup, not
+# fisherman (projectbluefin/utah#1569), and publish-utah-installer.yml
+# publishes that medium monthly instead. Dispatch stays as a fallback until the
+# first medium is published; utah-live-latest.iso stays on R2 until then.
 on:
-  schedule:
-    # Monthly, on the 8th: Utah releases :stable on Mondays at 06:00 UTC, so by
-    # 04:00 on the 8th the month's first Monday release has always happened.
-    - cron: '0 4 8 * *'
   workflow_dispatch:
     inputs:
       variant:
