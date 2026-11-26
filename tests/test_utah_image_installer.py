@@ -294,7 +294,7 @@ class NonBlockingTrackTests(unittest.TestCase):
     workflow = yaml.safe_load(WORKFLOW.read_text())
 
     def test_the_track_is_manual_or_on_its_own_changes(self):
-        self.assertEqual(set(self.workflow[True]), {"workflow_dispatch", "pull_request"})
+        self.assertEqual(set(self.workflow[True]), {"workflow_dispatch", "workflow_call", "pull_request"})
 
     def test_the_track_has_no_write_permission(self):
         self.assertEqual(self.workflow["permissions"], {})

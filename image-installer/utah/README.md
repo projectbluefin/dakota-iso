@@ -27,7 +27,13 @@ discussion in #413.
   different monitor transport. Merge them after the cutover, when both lanes
   can be tested together.
 - `.github/workflows/utah-image-installer.yml` builds it and runs the GUI E2E on
-  pull requests that touch it and on dispatch. It publishes nothing.
+  pull requests that touch it, on dispatch, and when called.
+- `.github/workflows/publish-utah-installer.yml` publishes it to
+  `https://projectbluefin.dev/utah-installer-latest.raw.zst`, monthly and on
+  dispatch: from the signature-verified `utah:stable` digest, only after the
+  GUI E2E passed on that digest, with no test credentials, checksum signed
+  keylessly. It replaces the fisherman ISO (`build-iso-utah.yml`, now dispatch
+  only).
 
 ## Resync
 
@@ -51,8 +57,8 @@ Until all of these hold, `projectbluefin/utah` keeps its copy, its nightly run
 and the publishing of `ghcr.io/projectbluefin/utah-installer`:
 
 1. The E2E passes here.
-2. The package `utah-installer` grants this repository write access, and
-   publishing moves here.
+2. The first medium is published here; Utah's README then points to it and
+   `utah-live-latest.iso` is retired.
 3. Utah drops `iso/raw/`, `image-installer.yml` and `publish-installer.yml` in
    the same change window, so there is one copy again.
 

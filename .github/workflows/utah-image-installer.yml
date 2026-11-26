@@ -41,6 +41,37 @@ on:
         description: Download formats to measure (image-installer/utah/iso/raw/measure_medium.py; xz-9 adds ~20 min)
         type: string
         default: zstd-3,zstd-19-long
+  # publish-utah-installer.yml runs it on the digest it is about to publish.
+  workflow_call:
+    inputs:
+      image_ref:
+        description: Exact image to install (repo@sha256:...), the digest the caller tests
+        type: string
+        default: ''
+      install:
+        description: gui drives the installer's window; script runs the same install over SSH
+        type: string
+        default: gui
+      tpm:
+        description: Give the VMs a software TPM 2.0 (off = no TPM; gnome-setup asks for a disk passphrase)
+        type: boolean
+        default: true
+      backend:
+        description: bootc backend of the medium (auto = composefs if the image's kernel has the btrfs fs-verity fix, else ostree; composefs fails on an unfixed kernel)
+        type: string
+        default: auto
+      btrfs_compress:
+        description: Compress the medium's btrfs root after the Flatpak bake (defragment -c<algorithm>, default level); off = uncompressed (empty = the default)
+        type: string
+        default: 'zstd:3'
+      flatpaks:
+        description: Bake the image's preinstall Flatpaks into the medium's /var (off = online first-boot preinstall)
+        type: boolean
+        default: true
+      formats:
+        description: Download formats to measure (image-installer/utah/iso/raw/measure_medium.py; xz-9 adds ~20 min)
+        type: string
+        default: zstd-3,zstd-19-long
   pull_request:
     paths:
       - image-installer/utah/**
@@ -50,7 +81,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: utah-image-installer-${{ github.ref }}
+  group: utah-image-installer-${{ github.ref }}-${{ inputs.image_ref || 'testing' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
