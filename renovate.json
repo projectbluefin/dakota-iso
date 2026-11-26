@@ -51,6 +51,11 @@
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["major"],
       "automerge": false
+    },
+    {
+      "description": "image-installer/utah/ is a byte-identical copy of projectbluefin/utah (image-installer/utah/README.md). Utah's own Renovate bumps those files there and a resync brings them here; a bump here breaks the copy (#415, #416, #419, #420). A packageRule rather than ignorePaths, because an explicit ignorePaths replaces the list config:recommended's :ignoreModulesAndTests sets.",
+      "matchFileNames": ["image-installer/utah/**"],
+      "enabled": false
     }
   ]
 }

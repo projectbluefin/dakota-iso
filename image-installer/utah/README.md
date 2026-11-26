@@ -6,9 +6,21 @@ the design is its ADR-0001, and the shared design with Dakota is under
 discussion in #413.
 
 - Paths below this directory mirror the Utah repository (`iso/raw/`,
-  `iso/scripts/`, `scripts/`), and the files are byte-identical to
-  `hanthor/utah` `feat/shared-gnome-setup`, so the move can be checked with
-  `diff -r`. `compare_paths.py`, which reads Utah's own CI, stayed behind.
+  `iso/scripts/`, `scripts/`, `config/`), and the files are byte-identical to
+  `projectbluefin/utah` `main` at
+  `8be72c924768a090adbfe24384993a584229cf65`, so the copy can be checked
+  file by file against that commit (below). `compare_paths.py`, which reads
+  Utah's own CI, stayed behind.
+- `raw_e2e.py` resolves its helpers from those Utah-relative paths. Besides
+  the medium's own files, it runs on the host `iso/scripts/qemu_monitor.py`,
+  `plymouth-prompt.py`, `luks-unlock.py`, `extension-state.sh`,
+  `fastfetch-ocr-match.sh` and `scripts/flavors.py` (which reads
+  `config/flavors.json` to tell the flavor under test), and copies into the
+  installed system `iso/scripts/e2e-services.sh`,
+  `verify-installed-flavor.py`, `verify-countme-runtime.sh` and
+  `scripts/verify-desktop-contract.py`.
+- Renovate leaves this directory alone (`renovate.json`): Utah's Renovate
+  bumps the digests there and a resync brings them here.
 - gnome-setup is built from the `bluefin` branch of `hanthor/gnome-setup`, the
   one meant for Dakota too.
 - `iso/scripts/luks-unlock.py` duplicates `live/src/luks-unlock.py` with a
@@ -16,6 +28,22 @@ discussion in #413.
   can be tested together.
 - `.github/workflows/utah-image-installer.yml` builds it and runs the GUI E2E on
   pull requests that touch it and on dispatch. It publishes nothing.
+
+## Resync
+
+Copy every file below this directory (except this README) from the Utah
+commit, then check the copy:
+
+```bash
+sha=<utah commit>
+cd image-installer/utah
+git ls-files . ':!README.md' | while read -r p; do
+  git -C /path/to/utah show "$sha:$p" | cmp -s - "$p" || echo "differs: $p"
+done
+```
+
+A file `raw_e2e.py` starts to read must be added at its Utah path in the same
+resync.
 
 ## Cutover
 

@@ -1,0 +1,15 @@
+{
+  "flavors": [
+    "main",
+    "nvidia",
+    "gaming",
+    "nvidia-gaming"
+  ],
+  "suites": {
+    "main": "smoke,common",
+    "nvidia": "smoke,common",
+    "gaming": "smoke,common",
+    "nvidia-gaming": "smoke,common"
+  },
+  "retired": {}
+}

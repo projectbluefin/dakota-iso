@@ -252,3 +252,15 @@ When building ISOs for non-composefs (ostree/bootcDirect) targets:
 installs by block copy through gnome-setup. It shares nothing with the live ISO
 build. See [`image-installer/utah/README.md`](../image-installer/utah/README.md)
 for what must hold before it replaces the copy in `projectbluefin/utah`.
+
+### The Utah medium is a mirror: resync it, never edit it (2026-11-26)
+
+Every file under `image-installer/utah/` except its README is byte-identical
+to `projectbluefin/utah` `main` at the commit the README names. Renovate
+bumped digests in the copy (#415, #416, #419, #420) while Utah fixed the live
+initramfs (utah#1572) and ported the installed-system checks (utah#1591), so
+the copy drifted both ways. Fix: Renovate is off for that directory
+(`renovate.json`), and a change reaches it only by a resync from Utah, checked
+with the README's command. `raw_e2e.py` reads helpers at Utah-relative paths
+(`REPO = iso/raw/../..`): when Utah makes it read a new file, mirror that file
+at the same path in the same resync, or the E2E fails on a missing helper.
