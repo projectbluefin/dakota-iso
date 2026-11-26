@@ -1,6 +1,7 @@
 # ADR-0001: One installer for the Dakota and Utah live media
 
-- **Status:** Proposed. Nothing here is decided until castrojo and ahmedadan agree.
+- **Status:** Proposed. hanthor (owner) set the direction on 2026-11-26, below;
+  the Dakota details still need castrojo and ahmedadan.
 - **Date:** 2026-11-25
 - **Discussion:** https://github.com/projectbluefin/dakota-iso/issues/413
 - **Deciders:** castrojo, ahmedadan (Dakota); hanthor (Utah)
@@ -183,6 +184,24 @@ As reported by each author; only the Utah rows come from runs linked here.
 
 hanthor's position, as Utah's owner: both images should move to gnome-setup, and
 this repository should hold the media code for both. That allows A or C.
+
+## Owner direction (2026-11-26)
+
+Utah and Dakota install with **upstream GNOME and systemd only**: GNOME STF
+gnome-setup in front of systemd-sysinstall, systemd-repart and
+systemd-cryptenroll, then gnome-initial-setup. fisherman, bootc-installer
+(tuna-os) and #1934's own installer are not the target. That makes option A
+the default; option C stays open only if the no-restart migration can be done
+by systemd itself.
+
+What is not upstream today:
+
+| Piece | Gap | Upstream |
+|---|---|---|
+| gnome-setup | 6 patches in `hanthor/gnome-setup` `bluefin` (errors shown, post-install unit, recovery key on the installed disk and verified, disk passphrase without a TPM, socket paths, polkit list-slots) | to send as merge requests; upstream's own sysinstall switch is draft MR !9 |
+| systemd | Varlink sysinstall needs v262+; an encrypted root needs systemd#44337 (merged 2026-10-30, not in v262.2) | wait for a release, or carry the build until then |
+| systemd (Utah only) | `--install-kernel=no --install-boot-loader=no`, because Utah boots shim + GRUB | systemd#44968, open |
+| Glue per image | repart definitions and a post-install unit (new filesystem UUIDs, live entry removed, crypttab) | stays ours; keep it small |
 
 ## Proposal
 
