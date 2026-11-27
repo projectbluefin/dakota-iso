@@ -67,22 +67,6 @@ done
 A file `raw_e2e.py` starts to read must be added at its Utah path in the same
 resync.
 
-## Resync
-
-Copy every file below this directory (except this README) from the Utah
-commit, then check the copy:
-
-```bash
-sha=<utah commit>
-cd image-installer/utah
-git ls-files . ':!README.md' | while read -r p; do
-  git -C /path/to/utah show "$sha:$p" | cmp -s - "$p" || echo "differs: $p"
-done
-```
-
-A file `raw_e2e.py` starts to read must be added at its Utah path in the same
-resync.
-
 ## Cutover
 
 Until all of these hold, `projectbluefin/utah` keeps its copy, its nightly run
