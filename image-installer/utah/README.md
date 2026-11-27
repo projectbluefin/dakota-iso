@@ -8,7 +8,7 @@ discussion in #413.
 - Paths below this directory mirror the Utah repository (`iso/raw/`,
   `iso/scripts/`, `scripts/`, `config/`), and the files are byte-identical to
   `projectbluefin/utah` `main` at
-  `baa9948dc72ee98bd62f360e46ae45007b9b3291`, so the copy can be checked
+  `8a403541c72eb036d2c97280f6d5569169750cd0`, so the copy can be checked
   file by file against that commit (below).
 - `raw_e2e.py` resolves its helpers from those Utah-relative paths. Besides
   the medium's own files, it runs on the host `iso/scripts/qemu_monitor.py`,
@@ -18,6 +18,10 @@ discussion in #413.
   installed system `iso/scripts/e2e-services.sh`,
   `verify-installed-flavor.py`, `verify-countme-runtime.sh` and
   `scripts/verify-desktop-contract.py`.
+- `iso/raw/build-hybrid-iso.sh` (utah#1404) turns the raw medium into an El
+  Torito hybrid ISO with shim -> systemd-boot on its ESP (Secure Boot off),
+  reading only `iso/raw/medium.py`; `raw_e2e.py --iso --boot-as cdrom|usb`
+  boots it. No workflow here builds or tests the ISO yet.
 - Renovate leaves this directory alone (`renovate.json`): Utah's Renovate
   bumps the digests there and a resync brings them here.
 - gnome-setup is built from the `bluefin` branch of `hanthor/gnome-setup`, the
