@@ -30,7 +30,10 @@ discussion in #413.
   different monitor transport. Merge them after the cutover, when both lanes
   can be tested together.
 - `.github/workflows/utah-image-installer.yml` builds it and runs the GUI E2E on
-  pull requests that touch it, on dispatch, and when called.
+  pull requests that touch it, on dispatch, and when called. With its `iso`
+  input on, two more legs turn the medium into the hybrid ISO
+  (`iso/raw/build-hybrid-iso.sh`, projectbluefin/utah#1404) and boot the live
+  stage from it as a CD-ROM and as a USB disk (`raw_e2e.py --iso --boot-as`).
 - `.github/workflows/publish-utah-installer.yml` publishes it to
   `https://projectbluefin.dev/utah-installer-latest.raw.xz`, monthly and on
   dispatch: from the signature-verified `utah:stable` digest, only after the
@@ -38,6 +41,15 @@ discussion in #413.
   keylessly. It is xz-compressed so Fedora Media Writer (and GNOME Disks or
   Impression) flashes it directly. It replaces the fisherman ISO
   (`build-iso-utah.yml`, now dispatch only).
+- With the publish's `iso` input on, the E2E also runs the ISO legs and the
+  publish builds the hybrid ISO from the same clean medium and uploads it
+  beside the raw.xz as `utah-installer-latest.iso`, uncompressed (Fedora Media
+  Writer writes ISOs as is), with the same signed `-CHECKSUM` and three
+  rotated backups (`utah-installer-backup-N.iso`). Secure Boot must be off
+  until a signed boot chain lands (projectbluefin/utah#1380). The input
+  defaults off, and the schedule runs without it, until a resync brings
+  `iso/raw/build-hybrid-iso.sh`; then default it on and make the resolve
+  job's `iso` output `inputs.iso != false`.
 
 ## Resync
 

@@ -8,6 +8,10 @@ name: Utah image installer (experimental)
 # tag. Screenshots and logs are uploaded; the medium and disks never are (CI
 # media carry test credentials). projectbluefin/utah still runs its nightly and
 # publishes the medium until the cutover (image-installer/utah/README.md).
+# With iso on, two more legs turn the same medium into the hybrid ISO
+# (iso/raw/build-hybrid-iso.sh, projectbluefin/utah#1404) and boot the live
+# stage from it as a CD-ROM and as a USB disk; off until a mirror resync
+# brings that script and raw_e2e.py --iso/--boot-as.
 on:
   workflow_dispatch:
     inputs:
@@ -41,6 +45,10 @@ on:
         description: Download formats to measure (image-installer/utah/iso/raw/measure_medium.py; xz-9 adds ~20 min)
         type: string
         default: zstd-3,zstd-19-long
+      iso:
+        description: Also run the E2E from the hybrid ISO, booted as a CD-ROM and as a USB disk (needs iso/raw/build-hybrid-iso.sh in the mirror)
+        type: boolean
+        default: false
   # publish-utah-installer.yml runs it on the digest it is about to publish.
   workflow_call:
     inputs:
@@ -72,6 +80,10 @@ on:
         description: Download formats to measure (image-installer/utah/iso/raw/measure_medium.py; xz-9 adds ~20 min)
         type: string
         default: zstd-3,zstd-19-long
+      iso:
+        description: Also run the E2E from the hybrid ISO, booted as a CD-ROM and as a USB disk (needs iso/raw/build-hybrid-iso.sh in the mirror)
+        type: boolean
+        default: false
   pull_request:
     paths:
       - image-installer/utah/**
@@ -101,6 +113,7 @@ jobs:
         timeout-minutes: 10
         env:
           IMAGE_REF: ${{ inputs.image_ref }}
+          ISO: ${{ inputs.iso == true }}
         run: |
           set -euo pipefail
           # The bootc switch target: the newest testing-YYYYMMDD-* digest that is not the baseline.
@@ -120,19 +133,26 @@ jobs:
           else
             images=(utah)
           fi
+          # One leg boots the raw medium; with iso on, two more boot it as the hybrid ISO.
+          boots=(raw)
+          [[ "$ISO" != true ]] || boots+=(cdrom usb)
           for image in "${images[@]}"; do
             repo="ghcr.io/projectbluefin/$image"
             if [[ -n "$IMAGE_REF" ]]; then digest="${IMAGE_REF#*@}"
             else digest=$(skopeo inspect --format '{{.Digest}}' "docker://$repo:testing"); fi
-            entries+=("$(jq -cn --arg image "$image" --arg ref "$repo@$digest" --arg digest "$digest" \
-              --arg candidate "$(candidate "$repo" "$digest")" '{image:$image,ref:$ref,digest:$digest,candidate:$candidate}')")
+            cand=$(candidate "$repo" "$digest")
+            for boot in "${boots[@]}"; do
+              entries+=("$(jq -cn --arg image "$image" --arg ref "$repo@$digest" --arg digest "$digest" \
+                --arg candidate "$cand" --arg boot "$boot" \
+                '{image:$image,ref:$ref,digest:$digest,candidate:$candidate,boot:$boot}')")
+            done
           done
           matrix=$(printf '%s\n' "${entries[@]}" | jq -cs '{include: .}')
           echo "$matrix" | jq .
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   e2e:
-    name: e2e (${{ matrix.image }})
+    name: e2e (${{ matrix.image }}${{ matrix.boot != 'raw' && format(', iso {0}', matrix.boot) || '' }})
     needs: resolve
     runs-on: ubuntu-24.04
     timeout-minutes: 330
@@ -155,6 +175,7 @@ jobs:
       FLATPAKS: ${{ github.event_name != 'workflow_dispatch' || inputs.flatpaks }}
       FORMATS: ${{ inputs.formats || 'zstd-3,zstd-19-long' }}
       TPM: ${{ github.event_name != 'workflow_dispatch' || inputs.tpm }}
+      BOOT: ${{ matrix.boot }}
     steps:
       - name: Resolve the btrfs compression
         timeout-minutes: 5
@@ -247,6 +268,14 @@ jobs:
           sudo chown -R "$USER" "$ev"
           sudo podman rmi -af >/dev/null || true
           df -h / /mnt
+      - name: Build the hybrid ISO from the medium
+        if: matrix.boot != 'raw'
+        run: |
+          set -euo pipefail
+          sudo env UTAH_RAW_EVIDENCE="$WORK/raw-evidence" \
+            bash image-installer/utah/iso/raw/build-hybrid-iso.sh "$WORK/medium.raw" "$WORK/medium.iso"
+          sudo chown "$USER" "$WORK/medium.iso"
+          sudo chown -R "$USER" "$WORK/raw-evidence"
       - name: End-to-end with screenshots
         env:
           CANDIDATE: ${{ matrix.candidate }}
@@ -258,8 +287,11 @@ jobs:
           # unless the dispatch turned it off (the no-TPM disk passphrase path).
           tpm=()
           [[ "$TPM" != true ]] || tpm=(--tpm)
+          # The ISO legs boot the live stage from the hybrid ISO instead of the raw.
+          iso=()
+          [[ "$BOOT" == raw ]] || iso=(--iso "$WORK/medium.iso" --boot-as "$BOOT")
           python3 image-installer/utah/iso/raw/raw_e2e.py --raw "$WORK/medium.raw" --work "$WORK/e2e" --install "$INSTALL" \
-            "${tpm[@]}" \
+            "${tpm[@]}" "${iso[@]}" \
             --candidate "$CANDIDATE" --ssh-key "$WORK/id_ed25519" --backend "$MEDIUM_BACKEND" \
             --backend-decision "$WORK/raw-evidence/backend.json" "${baked[@]}" 2>&1 | tee "$WORK/e2e.log"
       - name: Measure the medium
@@ -286,7 +318,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: utah-image-installer-${{ matrix.image }}
+          name: utah-image-installer-${{ matrix.image }}${{ matrix.boot != 'raw' && format('-iso-{0}', matrix.boot) || '' }}
           retention-days: 30
           if-no-files-found: warn
           path: |
