@@ -45,6 +45,7 @@ TEST_PLAIN_WORKFLOW = REPO / ".github" / "workflows" / "test-plain-install.yml"
 LIVE_LUKS_UNLOCK = REPO / "live" / "src" / "luks-unlock.py"
 BUILD_LIVE_SQUASHFS = REPO / "scripts" / "build-live-squashfs.sh"
 ISO_SD_BOOT = REPO / "scripts" / "iso-sd-boot.sh"
+FISHERMAN_INSTALL = REPO / "scripts" / "fisherman-install.sh"
 PAYLOAD_OCI = REPO / "scripts" / "payload-oci.sh"
 README = REPO / "README.md"
 
@@ -1850,3 +1851,79 @@ class TestInstallerChannelURLs(unittest.TestCase):
         self.assertEqual(
             set(entries), {"tag", "org.bootcinstaller.Installer.flatpak", "org.bootcinstaller.Installer.Devel.flatpak"}
         )
+
+
+class TestFishermanEnospcReport(unittest.TestCase):
+    """fisherman-install.sh must report ENOSPC on every failure path (#432).
+
+    Before #432 the ENOSPC report (df -h plus du of the RAM-backed live mounts)
+    was printed only in the non-retry failure branch. When the partition-table
+    busy retry was the run that failed, the script exited without the report, so
+    an out-of-space failure on the retry gave no clue which mount filled. The
+    report was moved into a function and called on both failure exits.
+    """
+
+    def test_fisherman_install_bash_syntax(self):
+        """bash -n must pass on fisherman-install.sh."""
+        result = subprocess.run(
+            ["bash", "-n", str(FISHERMAN_INSTALL)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"fisherman-install.sh has bash syntax errors:\n{result.stderr}",
+        )
+
+    def test_enospc_report_is_a_function(self):
+        """The ENOSPC report must live in report_enospc(), not inline."""
+        content = FISHERMAN_INSTALL.read_text(encoding="utf-8")
+        self.assertIn(
+            "report_enospc() {",
+            content,
+            "fisherman-install.sh must define a report_enospc() function so "
+            "every failure path can print the ENOSPC report once.",
+        )
+
+    def test_enospc_report_called_on_both_failure_paths(self):
+        """report_enospc() must run before each ENOSPC exit (#432)."""
+        content = FISHERMAN_INSTALL.read_text(encoding="utf-8")
+        lines = content.splitlines()
+
+        # The report is defined once and must be called once per failure exit:
+        # the partition-busy retry failure and the non-retry failure. A call
+        # site is a bare "report_enospc" (the definition carries the "(").
+        call_sites = [ln for ln in lines if ln.strip() == "report_enospc"]
+        self.assertEqual(
+            len(call_sites), 2,
+            "report_enospc() must be called exactly twice — once on the "
+            "partition-busy retry failure and once on the non-retry failure, so "
+            "an out-of-space failure on either path prints the report.",
+        )
+
+        # Each exit "$FISH_RC" in the failure handler must be preceded by the
+        # call, so the report prints before the script propagates the failure.
+        for idx, line in enumerate(lines):
+            if line.strip() == 'exit "$FISH_RC"':
+                prev = lines[idx - 1].strip() if idx > 0 else ""
+                self.assertEqual(
+                    prev, "report_enospc",
+                    f'exit at line {idx + 1} must be preceded by a '
+                    "report_enospc() call so the ENOSPC report prints on this "
+                    f"failure path; found {prev!r} instead.",
+                )
+
+    def test_enospc_report_body_unchanged(self):
+        """The report itself still prints df -h and du of each RAM mount."""
+        content = FISHERMAN_INSTALL.read_text(encoding="utf-8")
+        for needle in (
+            "df -h",
+            'du -xah --max-depth=4 "$mnt"',
+            "for mnt in /run /tmp /var/tmp /dev/shm",
+            'grep -qi "no space left on device" /tmp/fish.log',
+        ):
+            self.assertIn(
+                needle, content,
+                f"The ENOSPC report must still contain {needle!r} so the CI log "
+                f"shows which RAM-backed mount filled.",
+            )

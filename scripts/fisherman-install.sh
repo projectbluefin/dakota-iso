@@ -33,6 +33,29 @@ FISHERMAN_BIN="${FISHERMAN_BIN:-/usr/local/bin/fisherman}"
 ENABLE_DEBUG_SSH=0
 [[ "${2:-}" == "--enable-debug-ssh" ]] && ENABLE_DEBUG_SSH=1
 
+# When fisherman exits "No space left on device", print which RAM-backed live
+# mount filled before the script exits. Defined once and called on every
+# ENOSPC failure path so the retry and the non-retry exit both report it.
+report_enospc() {
+    # ENOSPC names no filesystem, and the RAM-backed live mounts (/run,
+    # /tmp, /var/tmp, the overlay root) share one memory budget (#322).
+    # Report what each one holds so the CI log shows which one filled.
+    if grep -qi "no space left on device" /tmp/fish.log; then
+        echo "==> ENOSPC: filesystem usage at failure"
+        df -h 2>&1 || true
+        # One du per mount: du counts each inode once across all of its
+        # arguments, and "/" is the overlay over the multi-GB read-only
+        # squashfs, so measuring "/" first hid what filled /run (#323).
+        # The overlay's writable upper layer lives under /run, so this
+        # also shows what was written to the live root.
+        for mnt in /run /tmp /var/tmp /dev/shm; do
+            echo "==> ENOSPC: largest entries under $mnt"
+            du -xah --max-depth=4 "$mnt" 2>/dev/null |
+                sort -rh | head -15 || true
+        done
+    fi
+}
+
 FISH_RC=1
 for attempt in 1 2 3; do
     "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 && {
@@ -73,27 +96,12 @@ if [[ $FISH_RC -ne 0 ]]; then
         cat /tmp/fish.log
         if [[ $FISH_RC -ne 0 ]]; then
             echo "==> fisherman retry failed (rc=$FISH_RC) — propagating"
+            report_enospc
             exit "$FISH_RC"
         fi
     else
         echo "==> fisherman failed for a non-hostname reason (rc=$FISH_RC) — propagating"
-        # ENOSPC names no filesystem, and the RAM-backed live mounts (/run,
-        # /tmp, /var/tmp, the overlay root) share one memory budget (#322).
-        # Report what each one holds so the CI log shows which one filled.
-        if grep -qi "no space left on device" /tmp/fish.log; then
-            echo "==> ENOSPC: filesystem usage at failure"
-            df -h 2>&1 || true
-            # One du per mount: du counts each inode once across all of its
-            # arguments, and "/" is the overlay over the multi-GB read-only
-            # squashfs, so measuring "/" first hid what filled /run (#323).
-            # The overlay's writable upper layer lives under /run, so this
-            # also shows what was written to the live root.
-            for mnt in /run /tmp /var/tmp /dev/shm; do
-                echo "==> ENOSPC: largest entries under $mnt"
-                du -xah --max-depth=4 "$mnt" 2>/dev/null |
-                    sort -rh | head -15 || true
-            done
-        fi
+        report_enospc
         exit "$FISH_RC"
     fi
 else
