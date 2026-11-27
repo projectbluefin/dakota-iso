@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -110,6 +111,16 @@ class GrubMenuTests(unittest.TestCase):
                     "[  OK  ] Started utah-live-root.service - Utah live root overlay.\n"):
             with self.subTest(ocr=ocr):
                 self.assertEqual(raw_e2e.boot_frame(ocr), "other")
+
+    def test_without_kvm_ci_fails_and_a_local_run_falls_back_to_tcg(self):
+        # A vanished KVM grant made the candidate's installed VM run under TCG and
+        # time out into emergency mode (run 45950837602); CI must say so up front.
+        self.assertEqual(raw_e2e.accel_args(True, ci=True), ["-accel", "kvm", "-cpu", "host"])
+        with self.assertRaisesRegex(raw_e2e.Fail, "/dev/kvm is not writable"):
+            raw_e2e.accel_args(False, ci=True)
+        with mock.patch.object(raw_e2e, "log") as log:
+            self.assertEqual(raw_e2e.accel_args(False, ci=False), ["-accel", "tcg"])
+        log.assert_called_once()
 
     def test_grub_live_text_is_the_live_entry_title(self):
         self.assertTrue(medium.LIVE_TITLE.lower().startswith(raw_e2e.GRUB_LIVE_TEXT))
@@ -902,6 +913,22 @@ class InstalledSystemCheckTests(unittest.TestCase):
     def test_the_e2e_host_has_tesseract_for_the_fastfetch_check(self):
         steps = {s.get("name"): s.get("run", "") for s in yaml.safe_load(WORKFLOW.read_text())["jobs"]["e2e"]["steps"]}
         self.assertIn("tesseract-ocr", steps["Prepare host (podman storage and work dir on /mnt, QEMU, KVM)"])
+
+    def test_every_job_running_the_harness_grants_kvm_by_mode(self):
+        # raw_e2e.py fails under CI unless /dev/kvm is writable; a setfacl grant
+        # vanished before Utah's installed VM booted (utah#1631, run 45950837602),
+        # while chmod lasts across every VM of the job.
+        jobs = []
+        for path in sorted((REPO / ".github/workflows").glob("*.yml")):
+            for name, job in (yaml.safe_load(path.read_text())["jobs"] or {}).items():
+                run = "\n".join(s.get("run", "") for s in job.get("steps", []))
+                if "iso/raw/raw_e2e.py" in run:
+                    jobs.append((path.name, name))
+                    with self.subTest(workflow=path.name, job=name):
+                        self.assertIn("sudo chmod a+rw /dev/kvm", run)
+                        self.assertLess(run.index("sudo chmod a+rw /dev/kvm"), run.index("iso/raw/raw_e2e.py"))
+                        self.assertNotIn("setfacl", run)
+        self.assertIn(("utah-image-installer.yml", "e2e"), jobs)
 
 
 class MirrorTests(unittest.TestCase):
