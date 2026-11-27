@@ -21,7 +21,8 @@ discussion in #413.
 - `iso/raw/build-hybrid-iso.sh` (utah#1404) turns the raw medium into an El
   Torito hybrid ISO with shim -> systemd-boot on its ESP (Secure Boot off),
   reading only `iso/raw/medium.py`; `raw_e2e.py --iso --boot-as cdrom|usb`
-  boots it. No workflow here builds or tests the ISO yet.
+  boots it. The publish builds it and gates the upload on its CD-ROM and USB
+  legs (below).
 - Renovate leaves this directory alone (`renovate.json`): Utah's Renovate
   bumps the digests there and a resync brings them here.
 - gnome-setup is built from the `bluefin` branch of `hanthor/gnome-setup`, the
@@ -41,15 +42,14 @@ discussion in #413.
   keylessly. It is xz-compressed so Fedora Media Writer (and GNOME Disks or
   Impression) flashes it directly. It replaces the fisherman ISO
   (`build-iso-utah.yml`, now dispatch only).
-- With the publish's `iso` input on, the E2E also runs the ISO legs and the
-  publish builds the hybrid ISO from the same clean medium and uploads it
-  beside the raw.xz as `utah-installer-latest.iso`, uncompressed (Fedora Media
-  Writer writes ISOs as is), with the same signed `-CHECKSUM` and three
-  rotated backups (`utah-installer-backup-N.iso`). Secure Boot must be off
-  until a signed boot chain lands (projectbluefin/utah#1380). The input
-  defaults off, and the schedule runs without it, until a resync brings
-  `iso/raw/build-hybrid-iso.sh`; then default it on and make the resolve
-  job's `iso` output `inputs.iso != false`.
+- The publish also runs the ISO legs in its E2E, builds the hybrid ISO from
+  the same clean medium and uploads it beside the raw.xz as
+  `utah-installer-latest.iso`, uncompressed (Fedora Media Writer writes ISOs
+  as is), with the same signed `-CHECKSUM` and three rotated backups
+  (`utah-installer-backup-N.iso`). Secure Boot must be off until a signed boot
+  chain lands (projectbluefin/utah#1380). Its `iso` input is on for schedules
+  and by default; dispatch with `iso=false` to test and publish the raw.xz
+  alone.
 
 ## Resync
 

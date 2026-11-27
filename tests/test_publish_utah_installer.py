@@ -79,16 +79,19 @@ class PublishHybridIsoTests(unittest.TestCase):
     def step(self, name):
         return next(s for s in self.steps() if s.get("name") == name)
 
-    def test_the_iso_switch_is_off_until_the_mirror_carries_the_script(self):
+    def test_the_iso_switch_is_on_for_schedules_and_by_default(self):
         flag = self.workflow[True]["workflow_dispatch"]["inputs"]["iso"]
-        self.assertEqual((flag["type"], flag["default"]), ("boolean", False))
-        # inputs.iso is null on schedule: `== true` turns that into off.
-        self.assertEqual(self.workflow["jobs"]["resolve"]["outputs"]["iso"], "${{ inputs.iso == true }}")
+        self.assertEqual((flag["type"], flag["default"]), ("boolean", True))
+        # inputs.iso is null on schedule: `!= false` turns that into on; only
+        # a dispatch with iso=false turns it off.
+        self.assertEqual(self.workflow["jobs"]["resolve"]["outputs"]["iso"], "${{ inputs.iso != false }}")
         self.assertEqual(self.workflow["jobs"]["publish"]["env"]["ISO"], "${{ needs.resolve.outputs.iso }}")
 
     def test_the_iso_is_published_only_after_its_e2e_legs(self):
         # The same switch adds the CD-ROM and USB legs to the E2E the publish needs.
         self.assertEqual(self.workflow["jobs"]["e2e"]["with"]["iso"], "${{ needs.resolve.outputs.iso == 'true' }}")
+        self.assertEqual(set(self.workflow["jobs"]["publish"]["needs"]), {"resolve", "e2e"})
+        # Pull requests and dispatches of the E2E itself run the raw leg alone.
         e2e = load("utah-image-installer.yml")
         for trigger in ("workflow_call", "workflow_dispatch"):
             flag = e2e[True][trigger]["inputs"]["iso"]

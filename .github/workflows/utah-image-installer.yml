@@ -10,8 +10,8 @@ name: Utah image installer (experimental)
 # publishes the medium until the cutover (image-installer/utah/README.md).
 # With iso on, two more legs turn the same medium into the hybrid ISO
 # (iso/raw/build-hybrid-iso.sh, projectbluefin/utah#1404) and boot the live
-# stage from it as a CD-ROM and as a USB disk; off until a mirror resync
-# brings that script and raw_e2e.py --iso/--boot-as.
+# stage from it as a CD-ROM and as a USB disk. publish-utah-installer.yml
+# turns it on; pull requests and dispatches default to the raw leg alone.
 on:
   workflow_dispatch:
     inputs:

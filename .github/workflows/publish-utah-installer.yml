@@ -13,17 +13,15 @@ name: Publish Utah installer medium
 #      rotating three backups the way build-iso-utah.yml does. xz because
 #      Fedora Media Writer, GNOME Disks and Impression decompress only .xz
 #      (they would write zstd-compressed bytes to the stick as is);
-#   4. with the iso flag on, the E2E also boots the live stage from the hybrid
-#      ISO (build-hybrid-iso.sh, projectbluefin/utah#1404) as a CD-ROM and as a
+#   4. the E2E also boots the live stage from the hybrid ISO
+#      (build-hybrid-iso.sh, projectbluefin/utah#1404) as a CD-ROM and as a
 #      USB disk, and the publish job builds that ISO from the same medium and
 #      uploads it uncompressed as utah-installer-latest.iso (Fedora Media
 #      Writer writes ISOs as is), signed and rotated like the raw.xz. Secure
 #      Boot off until a signed chain lands (projectbluefin/utah#1380).
 #
-# The iso flag defaults OFF (dispatch input `iso`, off on schedule) until a
-# mirror resync brings iso/raw/build-hybrid-iso.sh and raw_e2e.py --iso. Then
-# turn it on for every run: default the input to true and make the resolve
-# job's iso output `inputs.iso != false`.
+# The iso flag is on for schedules and by default on dispatch; dispatch with
+# iso=false to test and publish the raw.xz alone.
 #
 # Monthly on the 8th like the Utah ISO, and on dispatch from main.
 on:
@@ -36,9 +34,9 @@ on:
         type: boolean
         default: false
       iso:
-        description: Also E2E (CD-ROM and USB disk) and publish the hybrid ISO; needs a mirror with iso/raw/build-hybrid-iso.sh
+        description: Also E2E (CD-ROM and USB disk) and publish the hybrid ISO; false = raw.xz only
         type: boolean
-        default: false
+        default: true
 
 permissions: {}
 
@@ -54,8 +52,8 @@ jobs:
       contents: read
     outputs:
       ref: ${{ steps.pin.outputs.ref }}
-      # The one switch for the ISO: its E2E legs and its publication. Null on schedule.
-      iso: ${{ inputs.iso == true }}
+      # The one switch for the ISO: its E2E legs and its publication. Null on schedule = on.
+      iso: ${{ inputs.iso != false }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
