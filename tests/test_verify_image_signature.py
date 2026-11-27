@@ -201,6 +201,62 @@ class TestDigestContract(VerifyImageSignatureHarness):
         self.assertEqual(result.stdout, "")
 
 
+class TestCosignFallback(VerifyImageSignatureHarness):
+    def _without_cosign(self, arch):
+        (self.bindir / "cosign").unlink()
+        (self.bindir / "uname").unlink()
+        self._stub("uname", f'echo "{arch}"\n')
+
+    def test_fallback_fetches_pinned_version_and_refuses_tampered_binary(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        m = re.search(r'^COSIGN_VERSION="([^"]+)"$', text, re.M)
+        self.assertIsNotNone(m, "COSIGN_VERSION not found")
+        version = m.group(1)
+
+        for uname_arch, cosign_arch in (("x86_64", "amd64"), ("aarch64", "arm64")):
+            with self.subTest(arch=uname_arch):
+                self.calls.write_text("")
+                if (self.bindir / "cosign").exists():
+                    (self.bindir / "cosign").unlink()
+                (self.bindir / "uname").unlink()
+                self._stub("uname", f'echo "{uname_arch}"\n')
+                self._stub("curl", """
+                    echo "curl $*" >>"$STUB_CALLS"
+                    out=""
+                    while [[ $# -gt 0 ]]; do
+                        if [[ "$1" == "-o" ]]; then
+                            out="$2"
+                            shift 2
+                        else
+                            shift
+                        fi
+                    done
+                    printf 'tampered-binary' >"$out"
+                """)
+                result = self.run_script("ghcr.io/projectbluefin/dakota-nvidia:stable")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("download failed checksum verification", result.stderr)
+                self.assertNotIn("ghcr.io/", result.stdout)
+                curl_calls = [
+                    ln[len("curl "):]
+                    for ln in self.calls.read_text().splitlines()
+                    if ln.startswith("curl ")
+                ]
+                self.assertEqual(len(curl_calls), 1, curl_calls)
+                self.assertIn(
+                    f"https://github.com/sigstore/cosign/releases/download/{version}/cosign-linux-{cosign_arch}",
+                    curl_calls[0],
+                )
+
+    def test_fallback_refuses_unsupported_architecture(self):
+        self._without_cosign("s390x")
+        result = self.run_script("ghcr.io/projectbluefin/dakota-nvidia:stable")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no pinned fallback for arch 's390x'", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.calls.read_text().strip(), "")
+
+
 class TestScriptInvariants(unittest.TestCase):
     def test_identity_regexp_is_not_the_bare_organisation_prefix(self):
         """Regression guard: '^https://github\\.com/projectbluefin/' alone matched every
@@ -210,6 +266,27 @@ class TestScriptInvariants(unittest.TestCase):
         self.assertIsNotNone(m, "IDENTITY_REGEXP not found")
         self.assertIn(r"\.github/workflows/", m.group(1))
         self.assertIn("--certificate-github-workflow-repository=", text)
+
+    def test_cosign_fallback_is_pinned_to_v3_with_sha256_checksums(self):
+        """Regression guard for #438: fallback stays on cosign v3 with pinned
+        amd64/arm64 SHA-256 digests and does not claim to mirror the workflow
+        installer's moving default."""
+        text = SCRIPT.read_text(encoding="utf-8")
+        m = re.search(r'^COSIGN_VERSION="([^"]+)"$', text, re.M)
+        self.assertIsNotNone(m, "COSIGN_VERSION not found")
+        self.assertRegex(m.group(1), r"^v3\.\d+\.\d+$")
+        self.assertNotIn("matches the installer's", text)
+
+        shas = {}
+        for uname_arch, cosign_arch in (("x86_64", "amd64"), ("aarch64", "arm64")):
+            arm = re.search(
+                rf"^\s*{uname_arch}\)\s+cosign_arch={cosign_arch};\s+cosign_sha=([0-9a-f]{{64}})\s+;;$",
+                text,
+                re.M,
+            )
+            self.assertIsNotNone(arm, f"missing 64-hex sha256 pin for {uname_arch}/{cosign_arch}")
+            shas[cosign_arch] = arm.group(1)
+        self.assertNotEqual(shas["amd64"], shas["arm64"])
 
 
 if __name__ == "__main__":
