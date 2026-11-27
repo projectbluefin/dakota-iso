@@ -28,11 +28,12 @@ discussion in #413.
 - `.github/workflows/utah-image-installer.yml` builds it and runs the GUI E2E on
   pull requests that touch it, on dispatch, and when called.
 - `.github/workflows/publish-utah-installer.yml` publishes it to
-  `https://projectbluefin.dev/utah-installer-latest.raw.zst`, monthly and on
+  `https://projectbluefin.dev/utah-installer-latest.raw.xz`, monthly and on
   dispatch: from the signature-verified `utah:stable` digest, only after the
   GUI E2E passed on that digest, with no test credentials, checksum signed
-  keylessly. It replaces the fisherman ISO (`build-iso-utah.yml`, now dispatch
-  only).
+  keylessly. It is xz-compressed so Fedora Media Writer (and GNOME Disks or
+  Impression) flashes it directly. It replaces the fisherman ISO
+  (`build-iso-utah.yml`, now dispatch only).
 
 ## Resync
 

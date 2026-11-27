@@ -8,10 +8,11 @@ name: Publish Utah installer medium
 #   1. resolve and signature-verify ghcr.io/projectbluefin/utah:stable;
 #   2. run the whole GUI E2E (utah-image-installer.yml) on that exact digest;
 #   3. only if it passes, build the medium again with no test credentials,
-#      bake the Flatpaks, shrink it, compress it (zstd -19 --long=31), sign
-#      its checksum keylessly and upload it to R2 as
-#      utah-installer-latest.raw.zst, rotating three backups the way
-#      build-iso-utah.yml does.
+#      bake the Flatpaks, shrink it, compress it (xz), sign its checksum
+#      keylessly and upload it to R2 as utah-installer-latest.raw.xz,
+#      rotating three backups the way build-iso-utah.yml does. xz because
+#      Fedora Media Writer, GNOME Disks and Impression decompress only .xz
+#      (they would write zstd-compressed bytes to the stick as is).
 #
 # Monthly on the 8th like the Utah ISO, and on dispatch from main.
 on:
@@ -70,7 +71,7 @@ jobs:
     env:
       WORK: /mnt/publish
       SOURCE_REF: ${{ needs.resolve.outputs.ref }}
-      LATEST_NAME: utah-installer-latest.raw.zst
+      LATEST_NAME: utah-installer-latest.raw.xz
       BASE: utah-installer
       RAW: image-installer/utah/iso/raw
     steps:
@@ -84,7 +85,7 @@ jobs:
           set -euo pipefail
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo apt-get update
-          sudo apt-get install -y podman skopeo qemu-utils zstd rclone
+          sudo apt-get install -y podman skopeo qemu-utils xz-utils rclone
           sudo mkdir -p /mnt/containers /var/lib/containers "$WORK"
           sudo mount --bind /mnt/containers /var/lib/containers
           sudo chown "$USER" "$WORK"
@@ -122,7 +123,7 @@ jobs:
       - name: Compress, checksum and sign
         run: |
           set -euo pipefail
-          zstd -q -T0 -19 --long=31 -o "$WORK/$LATEST_NAME" "$WORK/medium.raw"
+          xz -T0 -6 -c "$WORK/medium.raw" > "$WORK/$LATEST_NAME"
           rm -f "$WORK/medium.raw"
           cd "$WORK"
           sha256sum "$LATEST_NAME" > "$LATEST_NAME-CHECKSUM"
@@ -149,11 +150,11 @@ jobs:
           }
           for n in 2 1; do
             for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
-              move_if_exists "$BASE-backup-$n.raw.zst$suffix" "$BASE-backup-$((n + 1)).raw.zst$suffix"
+              move_if_exists "$BASE-backup-$n.raw.xz$suffix" "$BASE-backup-$((n + 1)).raw.xz$suffix"
             done
           done
           for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
-            move_if_exists "$LATEST_NAME$suffix" "$BASE-backup-1.raw.zst$suffix"
+            move_if_exists "$LATEST_NAME$suffix" "$BASE-backup-1.raw.xz$suffix"
           done
           for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
             rclone copyto --log-level INFO --s3-no-check-bucket "$LATEST_NAME$suffix" "R2:testing/$LATEST_NAME$suffix"
