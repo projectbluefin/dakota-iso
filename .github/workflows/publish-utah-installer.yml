@@ -12,7 +12,16 @@ name: Publish Utah installer medium
 #      keylessly and upload it to R2 as utah-installer-latest.raw.xz,
 #      rotating three backups the way build-iso-utah.yml does. xz because
 #      Fedora Media Writer, GNOME Disks and Impression decompress only .xz
-#      (they would write zstd-compressed bytes to the stick as is).
+#      (they would write zstd-compressed bytes to the stick as is);
+#   4. the E2E also boots the live stage from the hybrid ISO
+#      (build-hybrid-iso.sh, projectbluefin/utah#1404) as a CD-ROM and as a
+#      USB disk, and the publish job builds that ISO from the same medium and
+#      uploads it uncompressed as utah-installer-latest.iso (Fedora Media
+#      Writer writes ISOs as is), signed and rotated like the raw.xz. Secure
+#      Boot off until a signed chain lands (projectbluefin/utah#1380).
+#
+# The iso flag is on for schedules and by default on dispatch; dispatch with
+# iso=false to test and publish the raw.xz alone.
 #
 # Monthly on the 8th like the Utah ISO, and on dispatch from main.
 on:
@@ -24,6 +33,10 @@ on:
         description: Build, test and sign, but do not upload to R2 (dry run)
         type: boolean
         default: false
+      iso:
+        description: Also E2E (CD-ROM and USB disk) and publish the hybrid ISO; false = raw.xz only
+        type: boolean
+        default: true
 
 permissions: {}
 
@@ -39,6 +52,8 @@ jobs:
       contents: read
     outputs:
       ref: ${{ steps.pin.outputs.ref }}
+      # The one switch for the ISO: its E2E legs and its publication. Null on schedule = on.
+      iso: ${{ inputs.iso != false }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -59,6 +74,7 @@ jobs:
     uses: ./.github/workflows/utah-image-installer.yml
     with:
       image_ref: ${{ needs.resolve.outputs.ref }}
+      iso: ${{ needs.resolve.outputs.iso == 'true' }}
 
   publish:
     needs: [resolve, e2e]
@@ -72,6 +88,8 @@ jobs:
       WORK: /mnt/publish
       SOURCE_REF: ${{ needs.resolve.outputs.ref }}
       LATEST_NAME: utah-installer-latest.raw.xz
+      ISO_NAME: utah-installer-latest.iso
+      ISO: ${{ needs.resolve.outputs.iso }}
       BASE: utah-installer
       RAW: image-installer/utah/iso/raw
     steps:
@@ -85,6 +103,8 @@ jobs:
           set -euo pipefail
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           sudo apt-get update
+          # build-hybrid-iso.sh's "# Host tools:" are stock here (util-linux, coreutils,
+          # diffutils, python3, udev); systemd-repart and systemd-boot come from the medium.
           sudo apt-get install -y podman skopeo qemu-utils xz-utils rclone
           sudo mkdir -p /mnt/containers /var/lib/containers "$WORK"
           sudo mount --bind /mnt/containers /var/lib/containers
@@ -120,6 +140,14 @@ jobs:
             bash "$RAW/shrink-raw-image.sh" localhost/utah-publish:ci "$WORK/medium.raw"
           sudo chown "$USER" "$WORK/medium.raw"
           sudo podman rmi -af >/dev/null || true
+      # Before the raw is compressed and removed: the ISO block-copies its partitions.
+      - name: Build the hybrid ISO from the medium
+        if: env.ISO == 'true'
+        run: |
+          set -euo pipefail
+          sudo env UTAH_RAW_EVIDENCE="$WORK/raw-evidence" \
+            bash "$RAW/build-hybrid-iso.sh" "$WORK/medium.raw" "$WORK/$ISO_NAME"
+          sudo chown "$USER" "$WORK/$ISO_NAME"
       - name: Compress, checksum and sign
         run: |
           set -euo pipefail
@@ -129,6 +157,14 @@ jobs:
           sha256sum "$LATEST_NAME" > "$LATEST_NAME-CHECKSUM"
           cosign sign-blob --yes --bundle "$LATEST_NAME-CHECKSUM.sigstore.json" "$LATEST_NAME-CHECKSUM"
           echo "medium: $(du -h "$LATEST_NAME" | cut -f1), from $SOURCE_REF" >> "$GITHUB_STEP_SUMMARY"
+      - name: Checksum and sign the ISO (uncompressed)
+        if: env.ISO == 'true'
+        run: |
+          set -euo pipefail
+          cd "$WORK"
+          sha256sum "$ISO_NAME" > "$ISO_NAME-CHECKSUM"
+          cosign sign-blob --yes --bundle "$ISO_NAME-CHECKSUM.sigstore.json" "$ISO_NAME-CHECKSUM"
+          echo "ISO: $(du -h "$ISO_NAME" | cut -f1), from $SOURCE_REF" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload to Cloudflare R2
         if: inputs.skip_upload != true
         env:
@@ -148,20 +184,31 @@ jobs:
               rclone moveto --log-level INFO --s3-no-check-bucket "R2:testing/$1" "R2:testing/$2"
             fi
           }
-          for n in 2 1; do
-            for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
-              move_if_exists "$BASE-backup-$n.raw.xz$suffix" "$BASE-backup-$((n + 1)).raw.xz$suffix"
+          # publish NAME EXT: rotate NAME's three backups ($BASE-backup-N.EXT,
+          # with its -CHECKSUM and -CHECKSUM.sigstore.json), then upload NAME.
+          published=()
+          publish() {
+            local latest="$1" ext="$2" n suffix
+            for n in 2 1; do
+              for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
+                move_if_exists "$BASE-backup-$n.$ext$suffix" "$BASE-backup-$((n + 1)).$ext$suffix"
+              done
             done
-          done
-          for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
-            move_if_exists "$LATEST_NAME$suffix" "$BASE-backup-1.raw.xz$suffix"
-          done
-          for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
-            rclone copyto --log-level INFO --s3-no-check-bucket "$LATEST_NAME$suffix" "R2:testing/$LATEST_NAME$suffix"
-          done
+            for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
+              move_if_exists "$latest$suffix" "$BASE-backup-1.$ext$suffix"
+            done
+            for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
+              rclone copyto --log-level INFO --s3-no-check-bucket "$latest$suffix" "R2:testing/$latest$suffix"
+            done
+            published+=("$latest")
+          }
+          publish "$LATEST_NAME" raw.xz
+          if [[ "$ISO" == true ]]; then publish "$ISO_NAME" iso; fi
           {
             echo "## Published"
-            echo "- [$LATEST_NAME](https://projectbluefin.dev/$LATEST_NAME)"
-            echo "- [$LATEST_NAME-CHECKSUM](https://projectbluefin.dev/$LATEST_NAME-CHECKSUM)"
-            echo "- [$LATEST_NAME-CHECKSUM.sigstore.json](https://projectbluefin.dev/$LATEST_NAME-CHECKSUM.sigstore.json)"
+            for name in "${published[@]}"; do
+              for suffix in "" -CHECKSUM -CHECKSUM.sigstore.json; do
+                echo "- [$name$suffix](https://projectbluefin.dev/$name$suffix)"
+              done
+            done
           } >> "$GITHUB_STEP_SUMMARY"
