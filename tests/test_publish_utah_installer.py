@@ -41,6 +41,20 @@ class PublishUtahInstallerTests(unittest.TestCase):
         self.assertNotIn("schedule", load("build-iso-utah.yml")[True])
         self.assertIn("schedule", self.workflow[True])
 
+    def test_the_medium_is_published_as_xz_for_fedora_media_writer(self):
+        publish = self.workflow["jobs"]["publish"]
+        self.assertEqual(publish["env"]["LATEST_NAME"], "utah-installer-latest.raw.xz")
+        steps = {s.get("name"): s.get("run", "") for s in publish["steps"]}
+        compress = steps["Compress, checksum and sign"]
+        self.assertIn('xz -T0 -6 -c "$WORK/medium.raw" > "$WORK/$LATEST_NAME"', compress)
+        self.assertNotIn("zstd", compress)
+        self.assertNotIn("--long", compress)
+        self.assertIn("xz-utils", steps["Prepare host (podman storage and work dir on /mnt)"])
+        upload = steps["Upload to Cloudflare R2"]
+        self.assertIn('"$BASE-backup-$n.raw.xz$suffix" "$BASE-backup-$((n + 1)).raw.xz$suffix"', upload)
+        self.assertIn('move_if_exists "$LATEST_NAME$suffix" "$BASE-backup-1.raw.xz$suffix"', upload)
+        self.assertNotIn(".zst", (WORKFLOWS / "publish-utah-installer.yml").read_text())
+
     def test_the_e2e_workflow_can_be_called(self):
         on = load("utah-image-installer.yml")[True]
         self.assertIn("image_ref", on["workflow_call"]["inputs"])
