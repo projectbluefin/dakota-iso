@@ -72,6 +72,77 @@ class GrubenvTests(unittest.TestCase):
         self.assertEqual(body, ["boot_success=1", "saved_entry=utah-live"])
 
 
+# tesseract's transcripts of an early boot frame: shim's fallback as Post-Testing
+# run 45918946265's 00-grub-menu.png showed it, and GRUB's menu on the medium
+# as image-installer run 45935827310's debug/grub-probe.png showed it.
+SHIM_FALLBACK_OCR = "Boot Option Restoration\n\nPress any key to stop system reset\n\nBooting in 2 seconds\n"
+GRUB_MENU_OCR = ("GRUB version 2.12\n\nUtah Live (try or install)\nBluefin Wersion: test ing-20261127-2de3690)\n"
+                 "UEFI Firmware Settings\n\nUse the 4 and ¥ keys to select uhich entry is highlighted.\n"
+                 "Press enter to boot the selected 0S, \u201ce\u2019 to edit the conmands before booting or "
+                 "\u201cc\u2019 for a command-line. ESC to return previous menu.\n")
+
+
+class GrubMenuTests(unittest.TestCase):
+    """Stage 1 proves firmware -> shim -> GRUB on the medium, not shim's fallback."""
+
+    def test_grub_menu_frame_reads_as_grub(self):
+        self.assertEqual(raw_e2e.boot_frame(GRUB_MENU_OCR), "grub")
+        # tesseract may break the title across lines or change its case.
+        self.assertEqual(raw_e2e.boot_frame(GRUB_MENU_OCR.replace("Utah Live", "UTAH\nLIVE")), "grub")
+
+    def test_grub_menu_two_colour_frame_is_read_back(self):
+        # Grey text on black: run 45935827310 skipped every GRUB frame as undrawn at 3 colours.
+        w, h = 200, 100
+        text = bytes(b for i in range(w * h) for b in ((0x98,) * 3 if i % 7 == 0 else (0,) * 3))
+        with tempfile.TemporaryDirectory() as d:
+            ppm = Path(d) / "grub.ppm"
+            ppm.write_bytes(b"P6\n%d %d\n255\n" % (w, h) + text)
+            self.assertTrue(raw_e2e.drawn(ppm, min_colors=raw_e2e.GRUB_MIN_COLORS))
+            ppm.write_bytes(b"P6\n%d %d\n255\n" % (w, h) + bytes(3 * w * h))
+            self.assertFalse(raw_e2e.drawn(ppm, min_colors=raw_e2e.GRUB_MIN_COLORS))
+
+    def test_grub_shim_fallback_frame_reads_as_fallback(self):
+        self.assertEqual(raw_e2e.boot_frame(SHIM_FALLBACK_OCR), "fallback")
+        self.assertEqual(raw_e2e.boot_frame("Press any key to stop\nsystem reset\n"), "fallback")
+
+    def test_grub_absent_from_firmware_or_kernel_frames(self):
+        for ocr in ("", "TianoCore\n", GRUB_MENU_OCR.replace("Utah Live (try or install)\n", ""),
+                    "[  OK  ] Started utah-live-root.service - Utah live root overlay.\n"):
+            with self.subTest(ocr=ocr):
+                self.assertEqual(raw_e2e.boot_frame(ocr), "other")
+
+    def test_grub_live_text_is_the_live_entry_title(self):
+        self.assertTrue(medium.LIVE_TITLE.lower().startswith(raw_e2e.GRUB_LIVE_TEXT))
+
+    def test_grub_countdown_is_held_by_a_key_the_menu_ignores(self):
+        # GRUB's menu maps these keys to moves, edits or a boot (normal/menu.c).
+        self.assertNotIn(raw_e2e.GRUB_HOLD_KEY, ("ret", "esc", "e", "c", "v", "up", "down", "home", "end",
+                                                 "pgup", "pgdn", "right"))
+
+    def test_grub_build_drops_shim_fallback_from_the_medium_esp(self):
+        build = (RAW / "build-raw-image.sh").read_text()
+        delete = build.index("-iname fbx64.efi -print -delete")
+        listing = build.index('tee "${EVIDENCE}/esp-files.txt"')
+        self.assertLess(delete, listing)
+        self.assertIn("grep -qix '/EFI/BOOT/fbx64.efi' \"${EVIDENCE}/esp-files.txt\"", build)
+        self.assertIn('cp "${bootupd_state}" "${EVIDENCE}/bootupd-state.json"', build)
+
+    def test_grub_build_drops_shim_fallback_from_bootupd_state(self):
+        build = (RAW / "build-raw-image.sh").read_text()
+        script = build.split("<<'EOF'\n", 1)[1].split("\nEOF\n", 1)[0]
+        entry = {"size": 1, "sha512": "sha512:00"}
+        state = {"installed": {"EFI": {"meta": {"version": "grub2-efi-x64-1:2.12-66.fc44,shim-x64-16.1-7"},
+                                       "filetree": {"children": {"BOOT/BOOTX64.EFI": entry,
+                                                                 "BOOT/fbx64.efi": entry,
+                                                                 "fedora/shimx64.efi": entry}}}}}
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "bootupd-state.json"
+            path.write_text(json.dumps(state))
+            subprocess.run([sys.executable, "-", str(path)], input=script, text=True, check=True)
+            children = json.loads(path.read_text())["installed"]["EFI"]["filetree"]["children"]
+        self.assertEqual(sorted(children), ["BOOT/BOOTX64.EFI", "fedora/shimx64.efi"])
+
+
 TABLE = {"partitiontable": {"label": "gpt", "sectorsize": 512, "partitions": [
     {"node": "/dev/loop0p1", "start": 2048, "size": 2048},
     {"node": "/dev/loop0p2", "start": 4096, "size": 1048576},
@@ -488,6 +559,13 @@ class ComposefsTests(unittest.TestCase):
         self.assertIn("ConditionKernelCommandLine=!utah.live",
                       (units / "flatpak-preinstall.service.d/50-utah-live.conf").read_text())
 
+    def test_the_live_session_skips_the_booted_image_snapshot(self):
+        # Its bootc status remounts /sysroot read-write, which the live RAM
+        # overlay refuses, so the unit failed every live boot (run 45918946265).
+        units = RAW / "src/usr/lib/systemd/system"
+        self.assertIn("ConditionKernelCommandLine=!utah.live",
+                      (units / "ublue-booted-image.service.d/50-utah-live.conf").read_text())
+
     def test_build_injected_etc_placeholders_are_removed(self):
         # podman RUN leaves empty 0700 resolv.conf/hostname; ostree-ext drops
         # them, bootc's composefs backend does not.
@@ -594,7 +672,7 @@ class InstalledSystemCheckTests(unittest.TestCase):
             ppm.write_bytes(b"P6\n%d %d\n255\n" % (w, h) + top * 10)
             self.assertTrue(raw_e2e.drawn(ppm, below_top_bar=True))
 
-    def run_setup_state(self, failed_unit):
+    def run_setup_state(self, failed_unit, disabled="kanata.service"):
         """setup_state_script against e2e-services.sh, with systemctl, sudo and the contract parser stubbed."""
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
@@ -602,7 +680,8 @@ class InstalledSystemCheckTests(unittest.TestCase):
             (d / "bin").mkdir()
             shutil.copy(ROOT / "iso/scripts/e2e-services.sh", d / "e2e-services.sh")
             (d / "scripts/verify-desktop-contract.py").write_text(
-                'import sys\nprint({"enabled": "gdm.service", "user_enabled": "pipewire.socket"}[sys.argv[2]])\n')
+                'import sys\nprint({"enabled": "gdm.service", "user_enabled": "pipewire.socket", '
+                f'"disabled": {disabled!r}}}[sys.argv[2]])\n')
             (d / "bin/sudo").write_text('#!/bin/bash\nwhile [[ $1 == -* ]]; do [[ $1 == -p ]] && shift; shift; done\n'
                                         'cat >/dev/null\nexec "$@"\n')
             (d / "bin/systemctl").write_text(
@@ -632,6 +711,16 @@ class InstalledSystemCheckTests(unittest.TestCase):
         failed = self.run_setup_state("gdm.service")
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn("FAIL: system unit gdm.service failed during repeat boot", failed.stderr)
+
+    def test_kanata_is_checked_only_when_the_installed_contract_lists_it(self):
+        # A :stable built before kanata (#1297) has no unit and no contract
+        # entry; the publish run of that image must not fail on it.
+        old = self.run_setup_state("none", disabled="")
+        self.assertEqual(old.returncode, 0, old.stderr)
+        self.assertNotIn("kanata.service", old.stdout)
+        broken = self.run_setup_state("kanata.service")
+        self.assertNotEqual(broken.returncode, 0)
+        self.assertIn("FAIL: system unit kanata.service failed during repeat boot", broken.stderr)
 
     def test_the_reused_fisherman_checks_exist_where_the_harness_reads_them(self):
         # raw_e2e.py resolves these from its Utah-relative paths under image-installer/utah/.
@@ -756,6 +845,20 @@ class GnomeSetupTests(unittest.TestCase):
         self.assertIn("ln -s /run/utah-live/repart.d /out/usr/lib/gnome-setup/definitions", containerfile)
         self.assertIn("/usr/share/utah/gnome-setup/pages.conf /usr/lib/gnome-setup/pages.conf", containerfile)
 
+    def test_the_live_user_is_authorized_by_name_not_by_a_marker_polkit_cannot_read(self):
+        # gnome-setup's rule cats /run/gnomeos/is-live from polkitd, which
+        # SELinux denies (policykit_t, var_run_t) on every check
+        # (run 45918946265); the live user is granted by name instead.
+        setup = (RAW / "src/usr/libexec/utah-live-setup").read_text()
+        code = [line for line in setup.splitlines() if not line.lstrip().startswith("#")]
+        self.assertFalse([line for line in code if "/run/gnomeos" in line])
+        rules = (RAW / "src/usr/share/polkit-1/rules.d/50-utah-live-gnome-setup.rules").read_text()
+        self.assertIn('subject.user != "liveuser"', rules)
+        for action in ("io.systemd.sysinstall.Run", "io.systemd.sysinstall.ListCandidateDevices",
+                       "io.systemd.cryptenroll.enroll", "io.systemd.cryptenroll.list-slots"):
+            self.assertIn(f'action.id == "{action}"', rules)
+        self.assertNotIn("polkit.spawn", rules)
+
     def test_without_a_tpm_the_user_picks_a_passphrase_next_to_the_recovery_key(self):
         pages = (RAW / "src/usr/share/utah/gnome-setup/pages.conf").read_text()
         flow = next(line for line in pages.splitlines() if line.startswith("live-initial-setup="))
@@ -794,15 +897,62 @@ class GnomeSetupTests(unittest.TestCase):
         self.assertEqual(out["installer"], "gnome-setup")
         self.assertIn("encryption", out)
 
-    def test_wipe_or_free_takes_free_space_without_a_confirm_dialog(self):
-        # The empty target reads as DataDetected ('Existing Data Found'), so the
-        # harness takes 'Install to Free Space' and starts installation directly;
-        # full wipe would ask 'Erase and Install' instead (run 44968690146).
-        harness = (RAW / "raw_e2e.py").read_text()
-        self.assertIn('"Existing Data Found"', harness)
-        self.assertIn('"Install to Free Space"', harness)
-        self.assertIn('"Start Installation"', harness)
-        self.assertIn('"Install"', harness)
+    @staticmethod
+    def showing(*names, role="label"):
+        return [{"path": f"0.{i}", "role": role, "name": name, "text": "",
+                 "ext": [0, 0, 10, 10], "states": ["sensitive", "showing", "visible"]}
+                for i, name in enumerate(names)]
+
+    def test_installer_pages_classify_from_gnome_setup_text(self):
+        # Headings and response labels of gnome-setup 80825ae's dialogs
+        # (src/page/installer/disk/confirm.rs) and pages; the dialogs sit over
+        # the still-showing disk page.
+        disk = self.showing("Select a Disk", "Unknown Disk 51.5\u00a0GB", raw_e2e.DISK_EMPTY_TEXT)
+        page = raw_e2e.Page
+        for nodes, expected in (
+            (disk, page.DISK),
+            (disk + self.showing("Begin Installation?") + self.showing("Cancel", "Install", role="button"),
+             page.CONFIRM),
+            (self.showing("Existing Data Found", "Install to Free Space"), page.DATA_FOUND),
+            (disk + self.showing("Begin Installation?") + self.showing("Cancel", "Erase and Install", role="button"),
+             page.ERASE),
+            (disk + self.showing("Insufficient Free Space") + self.showing("Erase and Install (3)", role="button"),
+             page.ERASE),
+            (disk + self.showing("Disk is Full") + self.showing("Erase and Install", role="button"), page.ERASE),
+        ):
+            with self.subTest(expected=expected, last=nodes[-1]["name"]):
+                self.assertIs(raw_e2e.classify_setup_page(nodes), expected)
+
+    def test_existing_data_on_the_blank_target_is_a_failure(self):
+        # install.qcow2 is created fresh: the data page, any erase confirmation,
+        # or a target row saying it holds data means empty-disk detection broke.
+        page = raw_e2e.Page
+        for p in (page.DATA_FOUND, page.ERASE):
+            self.assertEqual(raw_e2e.blank_target_problem(p), raw_e2e.BLANK_TARGET_DATA)
+        self.assertIn("existing data on the blank target disk", raw_e2e.BLANK_TARGET_DATA)
+        data_row = self.showing("Unknown Disk 51.5\u00a0GB", raw_e2e.DISK_DATA_TEXT)
+        self.assertEqual(raw_e2e.blank_target_problem(page.DISK, data_row), raw_e2e.BLANK_TARGET_DATA)
+        for p in (page.DISK, page.CONFIRM, page.PROGRESS, page.UNKNOWN):
+            self.assertIsNone(raw_e2e.blank_target_problem(p))
+        empty_row = self.showing("Unknown Disk 51.5\u00a0GB", raw_e2e.DISK_EMPTY_TEXT)
+        self.assertIsNone(raw_e2e.blank_target_problem(page.DISK, empty_row))
+
+    def test_the_target_row_status_is_read_from_its_own_subtree(self):
+        # The live medium's row says it holds data; only the target's row counts.
+        nodes = [
+            {"path": "1.0", "role": "table row", "name": "Unknown Disk 51.5\u00a0GB", "text": "",
+             "ext": [0, 0, 100, 20], "states": ["showing"]},
+            {"path": "1.0.1", "role": "label", "name": raw_e2e.DISK_EMPTY_TEXT, "text": "",
+             "ext": [0, 0, 100, 20], "states": ["showing"]},
+            {"path": "1.1", "role": "table row", "name": "Unknown Disk 9.7\u00a0GB", "text": "",
+             "ext": [0, 30, 100, 20], "states": ["showing"]},
+            {"path": "1.1.1", "role": "label", "name": raw_e2e.DISK_DATA_TEXT, "text": "",
+             "ext": [0, 30, 100, 20], "states": ["showing"]},
+        ]
+        row = raw_e2e.row_containing(nodes, raw_e2e.TARGET_SIZE_TEXT)
+        shown = raw_e2e.subtree(nodes, row)
+        self.assertEqual([n["path"] for n in shown], ["1.0", "1.0.1"])
+        self.assertIsNone(raw_e2e.blank_target_problem(raw_e2e.Page.DISK, shown))
 
     def test_recovery_key_read_from_label_shaped_like_a_key(self):
         # Run 44972858422's atspi-timeout-recovery-key.json: the key label's

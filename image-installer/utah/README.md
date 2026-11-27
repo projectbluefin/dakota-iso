@@ -8,7 +8,7 @@ discussion in #413.
 - Paths below this directory mirror the Utah repository (`iso/raw/`,
   `iso/scripts/`, `scripts/`, `config/`), and the files are byte-identical to
   `projectbluefin/utah` `main` at
-  `24c77b4cf91c3f3d5bdfab822c096e1d22437aa6`, so the copy can be checked
+  `baa9948dc72ee98bd62f360e46ae45007b9b3291`, so the copy can be checked
   file by file against that commit (below).
 - `raw_e2e.py` resolves its helpers from those Utah-relative paths. Besides
   the medium's own files, it runs on the host `iso/scripts/qemu_monitor.py`,
