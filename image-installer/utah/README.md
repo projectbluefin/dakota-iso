@@ -8,9 +8,8 @@ discussion in #413.
 - Paths below this directory mirror the Utah repository (`iso/raw/`,
   `iso/scripts/`, `scripts/`, `config/`), and the files are byte-identical to
   `projectbluefin/utah` `main` at
-  `8be72c924768a090adbfe24384993a584229cf65`, so the copy can be checked
-  file by file against that commit (below). `compare_paths.py`, which reads
-  Utah's own CI, stayed behind.
+  `24c77b4cf91c3f3d5bdfab822c096e1d22437aa6`, so the copy can be checked
+  file by file against that commit (below).
 - `raw_e2e.py` resolves its helpers from those Utah-relative paths. Besides
   the medium's own files, it runs on the host `iso/scripts/qemu_monitor.py`,
   `plymouth-prompt.py`, `luks-unlock.py`, `extension-state.sh`,
