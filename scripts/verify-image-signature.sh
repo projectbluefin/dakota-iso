@@ -76,14 +76,16 @@ command -v jq >/dev/null 2>&1 || {
     exit 1
 }
 
-# Self-install fallback for hosts without cosign (e.g. CI runners that do
-# not run sigstore/cosign-installer). Version matches the installer's
-# default; the checksums are hardcoded so a tampered release asset is refused.
-COSIGN_VERSION="v2.4.3"
+# Self-install fallback for hosts without cosign (e.g. local builds or runners
+# that do not run sigstore/cosign-installer). Pinned independently on cosign v3
+# (Renovate does not update this fallback alongside the workflow action); the
+# SHA-256 checksums come from sigstore/cosign releases so a tampered asset is
+# refused.
+COSIGN_VERSION="v3.1.5"
 if ! command -v cosign >/dev/null 2>&1; then
     case "$(uname -m)" in
-        x86_64)  cosign_arch=amd64; cosign_sha=caaad125acef1cb81d58dcdc454a1e429d09a750d1e9e2b3ed1aed8964454708 ;;
-        aarch64) cosign_arch=arm64; cosign_sha=bd0f9763bca54de88699c3656ade2f39c9a1c7a2916ff35601caf23a79be0629 ;;
+        x86_64)  cosign_arch=amd64; cosign_sha=912502def4baf810eaf36b210a4f51e1da214f9f6d664e2a9a2154cfc67ee0d6 ;;
+        aarch64) cosign_arch=arm64; cosign_sha=516893301e9ec0f2594edfcf8f943ec3b3ba96f3aad2b507eff2b71e644e5fca ;;
         *)
             echo "ERROR: cosign not found and no pinned fallback for arch '$(uname -m)' — install cosign" >&2
             exit 1
