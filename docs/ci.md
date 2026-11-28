@@ -465,7 +465,7 @@ run, and the skip message names the apt packages to install locally.
 Run locally with:
 ```bash
 sudo apt-get install -y xorriso dosfstools mtools squashfs-tools
-pip install pytest PyYAML jsonschema
+pip install -r .github/requirements-ci.txt
 pytest tests/ -v
 ```
 
