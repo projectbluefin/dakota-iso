@@ -31,6 +31,15 @@ jobs:
       contents: write
       packages: read
       id-token: write  # keyless cosign signing of the ISO checksum
+    # The R2 write credentials live in the r2-production environment, whose
+    # deployment branch rule allows main only. This workflow also takes a
+    # workflow_dispatch, and GitHub runs the copy of the workflow on the
+    # branch that was picked: a dispatch from any other branch is refused
+    # the environment, so this job never starts and the credentials are never
+    # handed to it (#404). `environment` is a job-level key — GitHub Actions
+    # has no step-level form, and a step-level key is rejected as invalid
+    # workflow syntax.
+    environment: r2-production
 
     steps:
       - name: Checkout
@@ -363,6 +372,8 @@ jobs:
 
       - name: Upload ISO to Cloudflare R2
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && steps.e2e_enospc.conclusion == 'success' && steps.e2e_install.outcome == 'success' && steps.e2e_verify.outcome == 'success' && steps.boot_verify.outcome == 'success' }}
+        # The R2 write credentials come from the r2-production environment
+        # declared on the build-and-publish job.
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare

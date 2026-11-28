@@ -41,6 +41,11 @@ jobs:
   promote:
     name: Promote ${{ inputs.variant }} -> ${{ inputs.release_name }}
     runs-on: ubuntu-26.04
+    # The R2 credentials live in the r2-production environment, whose deployment
+    # branch rule allows main only. A workflow_dispatch from any other branch
+    # therefore gets no credentials, so modified workflow code on a side branch
+    # cannot write to the release bucket (#404).
+    environment: r2-production
     steps:
       - name: Validate release name
         id: names

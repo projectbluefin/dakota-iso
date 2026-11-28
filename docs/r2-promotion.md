@@ -184,34 +184,160 @@ on what landed, so a named release verifies with the same
 the `latest` object; a separate, unsigned `<name>.iso-SHA256SUMS` carries the same hash
 with the promoted filename for `sha256sum -c`.
 
+## Credential scope: protected deployment environments
+
+The R2 write credentials can publish or replace the live ISO objects, so they
+are the most valuable secret in this repo. Four workflows read them or the
+download statistics, and every one of them takes a `workflow_dispatch`. Since
+#404 each reader sits behind a deployment environment whose deployment branch
+rule allows `main` only.
+
+| Environment | Reader | Secret | Deployment branch rule |
+|---|---|---|---|
+| `r2-production` | `promote` job in `promote-release.yml` | `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_R2_ENDPOINT` | `main` only |
+| `r2-production` | `build-and-publish` job in `build-iso.yml` (nightly Dakota publish) | the same three | `main` only |
+| `r2-production` | `build-and-publish` job in `build-iso-utah.yml` (monthly Utah publish) | the same three | `main` only |
+| `r2-observability` | `count` job in `r2-download-stats.yml` | `CF_OBSERVABILITY_TOKEN` | `main` only |
+
+The two publish lanes carry the environment on their `build-and-publish`
+job. `environment:` is a job-level key — GitHub Actions has no step-level
+form, and a step-level key is rejected as invalid workflow syntax, which
+stopped both ISO publish workflows from running at all (#407). The
+environment therefore gates the whole job: a dispatch from any other branch
+is refused the environment and the job does not start, rather than starting
+and skipping only the upload.
+
+**Why an environment:** a `workflow_dispatch` needs the workflow file to exist on
+the default branch, but the run executes the copy of the workflow on the branch
+that was picked. With repository-scoped secrets, a collaborator with write access
+could put altered workflow code on a side branch, dispatch it, and read the
+credentials — the reviewed copy on `main` never runs. At environment scope, with
+the deployment branch rule set to `main` only, that dispatch receives no
+credentials.
+
+A repository-scoped copy of the same secret is the fallback a step reads when
+it declares no environment, so the copies have to go (step 4 below). While they
+exist, the environment is the only thing standing between a side branch and
+the key, and a side branch that drops the `environment:` line still gets it.
+
+**Repository settings a maintainer applies:**
+
+The order matters at every step. The environments must exist and hold the
+secrets before the workflows that name them are merged: GitHub creates a
+missing environment on first use with no protection rules, so merging first
+would leave the credentials unprotected under the environment's name. The
+repository-scoped copies may only be deleted once every reader has moved to
+the environment — the nightly publish lanes included — and after a publish
+from `main` has proved that lane works on the environment's copy.
+
+```bash
+# 1. Create the two environments and restrict deployment to main only.
+#    (gh api -F takes typed scalars; nested objects use key[subkey]=value.)
+gh api -X PUT repos/projectbluefin/dakota-iso/environments/r2-production \
+  -F 'deployment_branch_policy[protected_branches]=false' \
+  -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X PUT repos/projectbluefin/dakota-iso/environments/r2-observability \
+  -F 'deployment_branch_policy[protected_branches]=false' \
+  -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X POST repos/projectbluefin/dakota-iso/environments/r2-production/deployment-branch-policies \
+  -F name='main' -F type='branch'
+gh api -X POST repos/projectbluefin/dakota-iso/environments/r2-observability/deployment-branch-policies \
+  -F name='main' -F type='branch'
+
+# 2. Copy the secrets to environment scope (values come from the password
+#    manager; the CLI prompts for each value). The repository-scoped copies
+#    stay for now: the publish lanes still read them until this change is
+#    merged, and deleting them earlier would break the nightly upload.
+gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID     --env r2-production     --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --env r2-production     --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_ENDPOINT          --env r2-production     --repo projectbluefin/dakota-iso
+gh secret set CF_OBSERVABILITY_TOKEN             --env r2-observability  --repo projectbluefin/dakota-iso
+
+# 3. Merge this change. Every reader now declares an environment, so the
+#    environment is what hands out the credentials.
+
+# 4. Confirm a publish from main still works, then delete the
+#    repository-scoped copies. Until this step they are live credentials that
+#    a workflow reading them without an environment still receives.
+gh workflow run build-iso.yml --ref main
+#    let the run finish and check the upload step succeeded (the
+#    r2-production environment lists the deployment), then:
+gh secret delete RCLONE_CONFIG_R2_ACCESS_KEY_ID     --repo projectbluefin/dakota-iso
+gh secret delete RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --repo projectbluefin/dakota-iso
+gh secret delete RCLONE_CONFIG_R2_ENDPOINT          --repo projectbluefin/dakota-iso
+gh secret delete CF_OBSERVABILITY_TOKEN             --repo projectbluefin/dakota-iso
+```
+
+`r2-production` must not require an approving reviewer: the nightly publish
+lanes share it, they run on a schedule, and a scheduled run cannot collect a
+human approval. `r2-observability` must not either, because the stats job also
+runs on a daily schedule. If a reviewer is wanted for the manual promotion
+tool, give that job an environment of its own.
+
+A new job or step that reads one of these credentials needs an environment that
+gates it. `tests/test_workflow_protected_environments.py` fails when a reader
+in any of these workflows has none, and when a workflow outside that list reads
+a protected credential at all.
+
+Put that environment on the **job**, never on the step. GitHub Actions defines
+`environment:` only under `jobs.<job_id>`; a step-level key is invalid
+workflow syntax and GitHub rejects the whole file, so the upload step of both
+ISO publish workflows once took the lane down with it (#407).
+
 ## Rotating R2 credentials
 
 Use this procedure when credentials are compromised or as routine rotation.
+
+The rule the whole procedure exists to keep: **no reader may still hold the
+old key when it is revoked.** A scope that keeps a copy of the old value while
+the new key sits in the environment keeps working until the old token is
+revoked, and then fails at the next nightly publish.
 
 **Step 1 — Create new token (Cloudflare dashboard, ~60 seconds):**
 1. `dash.cloudflare.com → R2 → Manage R2 API Tokens → Create token`
 2. Set permissions: `Object Read & Write` on the `testing` bucket
 3. Copy the new `access_key_id` and `secret_access_key`
 
-**Step 2 — Update GitHub secrets:**
+**Step 2 — Find every scope that holds a copy:**
 ```bash
-gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID --repo projectbluefin/dakota-iso
-gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --repo projectbluefin/dakota-iso
+gh secret list --repo projectbluefin/dakota-iso
+gh secret list --env r2-production --repo projectbluefin/dakota-iso
+```
+Every scope listed above holds a copy of the key and must be updated in step 3.
+After the setup above, the only scope is the `r2-production` environment; a
+repository-scoped copy means that setup was not finished.
+
+**Step 3 — Update every scope that holds a copy:**
+```bash
+gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID     --env r2-production --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --env r2-production --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_ENDPOINT          --env r2-production --repo projectbluefin/dakota-iso
 # each prompts for the value — paste, Enter, done
+# the credentials live in the r2-production environment (see above)
+#
+# If step 2 still listed a repository-scoped copy, update or delete it too:
+gh secret set RCLONE_CONFIG_R2_ACCESS_KEY_ID     --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_SECRET_ACCESS_KEY --repo projectbluefin/dakota-iso
+gh secret set RCLONE_CONFIG_R2_ENDPOINT          --repo projectbluefin/dakota-iso
 ```
 
-**Step 3 — Revoke old token** in the Cloudflare dashboard.
-
-**Step 4 — Verify:**
+**Step 4 — Verify every scope now holds the new key, then publish once:**
 ```bash
+gh secret list --env r2-production --repo projectbluefin/dakota-iso
 gh secret list --repo projectbluefin/dakota-iso
 # RCLONE_CONFIG_R2_ACCESS_KEY_ID and RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
 # should show today's timestamp
 ```
+Then publish once from `main` (`gh workflow run build-iso.yml --ref main`) and
+confirm the upload step succeeded, so the nightly lane is known to work on the
+new key before the old one disappears.
+
+**Step 5 — Revoke old token** in the Cloudflare dashboard. Only now: revoking
+it while a reader still holds the old value breaks that reader.
 
 > Note: `wrangler` cannot create or revoke R2 API tokens — the OAuth token from
-> `wrangler login` does not carry the `api_tokens:edit` scope. Steps 1 and 3
-> require the Cloudflare dashboard. Only step 2 is CLI-automatable.
+> `wrangler login` does not carry the `api_tokens:edit` scope. Steps 1 and 5
+> require the Cloudflare dashboard. Only steps 2 to 4 are CLI-automatable.
 
 ---
 
@@ -275,9 +401,12 @@ operator with local R2 credentials. `.github/workflows/promote-release.yml` codi
 this as a GitHub Actions workflow using repository R2 secrets.
 
 Key invariants codified in the workflow:
-1. **Workflow dispatch restriction**: GitHub only allows `workflow_dispatch` on the
-   default branch (`main`). The workflow file must be merged to `main` before it can
-   be dispatched.
+1. **Workflow dispatch restriction**: the workflow file must exist on the default
+   branch (`main`) before it can be dispatched at all. That is *not* the same as
+   "the dispatch runs the reviewed copy": a dispatch can select another branch, and
+   the run then executes that branch's copy of the workflow file. Credential scope
+   is what protects the run — see the deployment-environment section above and the
+   2026-11-25 lesson below.
 2. **Signed checksum is never rewritten**: the `-CHECKSUM` is signed by the build
    workflow, so rewriting it (as this workflow originally did, for the promoted filename)
    breaks its Sigstore bundle and left named releases unverifiable (#383). The checksum and
@@ -290,3 +419,62 @@ Key invariants codified in the workflow:
    landing between them promotes a mixed pair that current verification cannot detect,
    because it compares the two checksum files rather than hashing the promoted ISO.
    Until that is fixed, dispatch promotions well clear of the daily build window.
+
+### A dispatch runs the branch's workflow code, not main's (2026-11-25)
+
+The `promote-release.yml` and `r2-download-stats.yml` jobs read long-lived
+Cloudflare credentials. A `workflow_dispatch` requires the workflow file to exist
+on the default branch, but the run executes the workflow file **from the branch
+that was dispatched** — so a collaborator with write access could push altered
+workflow code to a side branch, dispatch it, and read the credentials that the
+reviewed `main` copy never touches.
+
+Fix (#404): each job declares a deployment environment — `r2-production` for the
+promotion job, `r2-observability` for the stats job — the credentials live at
+environment scope, and the environment's deployment branch rule allows `main`
+only. A dispatch from any other branch then gets no credentials.
+
+What an agent or maintainer should do differently:
+
+- A job that reads a credential gets an `environment:`. `tests/test_workflow_protected_environments.py`
+  enforces this for all four workflows that read one.
+- The environment must exist in the repository settings **before** the workflow
+  that names it is merged. GitHub creates a missing environment on first use with
+  no protection rules, so the order is settings first, merge second.
+- A scheduled job cannot wait for a human approval, so an environment that a
+  scheduled workflow uses must not require reviewers. Both environments stay
+  reviewer-free: `r2-observability` carries the daily stats run, and
+  `r2-production` now carries the nightly and monthly publish lanes as well,
+  which run on a schedule too. A required reviewer on `r2-production` would
+  hang the nightly publish job forever, so a reviewer for the manual promotion
+  tool needs an environment of its own.
+
+### `environment:` is job-level only — a step-level key takes the whole lane down (2026-11-25)
+
+**What failed:** the protected-environment change (#404) put
+`environment: r2-production` on the `Upload ISO to Cloudflare R2` **step** of
+`build-iso.yml` and `build-iso-utah.yml`, to gate only the step that reads the
+R2 credentials. GitHub Actions has no step-level `environment:` key — it exists
+only under `jobs.<job_id>` — so GitHub rejected both workflow files outright
+("Unexpected value 'environment'"). Both ISO publish lanes stopped running, and
+the nightly upload of the live ISO stopped with them (#407).
+
+**Why:** a narrower gate looked like a better design, but the Actions workflow
+schema has no place to put it. The workflow file is validated as a whole, so an
+unknown key anywhere in it takes the entire workflow down, not just the step.
+
+**Fix:** put `environment: r2-production` on the `build-and-publish` job of both
+publish workflows, and leave the upload step with no `environment:` of its own.
+The job is then the smallest unit that can be gated, and a dispatch from a
+branch the environment does not allow never starts the job.
+
+What an agent or maintainer should do differently:
+
+- Put the environment on the job, never on a step.
+- `tests/test_workflow_protected_environments.py` now asserts that no step in
+  any workflow carries an `environment:` key, and that the job that declares one
+  is the job that reads the credential.
+- A workflow that reads a protected secret but declares no environment fails
+  the same test — deleting the `environment:` line is not a way out.
+- `actionlint` (via `pre-commit run --all-files`) catches the step-level key as
+  a workflow syntax error; run it before committing a workflow change.
