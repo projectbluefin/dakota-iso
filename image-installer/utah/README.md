@@ -8,7 +8,7 @@ discussion in #413.
 - Paths below this directory mirror the Utah repository (`iso/raw/`,
   `iso/scripts/`, `scripts/`, `config/`), and the files are byte-identical to
   `projectbluefin/utah` `main` at
-  `583fd3e414b23bc625c89ce762902c4fe9e4c894`, so the copy can be checked
+  `9deddf60c1dbf6b777b3488fe936b600db1b88cf`, so the copy can be checked
   file by file against that commit (below).
 - `raw_e2e.py` resolves its helpers from those Utah-relative paths. Besides
   the medium's own files, it runs on the host `iso/scripts/qemu_monitor.py`,
@@ -22,6 +22,10 @@ discussion in #413.
   `/dev/kvm` is writable, rather than running the VMs under TCG (utah#1632).
   Every job that runs it grants KVM with `sudo chmod a+rw /dev/kvm`, not
   `setfacl`, whose grant vanished between VMs in utah#1631.
+- gnome-setup's disk page has an "Encrypt Disk" switch, on by default
+  (utah#1655); `raw_e2e.py --encryption on|off` picks it and defaults to on.
+  Every E2E here installs encrypted; Utah's nightly and pull requests also
+  run an unencrypted leg of the main flavor.
 - `iso/raw/build-hybrid-iso.sh` (utah#1404) turns the raw medium into an El
   Torito hybrid ISO with shim -> systemd-boot on its ESP (Secure Boot off),
   reading only `iso/raw/medium.py`; `raw_e2e.py --iso --boot-as cdrom|usb`

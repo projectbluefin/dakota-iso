@@ -2,7 +2,7 @@
 """End-to-end test of the experimental image-based installer, with screenshots.
 
   raw_e2e.py --raw medium.raw --work DIR --candidate IMAGE@sha256:... --ssh-key KEY
-             [--iso medium.iso --boot-as cdrom|usb]
+             [--iso medium.iso --boot-as cdrom|usb] [--encryption on|off]
 
 Stages (every screenshot is listed in DIR/screenshots/manifest.json):
   1. Boot the raw disk image as live media (read-only virtio disk, GRUB's
@@ -27,6 +27,12 @@ Stages (every screenshot is listed in DIR/screenshots/manifest.json):
      gnome-setup's disk passphrase page sets a passphrase next to the recovery
      key: first boot and rollback unlock with the passphrase, the bootc switch
      boot with the recovery key.
+     With --encryption off the harness turns gnome-setup's "Encrypt Disk"
+     switch (on by default, on the disk page) off before it picks the target:
+     no disk passphrase or recovery key page may show, the target's root is
+     plain btrfs, and every installed boot reaches the session with no
+     prompt, its root on no dm-crypt device and no /etc/crypttab entry or
+     rd.luks karg (evidence/plain-root-*.txt).
   3. Boot the installed disk alone: Plymouth LUKS prompt, unlock,
      gnome-initial-setup (user creation; a Time Zone page GeoClue left without
      a location gets one from its city search), GNOME desktop, a terminal with
@@ -66,6 +72,14 @@ Reuses iso/scripts/qemu_monitor.py, plymouth-prompt.py and luks-unlock.py on
 the host, extension-state.sh and fastfetch-ocr-match.sh for the decisions,
 and runs e2e-services.sh, verify-installed-flavor.py, verify-countme-runtime.sh
 and scripts/verify-desktop-contract.py in the guest (copied to GUEST_SCRIPTS).
+
+A stage that fails collects the evidence for it. The installer stage also
+writes the live session's desktop state (evidence/live-session-failure.txt):
+the session's portal and accessibility units with their results and journal,
+the shell's and the installer's process state, the system's coredumps and the
+applications the accessibility bus lists. A session whose desktop portal
+failed cannot show the installer at all, and the stage says so instead of
+waiting out its whole budget.
 """
 
 import argparse
@@ -125,6 +139,24 @@ REPO = HERE.parent.parent
 GUEST_SCRIPTS = "/var/tmp/utah-e2e"
 # GNOME extensions that must reach ACTIVE at first login (#969).
 EXTENSIONS = ("gsconnect@andyholmes.github.io",)
+# What check_no_startup_overview saves when the session starts in the overview.
+OVERVIEW_DIAG = (
+    "echo '== disable-overview-on-startup'; "
+    "gsettings get org.gnome.shell.extensions.dash-to-dock disable-overview-on-startup 2>&1; "
+    "echo '== enabled-extensions'; gsettings get org.gnome.shell enabled-extensions 2>&1; "
+    "echo '== dash-to-dock'; gnome-extensions info dash-to-dock@micxgx.gmail.com 2>&1; "
+    "echo '== patch in docking.js'; grep -c startupOverviewHandled "
+    "/usr/share/gnome-shell/extensions/dash-to-dock@micxgx.gmail.com/docking.js 2>&1; "
+    "echo '== session journal'; journalctl --user -b --no-pager -o short-monotonic 2>&1 "
+    "| grep -iE 'gnome-shell|extension|dock|overview' | head -300; true")
+# patches/dash-to-dock's module flag: an image without it predates the
+# startup-overview fix, so check_no_startup_overview records but does not enforce.
+DOCK_JS = "/usr/share/gnome-shell/extensions/dash-to-dock@micxgx.gmail.com/docking.js"
+DOCK_PATCH_MARKER = "startupOverviewHandled"
+# GNOME Shell's overview state on the session bus; format with ("Get", "") or
+# ("Set", " '<false>'").
+OVERVIEW_ACTIVE = ("gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell "
+                   "--method org.freedesktop.DBus.Properties.{} org.gnome.Shell OverviewActive{}")
 # GRUB's menu on the medium: its help text and the live entry
 # (medium.LIVE_TITLE), as tesseract reads them, so a kernel console line
 # naming a "Utah live" unit is no menu. shim's fallback (fbx64.efi) screen
@@ -191,6 +223,54 @@ ISO_BOOT_FACTS = (
     "echo loop_devices=$(losetup -nO NAME,BACK-FILE | tr -s ' ' ':' | tr '\\n' ' ')"
 )
 
+# gnome-setup's disk page switch (pages.conf [page:installer]
+# unencrypted-definitions): an Adw.SwitchRow, on by default, whose accessible
+# name is its title. GTK reports its switch role as "switch" or, before
+# AT-SPI had that role, "toggle button".
+ENCRYPT_SWITCH = "Encrypt Disk"
+SWITCH_ROLES = ("switch", "toggle button")
+# The recovery key page's QR code (a Gtk.Picture shown under the key, not
+# behind a button).
+RECOVERY_QR = "Recovery Key QR Code"
+# The definitions gnome-setup installs with when that switch is off
+# (utah-live-definitions writes them at boot).
+PLAIN_DEFINITIONS = "/run/utah-live/repart-unencrypted.d"
+# The sentence gnome-setup's confirmation adds about that switch
+# (src/page/installer/disk/confirm.rs).
+CONFIRM_ENCRYPTED_TEXT = "The disk will be encrypted"
+CONFIRM_PLAIN_TEXT = "The disk will not be encrypted"
+# An installed boot's root with --encryption off: key=value lines
+# (parse_facts) for plain_root_problems. lsblk -s lists the root's device and
+# every device under it; crypttab lines and kargs are joined on one line.
+PLAIN_ROOT_FACTS = (
+    "src=$(findmnt -nvo SOURCE /sysroot); echo root_source=$src; "
+    "echo root_types=$(lsblk -nso TYPE \"$src\" | tr '\\n' ' '); "
+    "echo crypttab=$(grep -vE '^[[:space:]]*(#|$)' /etc/crypttab 2>/dev/null | tr '\\n' ';'); "
+    "echo luks_kargs=$(tr ' ' '\\n' </proc/cmdline | grep -E '^rd\\.luks' | tr '\\n' ' ')"
+)
+
+
+# The live session's desktop stack. gnome-setup asks the session's desktop
+# portal for its version before it opens a window, so a session whose portal
+# never starts cannot show the installer at all: in run 45927940366 (attempt
+# 1) both portal units failed with "start operation timed out" and the
+# installer's window never appeared.
+SESSION_PORTAL_UNITS = ("xdg-desktop-portal.service", "xdg-desktop-portal-gnome.service")
+SESSION_UNITS = ("xdg-desktop-portal.service", "xdg-desktop-portal-gnome.service",
+                  "xdg-desktop-portal-gtk.service", "xdg-permission-store.service",
+                  "at-spi2-registryd.service", "gnome-shell.service", "gnome-shell-x11.service")
+# The live session's user manager. `systemctl --user` needs the session bus
+# and the runtime directory; without XDG_RUNTIME_DIR it answers "Failed to
+# connect to bus" and the report comes back empty, which reads as no failure.
+SESSION_ENV = ("export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus "
+               "XDG_RUNTIME_DIR=/run/user/$(id -u)")
+# systemctl's Result values that mean the unit did not come up.
+FAILED_UNIT_RESULTS = ("timeout", "exit-code", "failure", "signal", "core-dump", "watchdog")
+# How often the stage-2 wait asks the guest whether the session can still
+# draw the installer, and how long a failed portal is given to come back.
+SESSION_CHECK_EVERY = 15
+PORTAL_GRACE = 90
+
 
 def parse_failed_units(text):
     """Unit names from `systemctl --failed --no-legend --plain` output."""
@@ -200,6 +280,72 @@ def parse_failed_units(text):
         if words and "." in words[0]:
             units.append(words[0])
     return units
+
+
+def failed_session_units(report):
+    """The units a `systemctl show` report marks as failed.
+
+    The report is one block per unit: an `Id=` line and the properties that
+    follow it. A unit that is still activating carries no Result yet.
+    """
+    blocks, block = [], None
+    for line in (report or "").splitlines():
+        key, _, value = line.partition("=")
+        if key == "Id":
+            block = {"Id": value.strip()}
+            blocks.append(block)
+        elif block is not None and key in ("ActiveState", "SubState", "Result"):
+            block[key] = value.strip()
+    return [b["Id"] for b in blocks
+            if b.get("ActiveState") == "failed" or b.get("Result") in FAILED_UNIT_RESULTS]
+
+
+def portal_state_command():
+    """The guest command that reports the session portal's unit results.
+
+    It carries the live session's environment with it: `systemctl --user`
+    needs the session bus and the runtime directory, or it answers "Failed to
+    connect to bus" and the report comes back empty, which reads as no
+    failure at all.
+    """
+    units = " ".join(shlex.quote(unit) for unit in SESSION_PORTAL_UNITS)
+    return (f"{SESSION_ENV}; systemctl --user show {units} "
+            "-p Id -p ActiveState -p SubState -p Result 2>&1 || true")
+
+
+def session_state_command():
+    """The guest command that prints the live session's desktop state.
+
+    Every part is best effort: a missing unit, an unreadable /proc file or a
+    coredumpctl without a dump must not stop the report, so each block ends
+    with `|| true`. The live session's environment comes with it, so
+    `systemctl --user` and `journalctl --user` reach the session's manager.
+    """
+    units = " ".join(shlex.quote(unit) for unit in SESSION_UNITS)
+    return SESSION_ENV + "; " + "; ".join((
+        "echo '== session units'",
+        f"systemctl --user list-units --all --no-pager --plain {units} 2>&1 || true",
+        "echo '== unit results'",
+        f"systemctl --user show {units} -p Id -p ActiveState -p SubState -p Result 2>&1 || true",
+        "echo '== unit journal'",
+        "journalctl --user -b --no-pager -o short-monotonic -u 'xdg-desktop-portal*' "
+        "-u 'at-spi2-registryd.service' -u 'gnome-shell*' 2>&1 | tail -n 200 || true",
+        "echo '== processes'",
+        "ps -o pid,ppid,stat,wchan:24,etime,cmd -C gnome-shell -C gnome-setup 2>&1 || true",
+        "echo '== shell state'",
+        "for p in $(pgrep -x gnome-shell); do echo \"-- gnome-shell $p\"; "
+        "grep -E '^(State|Threads)' /proc/$p/status 2>&1 || true; "
+        "echo \"wchan: $(cat /proc/$p/wchan 2>/dev/null)\"; "
+        "sudo cat /proc/$p/stack 2>&1 || true; done",
+        "echo '== installer state'",
+        "for p in $(pgrep -x gnome-setup); do echo \"-- gnome-setup $p\"; "
+        "grep -E '^(State|Threads)' /proc/$p/status 2>&1 || true; "
+        "echo \"wchan: $(cat /proc/$p/wchan 2>/dev/null)\"; done",
+        "echo '== coredumps'",
+        "coredumpctl list --no-pager 2>&1 | tail -n 20 || true",
+        "coredumpctl info --no-pager gnome-shell 2>&1 | tail -n 80 || true",
+        "coredumpctl info --no-pager gnome-setup 2>&1 | tail -n 80 || true",
+    ))
 
 
 class Results:
@@ -429,7 +575,6 @@ class Page(Enum):
     CONFIRM = auto()
     PASSPHRASE = auto()
     RECOVERY_KEY = auto()
-    QR = auto()
     PROGRESS = auto()
     UNKNOWN = auto()
 
@@ -444,7 +589,6 @@ def classify_setup_page(nodes):
     for page, headings in (
         (Page.FAILURE, ("Installation Failed", "Could not install")),
         (Page.DONE, ("Installation Complete",)),
-        (Page.QR, ("Scan to Back Up",)),
         (Page.RECOVERY_KEY, ("Back Up Recovery Key",)),
         (Page.PASSPHRASE, ("Choose a Disk Passphrase",)),
         (Page.DATA_FOUND, ("Existing Data Found",)),
@@ -586,6 +730,70 @@ def target_esp_problems(files):
     return problems
 
 
+def encrypt_switch(nodes):
+    """gnome-setup's 'Encrypt Disk' switch among the disk page's nodes, or
+    None. Its title label carries the same name, so the role decides."""
+    return next((n for n in nodes if norm(n["name"]) == norm(ENCRYPT_SWITCH) and n["role"] in SWITCH_ROLES), None)
+
+
+def switch_is(encrypted):
+    """Predicate: the 'Encrypt Disk' switch shows and is on (encrypted) or off."""
+    def done(nodes):
+        switch = encrypt_switch(nodes)
+        return switch is not None and ("checked" in switch["states"]) == encrypted
+    return done
+
+
+def confirm_says(nodes):
+    """What gnome-setup's confirmation says about encryption: "encrypted",
+    "unencrypted", or None when its body is not exposed."""
+    if has_text(nodes, CONFIRM_PLAIN_TEXT):
+        return "unencrypted"
+    if has_text(nodes, CONFIRM_ENCRYPTED_TEXT):
+        return "encrypted"
+    return None
+
+
+def plain_root_problems(facts):
+    """Why an installed boot's root is not the unencrypted one --encryption off
+    asked for (PLAIN_ROOT_FACTS, parse_facts): it must sit on no dm-crypt
+    device, and neither /etc/crypttab nor the kernel command line may unlock
+    one (utah-sysinstall-post writes both only for a LUKS2 root)."""
+    problems = []
+    types = facts.get("root_types", "").split()
+    if not types:
+        problems.append(f"no block device under /sysroot (source {facts.get('root_source') or 'none'})")
+    elif "crypt" in types:
+        problems.append(f"the root {facts.get('root_source')} is on dm-crypt ({' '.join(types)})")
+    if facts.get("crypttab"):
+        problems.append(f"/etc/crypttab has entries: {facts['crypttab']}")
+    if facts.get("luks_kargs"):
+        problems.append(f"the kernel command line unlocks LUKS: {facts['luks_kargs']}")
+    return problems
+
+
+def unlock_plan(encrypted, tpm):
+    """How each boot of the installed disk unlocks its root, with the
+    screenshot label of that moment: {phase: (unlock, label)}.
+
+    Encrypted, first boot and rollback unlock through the TPM2 with no prompt
+    when the VMs have one ("tpm"), else with the disk passphrase page's
+    passphrase ("pin"); the bootc switch boot runs without the TPM and
+    answers the prompt with the recovery key ("recovery"). Unencrypted, no
+    boot shows a prompt ("none")."""
+    if not encrypted:
+        return {"first boot": ("none", "12-first-boot-no-prompt"),
+                "after bootc switch": ("none", "20-switch-no-prompt"),
+                "after bootc rollback": ("none", "30-rollback-no-prompt")}
+    if tpm:
+        return {"first boot": ("tpm", "12-first-boot-tpm2-unlock"),
+                "after bootc switch": ("recovery", "20-switch-recovery-key-prompt"),
+                "after bootc rollback": ("tpm", "30-rollback-tpm2-unlock")}
+    return {"first boot": ("pin", "12-first-boot-luks-prompt"),
+            "after bootc switch": ("recovery", "20-switch-recovery-key-prompt"),
+            "after bootc rollback": ("pin", "30-rollback-luks-prompt")}
+
+
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -630,7 +838,9 @@ class Harness:
         self.tpm_state = self.work / "swtpm-state"
         self.swtpm = None
         self.recovery_key = None
-        self.results.encryption = {"tpm2": self.tpm, "unlocks": {}}
+        self.portal_failed_at = None
+        self.encrypt = args.encryption == "on"
+        self.results.encryption = {"encrypted": self.encrypt, "tpm2": self.tpm, "unlocks": {}}
         self.target_disk = target_disk(args.iso)
         self.results.medium = ({"medium": "raw"} if args.iso is None
                                else {"medium": "iso", "boot_as": args.boot_as})
@@ -900,6 +1110,66 @@ class Harness:
             return []
         return nodes if isinstance(nodes, list) else []
 
+    def atspi_apps(self, runner, app=GS_APP):
+        """The applications the AT-SPI desktop lists.
+
+        atspi_drive.py answers with {"error": ..., "apps": [...]} when nothing
+        matches the app name. An empty list is what tells a session whose
+        accessibility bus is dead from a window that has not appeared yet: in
+        run 45927940366 (attempt 1) the desktop listed no application at all.
+        """
+        try:
+            payload = self.atspi(runner, "snapshot", app)
+        except (Fail, subprocess.TimeoutExpired):
+            return []
+        if isinstance(payload, dict):
+            return [str(name) for name in (payload.get("apps") or [])]
+        return []
+
+    def live_session_diagnose(self, runner, label):
+        """Best effort: the live session's desktop state, into the evidence.
+
+        The session's portal and accessibility units with their journal, the
+        shell's and the installer's process state, the system's coredumps and
+        the applications the accessibility bus lists: what a wedged live
+        session looks like (run 45927940366, attempt 1).
+        """
+        state = self.ssh("liveuser", session_state_command(), password="live", check=False)
+        apps = self.atspi_apps(runner)
+        self.save(f"live-session-{label}.txt",
+                  state + "\n== atspi applications\n" + ("\n".join(apps) or "(none)") + "\n")
+
+    def live_session_stall(self):
+        """Why the live session cannot draw the installer's window, or None.
+
+        gnome-setup asks the session's desktop portal for its version before
+        it opens its window and blocks there while the portal never starts:
+        in run 45927940366 (attempt 1) both portal units failed with "start
+        operation timed out" and the installer's window never appeared. The
+        session cannot recover from that, so the stage fails with the reason
+        instead of running out its whole budget. A portal that failed only
+        moments ago is given PORTAL_GRACE seconds to come back first: the
+        installer can open its window without a portal.
+        """
+        try:
+            report = self.ssh("liveuser", portal_state_command(), password="live", check=False)
+        except (Fail, subprocess.TimeoutExpired, OSError):
+            return None
+        failed = failed_session_units(report)
+        if not failed:
+            self.portal_failed_at = None
+            return None
+        now = time.monotonic()
+        if self.portal_failed_at is None:
+            self.portal_failed_at = now
+            return None
+        if now - self.portal_failed_at < PORTAL_GRACE:
+            return None
+        return ("the live session's desktop portal failed to start ("
+                + ", ".join(failed)
+                + "); gnome-setup waits for the portal before it opens its window, so the "
+                  "installer cannot appear (evidence/live-session-failure.txt)")
+
     def poll(self, runner, app, predicate, timeout):
         end = time.time() + timeout
         while True:
@@ -910,16 +1180,39 @@ class Harness:
                 return None
             time.sleep(2)
 
-    def wait_for(self, runner, app, predicate, what, timeout=300):
-        nodes = self.poll(runner, app, predicate, timeout)
-        if nodes is not None:
-            return nodes
+    def wait_for(self, runner, app, predicate, what, timeout=300, stall=None):
+        """Wait for the app's tree to satisfy predicate.
+
+        stall is asked every SESSION_CHECK_EVERY seconds for a reason the
+        guest cannot recover from (a wedged live session): it returns a
+        message, and the wait ends with it instead of running out the budget.
+        """
+        end = time.time() + timeout
+        asked = 0.0
+        while True:
+            nodes = self.snapshot(runner, app)
+            if nodes and predicate(nodes):
+                return nodes
+            now = time.time()
+            if stall is not None and now - asked >= SESSION_CHECK_EVERY:
+                asked = now
+                message = stall()
+                if message:
+                    self.record_wait_failure(what, nodes)
+                    raise Fail(message)
+            if now >= end:
+                break
+            time.sleep(2)
         nodes = self.snapshot(runner, app)
+        self.record_wait_failure(what, nodes)
+        raise Fail(f"{what} never appeared in {app}")
+
+    def record_wait_failure(self, what, nodes):
+        """The AT-SPI tree, its summary and a screenshot of a failed wait."""
         self.save(f"atspi-timeout-{slug(what)}.json", json.dumps(nodes, indent=1))
         for line in summarize_nodes(nodes):
             log(f"  atspi [{slug(what)}]: {line}")
         self.shot(f"fail-{slug(what)}", f"FAILURE: {what} never appeared")
-        raise Fail(f"{what} never appeared in {app}")
 
     def to_screen(self, nodes, node):
         frame = top_frame(nodes)
@@ -1064,6 +1357,7 @@ class Harness:
         time.sleep(10)
         self.shot("01-live-session", f"{what[0].upper()}{what[1:]} booted as live media (utah.live, tmpfs overlay): GNOME session for the live user",
                   True, required=True, below_top_bar=True)
+        self.check_no_startup_overview("live", runner)
 
     def hold_key(self, key, stop):
         """Press key every quarter second over QMP (the HMP monitor stays free
@@ -1199,14 +1493,14 @@ class Harness:
         r, app = self.live_runner, GS_APP
         try:
             self.wait_for(r, app, lambda nodes: classify_setup_page(nodes) is not Page.UNKNOWN,
-                          "first setup page", 300)
+                          "first setup page", 300, stall=self.live_session_stall)
             self.key("esc")
             time.sleep(3)
             self.maximize(r, app)
             self.drive_setup(r)
             self.grab_install_log()
             self.grab_sysinstall_journal()
-            self.check_slots()
+            self.check_target_root()
         except Exception:
             self.setup_diagnose(r, "failure")
             raise
@@ -1217,6 +1511,7 @@ class Harness:
         for collect in (
             lambda: self.setup_dump(runner, label),
             lambda: self.shot(f"fail-setup-{label}", "FAILURE: current installer page"),
+            lambda: self.live_session_diagnose(runner, label),
             self.grab_install_log,
             self.grab_sysinstall_journal,
         ):
@@ -1248,12 +1543,35 @@ class Harness:
         self.setup_dump(runner, "miss")
         return False
 
+    def choose_encryption(self, runner, nodes, waited):
+        """Leave gnome-setup's 'Encrypt Disk' switch on, its default, or turn
+        it off, as --encryption asks. True once the switch is as asked; after
+        a press it is False, so the caller snapshots the page again before it
+        selects the target row (which opens the confirmation)."""
+        switch = encrypt_switch(nodes)
+        if switch is None:
+            if waited >= 30:
+                raise Fail(f"gnome-setup's disk page shows no {ENCRYPT_SWITCH!r} switch "
+                           "(pages.conf [page:installer] unencrypted-definitions)")
+            return False
+        on = "checked" in switch["states"]
+        if "switch_default" not in self.results.encryption:
+            self.results.encryption["switch_default"] = "on" if on else "off"
+            log(f"  {ENCRYPT_SWITCH!r} ({switch['role']}): {'on' if on else 'off'} by default")
+            if not on:
+                raise Fail(f"gnome-setup's {ENCRYPT_SWITCH!r} switch is off by default")
+        if on == self.encrypt:
+            return True
+        self.press(runner, GS_APP, ENCRYPT_SWITCH, switch_is(self.encrypt), "encrypt disk switched off",
+                   role=switch["role"])
+        self.shot("setup-disk-unencrypted", f"Installer disk page: {ENCRYPT_SWITCH!r} switched off before the target is picked")
+        return False
+
     def drive_setup(self, runner):
         start = time.monotonic()
         deadline = start + 4200
         previous, since = None, start
         seen = set()
-        qr_seen = False
         target_selected = False
         passphrase_filled = False
         confirmed_at = None
@@ -1271,7 +1589,7 @@ class Harness:
             if page is Page.FAILURE:
                 raise Fail("gnome-setup: installation failed")
             if page is Page.DONE:
-                if not self.recovery_key:
+                if self.encrypt and not self.recovery_key:
                     raise Fail("installation completed without a recovery key")
                 self.timings["gui-install-seconds-after-confirm"] = int(now - (confirmed_at or start))
                 return
@@ -1302,18 +1620,27 @@ class Harness:
                     problem = blank_target_problem(page, shown)
                     if problem:
                         raise Fail(problem)
-                    if not target_selected:
-                        status = "empty" if has_text(shown, DISK_EMPTY_TEXT) else "status not exposed"
-                        log(f"  target row {TARGET_SIZE_TEXT}: {status}")
-                    self.click_node(nodes, row)
-                    target_selected = True
+                    # Selecting the row opens the confirmation: the switch is set first.
+                    if self.choose_encryption(runner, nodes, now - since):
+                        if not target_selected:
+                            status = "empty" if has_text(shown, DISK_EMPTY_TEXT) else "status not exposed"
+                            log(f"  target row {TARGET_SIZE_TEXT}: {status}")
+                        self.click_node(nodes, row)
+                        target_selected = True
             elif page is Page.CONFIRM:
                 # The dialog names no disk: it confirms the row this run picked by size.
                 if not target_selected:
                     raise Fail(f"refusing to confirm installation: the {TARGET_SIZE_TEXT} target row was never selected")
+                says = confirm_says(nodes)
+                self.results.encryption["confirmation"] = says or "not exposed"
+                if says is not None and (says == "encrypted") != self.encrypt:
+                    raise Fail(f"gnome-setup's confirmation says the disk will be {says}, "
+                               f"but {ENCRYPT_SWITCH!r} was {'on' if self.encrypt else 'off'}")
                 if self.setup_press(runner, nodes, "Install"):
                     confirmed_at = confirmed_at or now
             elif page is Page.PASSPHRASE:
+                if not self.encrypt:
+                    raise Fail(f"gnome-setup asked for a disk passphrase although {ENCRYPT_SWITCH!r} was off")
                 if self.tpm:
                     raise Fail("gnome-setup asked for a disk passphrase although the VM has a TPM")
                 if not passphrase_filled:
@@ -1326,17 +1653,17 @@ class Harness:
                         self.setup_dump(runner, "miss")
                 else:
                     self.setup_press(runner, nodes, "Next")
-            elif page is Page.QR:
-                qr_seen = True
-                self.setup_press(runner, nodes, "Done")
+            elif page is Page.RECOVERY_KEY and not self.encrypt:
+                raise Fail(f"gnome-setup showed a recovery key although {ENCRYPT_SWITCH!r} was off")
             elif page is Page.RECOVERY_KEY:
                 key = self.recovery_key_text(nodes)
                 if key:
+                    # The QR code sits on the page itself; behind an icon-only button nobody found it.
+                    if not has_name(nodes, RECOVERY_QR):
+                        raise Fail(f"the recovery key page shows no {RECOVERY_QR!r} next to the key")
                     self.recovery_key = key
                     self.save("recovery-key.txt", key + "\n")
-                    if not qr_seen:
-                        self.setup_press(runner, nodes, "Show QR Code for Recovery Key")
-                    elif has_name(nodes, "Done", sensitive=True, role="button"):
+                    if has_name(nodes, "Done", sensitive=True, role="button"):
                         self.setup_press(runner, nodes, "Done")
                     else:
                         checkbox = named(nodes, "I backed up my recovery key", role="check box")
@@ -1363,7 +1690,8 @@ class Harness:
 
     def grab_sysinstall_journal(self):
         out = self.ssh("liveuser", "sudo journalctl -b --no-pager -o short-monotonic -u 'utah-sysinstall@*' "
-                       "-u 'utah-sysinstall-post@*' -u 'utah-cryptenroll@*'; cat /run/utah-live/repart.d/*.conf",
+                       "-u 'utah-sysinstall-post@*' -u 'utah-cryptenroll@*'; "
+                       f"for f in /run/utah-live/repart.d/*.conf {PLAIN_DEFINITIONS}/*.conf; do echo \"== $f\"; cat \"$f\"; done",
                        password="live", check=False)
         self.save("sysinstall-journal.txt", out)
 
@@ -1415,32 +1743,51 @@ class Harness:
             if "PASSPHRASE-OK" not in test or "EMPTY-OK" in test:
                 raise Fail("the password slot is not the chosen passphrase, or the empty one survived (evidence/luks-passphrase-test.txt)")
 
+    def check_plain_target(self):
+        """--encryption off: the target's root is the plain btrfs copy, no LUKS2 anywhere on it."""
+        out = self.ssh("liveuser", f"lsblk -rnpo NAME,FSTYPE {self.target_disk}", password="live", check=False)
+        self.save("target-filesystems.txt", out)
+        fstypes = sorted({line.split()[1] for line in out.splitlines() if len(line.split()) >= 2})
+        self.results.encryption["target_filesystems"] = fstypes
+        log(f"  target filesystems: {fstypes}")
+        if "crypto_LUKS" in fstypes or "btrfs" not in fstypes:
+            raise Fail(f"target filesystems are {fstypes}: expected a plain btrfs root and no LUKS2 (evidence/target-filesystems.txt)")
+
+    def check_target_root(self):
+        if self.encrypt:
+            self.check_slots()
+        else:
+            self.check_plain_target()
+
     def gnome_setup_script_install(self):
-        """What gnome-setup does, over SSH: sysinstall Run, the post-install unit, a passphrase
-        when there is no TPM, a recovery key (wiping the empty passphrase systemd-repart enrolled)."""
+        """What gnome-setup does, over SSH: sysinstall Run, the post-install unit and, encrypted,
+        a passphrase when there is no TPM and a recovery key (wiping the empty passphrase
+        systemd-repart enrolled). --encryption off runs the unencrypted definitions and enrolls nothing."""
         log("=== Stage 2 (script): systemd-sysinstall + utah-sysinstall-post over SSH ===")
         self.results.begin("install")
         start = time.time()
-        call = json.dumps({"node": self.target_disk, "definitions": ["/run/utah-live/repart.d"], "erase": True})
+        definitions = "/run/utah-live/repart.d" if self.encrypt else PLAIN_DEFINITIONS
+        call = json.dumps({"node": self.target_disk, "definitions": [definitions], "erase": True})
         unit = "utah-sysinstall-post@" + self.target_disk.strip("/").replace("/", "-") + ".service"
         cryptenroll = "/usr/libexec/utah-sysinstall/systemd-cryptenroll"
         passphrase = "" if self.tpm else f"sudo NEWPASSWORD={PIN} {cryptenroll} --unlock-key-file=/dev/null --password \"$dev\" && "
+        enroll = (f" && dev=$(lsblk -rnpo NAME,FSTYPE {self.target_disk} | awk '$2 == \"crypto_LUKS\" {{print $1}}') && "
+                  f"empty=$(sudo {cryptenroll} \"$dev\" | awk '$2 == \"password\" {{print $1}}') && {passphrase}"
+                  f"sudo {cryptenroll} --unlock-key-file=/dev/null --recovery-key --wipe-slot=\"$empty\" \"$dev\" 2>&1")
         out = self.ssh("liveuser", f"sudo varlinkctl call --more /run/systemd/io.systemd.SysInstall io.systemd.SysInstall.Run "
-                       f"{shlex.quote(call)} && sudo systemctl start {unit} && "
-                       f"dev=$(lsblk -rnpo NAME,FSTYPE {self.target_disk} | awk '$2 == \"crypto_LUKS\" {{print $1}}') && "
-                       f"empty=$(sudo {cryptenroll} \"$dev\" | awk '$2 == \"password\" {{print $1}}') && {passphrase}"
-                       f"sudo {cryptenroll} --unlock-key-file=/dev/null --recovery-key --wipe-slot=\"$empty\" \"$dev\" 2>&1",
+                       f"{shlex.quote(call)} && sudo systemctl start {unit}" + (enroll if self.encrypt else ""),
                        password="live", timeout=3600, check=False)
         self.timings["script-install-seconds"] = int(time.time() - start)
         self.save("script-install.log", out)
         self.grab_install_log()
         self.grab_sysinstall_journal()
-        keys = [w for w in out.split() if w.count("-") == 7 and len(w) == 71]
-        if not keys:
-            raise Fail("no recovery key from systemd-cryptenroll (evidence/script-install.log)")
-        self.recovery_key = keys[-1]
-        self.save("recovery-key.txt", self.recovery_key + "\n")
-        self.check_slots()
+        if self.encrypt:
+            keys = [w for w in out.split() if w.count("-") == 7 and len(w) == 71]
+            if not keys:
+                raise Fail("no recovery key from systemd-cryptenroll (evidence/script-install.log)")
+            self.recovery_key = keys[-1]
+            self.save("recovery-key.txt", self.recovery_key + "\n")
+        self.check_target_root()
         self.after_install()
 
     def after_install(self):
@@ -1464,13 +1811,17 @@ class Harness:
         unlock: "pin" types the passphrase of gnome-setup's disk passphrase page and "recovery" gnome-setup's
         recovery key at the branded Plymouth prompt; "tpm" expects no prompt at
         all (gnome-setup's TPM2 enrollment) and screenshots the first frame the
-        unlocked system draws."""
+        unlocked system draws; "none" (--encryption off) expects no prompt either
+        and checks the root is on no dm-crypt device (plain_root_problems)."""
         self.results.encryption["unlocks"][phase] = unlock
-        if unlock == "tpm":
+        if unlock in ("tpm", "none"):
             try:
                 self.wait_ssh("root", 900)
             except Fail:
-                self.shot(f"fail-tpm-unlock-{slug(phase)}", f"FAILURE: {phase}: no TPM2 unlock (a prompt instead?)")
+                if unlock == "tpm":
+                    self.shot(f"fail-tpm-unlock-{slug(phase)}", f"FAILURE: {phase}: no TPM2 unlock (a prompt instead?)")
+                else:
+                    self.shot(f"fail-plain-boot-{slug(phase)}", f"FAILURE: {phase}: the unencrypted root never came up (a prompt instead?)")
                 raise
         else:
             status = subprocess.run([sys.executable, str(SCRIPTS / "plymouth-prompt.py"), "wait", self.mon_sock, str(self.serial),
@@ -1513,6 +1864,11 @@ class Harness:
             time.sleep(10)
             self.shot(unlock_label, f"{phase}: no Plymouth prompt; the LUKS2 root was unlocked by the TPM2 "
                       "(PCR 7) and the system reached the graphical target", True)
+        elif unlock == "none":
+            self.check_plain_root(phase)
+            time.sleep(10)
+            self.shot(unlock_label, f"{phase}: no Plymouth prompt; the unencrypted root mounted directly "
+                      "and the system reached the graphical target", True)
         if "utah.live" in facts.split("\n", 1)[0]:
             raise Fail(f"{phase}: installed system booted with utah.live")
         self.scp_to("root", HERE / "atspi_drive.py", "/var/tmp/atspi_drive.py")
@@ -1520,6 +1876,15 @@ class Harness:
         self.ssh("root", "chmod 0755 /var/tmp/atspi_drive.py /var/tmp/vte_term.py")
         if self.args.backend == "composefs":
             self.check_composefs(phase, read=phase == "first boot")
+
+    def check_plain_root(self, phase):
+        """--encryption off: this boot's root is on no dm-crypt device and nothing unlocks one."""
+        out = self.ssh("root", PLAIN_ROOT_FACTS, check=False)
+        self.save(f"plain-root-{slug(phase)}.txt", out)
+        problems = plain_root_problems(parse_facts(out))
+        self.results.encryption.setdefault("plain_root", {})[phase] = problems
+        if problems:
+            raise Fail(f"{phase}: the root is not unencrypted: {'; '.join(problems)} (evidence/plain-root-{slug(phase)}.txt)")
 
     def check_composefs(self, phase, read):
         """fs-verity is enforced on this boot; on the first boot, every object reads back clean."""
@@ -1681,8 +2046,9 @@ class Harness:
                 if seen:
                     break
                 if welcome_dialog_showing(ocr):
-                    log("  GNOME Shell welcome dialog is showing; pressing Skip")
-                    self.key("ret")
+                    # Escape is the dialog's Skip key; Return (Take Tour) left it up in run 46065121091.
+                    log("  GNOME Shell welcome dialog is showing; pressing Escape (Skip)")
+                    self.key("esc")
                     time.sleep(3)
                 time.sleep(5)
         finally:
@@ -1814,6 +2180,38 @@ class Harness:
         self.type(PASSWORD, enter=True)
         self.wait_user_shell()
 
+    def check_no_startup_overview(self, phase, runner):
+        """GNOME starts on the desktop, not in the Activities overview (common's
+        disable-overview-on-startup plus patches/dash-to-dock). The dock may close the
+        overview a few seconds in, so poll for 20 s.
+
+        Enforced only on an image that carries the patch: a pull request builds its medium
+        from the :testing digest pinned in iso/raw/Containerfile, which can predate it
+        (overview-live.txt in run 46071542116: patch 0, overview up). On the patched
+        candidate (4e9f57eb, Post-Testing run 46065121091) every live and first-boot
+        login started on the desktop."""
+        patched = DOCK_PATCH_MARKER in runner(f"grep -o {DOCK_PATCH_MARKER} {DOCK_JS} || true")
+        end = time.time() + 20
+        while True:
+            try:
+                active = "true" in runner(OVERVIEW_ACTIVE.format("Get", ""))
+            except Fail as e:
+                active = f"unreadable: {e}"
+            if active is False or time.time() >= end:
+                break
+            time.sleep(2)
+        problems = [] if active is False else [
+            "the session started in the Activities overview" if active is True else f"OverviewActive {active}"]
+        self.results.check(phase, "startup overview", problems if patched else [])
+        log(f"  {phase}: startup overview: {'; '.join(problems) or 'ok'}"
+            + ("" if patched or not problems else " (image predates patches/dash-to-dock; not enforced)"))
+        if problems:
+            # Why the dock did not keep it closed: the key, the extension's state, the
+            # patch in the image, and the session's journal (extension enable order).
+            self.save(f"overview-{slug(phase)}.txt", runner(OVERVIEW_DIAG))
+            if patched:
+                raise Fail(f"{phase}: {problems[0]} although the image carries patches/dash-to-dock")
+
     def close_overview(self):
         """Leave the overview GNOME Shell opens at login, checked through its D-Bus property.
 
@@ -1821,8 +2219,7 @@ class Harness:
         hand-off) left the overview up. Press Escape like a user until the Shell says
         it is closed; set the property only if keys never take."""
         r = self.user_runner(USER)
-        prop = ("gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell "
-                "--method org.freedesktop.DBus.Properties.{} org.gnome.Shell OverviewActive{}")
+        prop = OVERVIEW_ACTIVE
         for attempt in range(5):
             try:
                 active = "true" in r(prop.format("Get", ""))
@@ -1844,7 +2241,12 @@ class Harness:
             time.sleep(3)
 
     def desktop_and_status(self, phase, prefix):
-        # Close the overview (and Shell's first-login welcome dialog) over the desktop.
+        self.check_no_startup_overview(phase, self.user_runner(USER))
+        # Shell's first-login welcome dialog opens at startup-complete over the desktop.
+        # Escape is its Skip key; before the overview stayed closed, close_overview's
+        # Escape dismissed it by accident, and fastfetch then ran under it (run 46065121091).
+        self.key("esc")
+        time.sleep(3)
         self.close_overview()
         self.shot(f"{prefix}-desktop", f"{phase}: GNOME desktop for {USER}", True, required=True)
         status = self.ssh("root", "bootc status", check=False)
@@ -1853,7 +2255,7 @@ class Harness:
         self.save(f"bootc-status-{slug(phase)}.json", status_json)
         digest_cmd = f"echo {PASSWORD} | sudo -S -p '' bootc status"
         self.terminal_shot(prefix, "bootc-status", "bootc status", digest_cmd, f"{phase}: terminal on the desktop running `bootc status`")
-        if phase == "first boot":
+        if phase == "first boot" and self.encrypt:
             luks = (f"echo {PASSWORD} | sudo -S -p '' true; dev=$(lsblk -rnpo NAME,FSTYPE | awk '$2 == \"crypto_LUKS\" {{print $1}}'); "
                     "echo \"== keyslots of $dev\"; sudo systemd-cryptenroll \"$dev\"; echo '== /proc/cmdline'; "
                     "tr ' ' '\\n' </proc/cmdline | grep rd.luks; echo '== unlock'; "
@@ -1861,6 +2263,11 @@ class Harness:
             self.terminal_shot(prefix, "luks", "LUKS2 root", luks,
                                f"{phase}: the root's LUKS2 keyslots (recovery key and "
                                f"{'TPM2, no passphrase' if self.tpm else 'the chosen passphrase'}) and how it was unlocked")
+        elif phase == "first boot":
+            plain = ("lsblk -o NAME,TYPE,FSTYPE,MOUNTPOINTS; echo '== /etc/crypttab'; cat /etc/crypttab; "
+                     "echo '== /proc/cmdline'; cat /proc/cmdline")
+            self.terminal_shot(prefix, "plain-root", "Unencrypted root", plain,
+                               f"{phase}: the root is plain btrfs, no dm-crypt device, no crypttab entry, no rd.luks karg")
         try:
             return json.loads(status_json)["status"]["booted"]["image"]["imageDigest"]
         except (KeyError, TypeError, json.JSONDecodeError):
@@ -1922,11 +2329,9 @@ class Harness:
              "device": "virtio-blk-pci,drive=target,bootindex=1"},
         ]
         self.start_vm("installed", self.installed_drives, self.vars_installed, self.args.ssh_port + 1, tpm=self.tpm)
-        if self.tpm:
-            self.installed_boot("first boot", "12-first-boot-tpm2-unlock", unlock="tpm")
-        else:
-            # The passphrase gnome-setup's disk passphrase page set.
-            self.installed_boot("first boot", "12-first-boot-luks-prompt")
+        plan = unlock_plan(self.encrypt, self.tpm)
+        unlock, label = plan["first boot"]
+        self.installed_boot("first boot", label, unlock=unlock)
         self.results.begin("initial setup")
         self.initial_setup()
         self.results.begin("first boot desktop")
@@ -1947,9 +2352,10 @@ class Harness:
         log(f"  staged: {staged_digest}")
         if not staged_digest:
             raise Fail("bootc switch staged nothing (evidence/bootc-switch.log)")
-        # Without the TPM, the recovery key gnome-setup showed (the second key when there is no TPM).
+        # Encrypted, without the TPM: the recovery key gnome-setup showed (the second key when there is no TPM).
         self.restart_installed("installed-switch", tpm=False)
-        self.installed_boot("after bootc switch", "20-switch-recovery-key-prompt", unlock="recovery")
+        unlock, label = plan["after bootc switch"]
+        self.installed_boot("after bootc switch", label, unlock=unlock)
         self.gdm_login("after bootc switch", "21-switch-gdm")
         digest = self.desktop_and_status("after bootc switch", "22-switch")
         self.check_flatpaks("after bootc switch", removed)
@@ -1960,10 +2366,8 @@ class Harness:
         self.results.begin("bootc rollback")
         self.save("bootc-rollback.log", self.ssh("root", "bootc rollback 2>&1"))
         self.restart_installed("installed-rollback", tpm=self.tpm)
-        if self.tpm:
-            self.installed_boot("after bootc rollback", "30-rollback-tpm2-unlock", unlock="tpm")
-        else:
-            self.installed_boot("after bootc rollback", "30-rollback-luks-prompt")
+        unlock, label = plan["after bootc rollback"]
+        self.installed_boot("after bootc rollback", label, unlock=unlock)
         self.gdm_login("after bootc rollback", "31-rollback-gdm")
         digest = self.desktop_and_status("after bootc rollback", "32-rollback")
         self.check_flatpaks("after bootc rollback", removed)
@@ -2108,7 +2512,7 @@ def flavor_of(ref):
     return r.stdout.strip()
 
 
-def main():
+def arg_parser():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--raw", required=True)
     ap.add_argument("--iso", help="hybrid ISO of the medium (build-hybrid-iso.sh): the live VM boots it instead of --raw")
@@ -2124,6 +2528,10 @@ def main():
     ap.add_argument("--tpm", action="store_true",
                     help="give the VMs a software TPM 2.0 (swtpm) that persists across them "
                          "(gnome-setup: without it, the disk passphrase page is filled and used)")
+    ap.add_argument("--encryption", choices=("on", "off"), default="on",
+                    help="gnome-setup's 'Encrypt Disk' switch: on (its default) installs into LUKS2, off "
+                         "turns it off on the disk page and installs an unencrypted root (no passphrase "
+                         "or recovery key page, no unlock)")
     ap.add_argument("--backend", choices=("composefs", "ostree"), default="composefs",
                     help="bootc backend the medium was built with (build-raw-image.sh backend.json)")
     ap.add_argument("--backend-decision",
@@ -2134,6 +2542,11 @@ def main():
     ap.add_argument("--flavor",
                     help="flavor the installed system must be (config/flavors.json); default: the flavor "
                          "that publishes --candidate's image, which is the image under test's repository")
+    return ap
+
+
+def main():
+    ap = arg_parser()
     args = ap.parse_args()
     if (args.iso is None) != (args.boot_as is None):
         ap.error("--iso and --boot-as go together")
