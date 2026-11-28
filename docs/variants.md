@@ -144,11 +144,27 @@ unread `flatpak_var_path` reappears under `live/src/`. The installer reads
 
 ## Adding a custom build target
 
-For local testing, create a directory with `payload_ref` and optionally `live_target`:
+For local testing, create a directory with `payload_ref` and, usually,
+`live_target`. Two images are checked before anything is built:
+
+- `payload_ref` is the image the ISO installs. A `ghcr.io/projectbluefin/`
+  image must carry a valid project signature.
+- The live environment is built from `ghcr.io/<registry>/<live_target>:<tag>`.
+  The defaults are registry `projectbluefin`, `live_target` = the directory
+  name, and tag `stable`. Its signature is always checked.
+
+`scripts/verify-image-signature.sh` accepts only the image families listed in
+its `signing_repository()` function (`utah`, `dakota`, `bluefin-lts`,
+`bluefin`, and names that start with one of those followed by `-`). Any other
+image is refused with `no known signing repository for image`. To build for a
+new image family, add it to `signing_repository()` first.
+
+Example: a target that builds the same images as `dakota/`:
 
 ```bash
 mkdir my-variant
-echo 'ghcr.io/projectbluefin/my-variant:latest' > my-variant/payload_ref
+echo 'ghcr.io/projectbluefin/dakota-nvidia:stable' > my-variant/payload_ref
+echo 'dakota-nvidia' > my-variant/live_target
 just iso-sd-boot my-variant
 ```
 
