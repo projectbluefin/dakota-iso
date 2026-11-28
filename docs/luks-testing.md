@@ -421,5 +421,9 @@ Finished systemd-cryptsetup@root.service
 Found device dev-disk-by-x2dlabel-root.device
 ```
 
-**Long-term fix:** Ship `EnsureLuksArgs` in the `projectbluefin/bootc-installer`
-Flatpak so both install paths are covered.
+**Status (2026-11):** the Flatpak fisherman now writes `rd.luks.name=<UUID>=root`
+itself (its log says `Injected rd.luks.name into 1 boot entry`). The harness in
+`scripts/luks-install-qemu.sh` now adds the argument only when an entry has no
+`rd.luks.name=` or `rd.luks.uuid=`, and logs `harness added rd.luks.name` when
+it does. The `luks-uuid` post-boot check measures the installer-written argument
+when present; the fallback can still make it pass when the installer wrote none.
