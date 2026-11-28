@@ -94,17 +94,21 @@ just iso-sd-boot dakota        # Full end-to-end build (runs container + assembl
 
 ## Adding a custom build
 
-The justfile accepts any variant directory with a `payload_ref` file:
+The justfile accepts any variant directory with a `payload_ref` file, as long as
+the images it names pass the signature check described below. This example
+builds the same images as `dakota/`:
 
 ```bash
 mkdir my-variant
-echo 'ghcr.io/projectbluefin/my-variant:latest' > my-variant/payload_ref
+echo 'ghcr.io/projectbluefin/dakota-nvidia:stable' > my-variant/payload_ref
+echo 'dakota-nvidia' > my-variant/live_target
 just iso-sd-boot my-variant
 ```
 
 The `live/Containerfile` accepts a `TARGET` build-arg (defaulting to `dakota-nvidia`). The
-justfile reads `<target>/payload_ref` and passes the target name as `TARGET`. Installer
-configs are patched at build time to reference the correct image.
+justfile reads `<target>/payload_ref` and passes `<target>/live_target` as `TARGET` (the
+target name when that file is absent). Installer configs are patched at build time to
+reference the correct image.
 
 Every `ghcr.io/projectbluefin/*` image the build consumes (the live base and the
 `payload_ref`) must carry a keyless cosign signature from the CI of the repository that owns it
