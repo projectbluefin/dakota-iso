@@ -193,9 +193,14 @@ class TestXfsprogs(unittest.TestCase):
     def test_containerfile_installs_xfsprogs_in_debian_stage(self):
         """Debian initramfs-builder stage must install xfsprogs."""
         content = CONTAINERFILE.read_text()
+        # Look only at the Debian stage: comments in the final stage also
+        # name xfsprogs.
+        debian = content.split("AS initramfs-builder", 1)[1].split(
+            "\nFROM ", 1
+        )[0]
         self.assertIn(
             "xfsprogs",
-            content,
+            debian,
             "xfsprogs must be in the Debian apt-get install list so mkfs.xfs "
             "is available to COPY into the final image. Without it, fisherman's "
             "XFS preflight check fails on images that don't ship xfsprogs "
@@ -242,10 +247,21 @@ class TestXfsprogs(unittest.TestCase):
             )
         # libblkid and libuuid must NOT be copied from Debian — base image
         # provides a newer version; overwriting breaks sfdisk (BLKID_2_40).
+        # Look at every non-comment line, so a one-line COPY and a file
+        # inside a multi-line COPY block are both caught. Comment lines are
+        # skipped because the Containerfile names libblkid in prose.
+        code_lines = [
+            line for line in content.splitlines()
+            if not line.lstrip().startswith("#")
+        ]
         for lib in ("libblkid.so", "libuuid.so"):
-            self.assertNotIn(
-                f"COPY --from=initramfs-builder\n    /usr/lib/x86_64-linux-gnu/{lib}",
-                content,
+            offenders = [
+                line.strip() for line in code_lines
+                if f"x86_64-linux-gnu/{lib}" in line
+            ]
+            self.assertEqual(
+                offenders,
+                [],
                 f"Containerfile must not copy {lib} from Debian — base image "
                 "ships a newer version; overwriting it breaks sfdisk.",
             )
@@ -256,6 +272,12 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
 
     def setUp(self):
         self.content = CONTAINERFILE.read_text()
+
+    def _debian_stage(self):
+        """Text of the Debian initramfs-builder stage only."""
+        return self.content.split("AS initramfs-builder", 1)[1].split(
+            "\nFROM ", 1
+        )[0]
 
     def test_native_dracut_stage_exists(self):
         """Containerfile must have an initramfs-native stage."""
@@ -308,18 +330,23 @@ class TestInitramfsSelectionLogic(unittest.TestCase):
 
     def test_debian_stage_reads_dracut_status(self):
         """Debian stage must check dracut-status to decide whether to cross-build."""
+        # Look only at the Debian stage: the native stage writes dracut-status
+        # and the final stage reads it too.
         self.assertIn(
-            "dracut-status",
-            self.content,
+            "if grep -q debian /tmp/dracut-status",
+            self._debian_stage(),
             "initramfs-builder (Debian) stage must read dracut-status and "
             "only run the cross-build when native dracut was unavailable.",
         )
 
     def test_debian_stage_fallback_includes_dmsquash_live(self):
         """Debian cross-build must add the dmsquash-live dracut module."""
-        self.assertIn(
-            "dmsquash-live",
-            self.content,
+        add_lines = [
+            line for line in self._debian_stage().splitlines()
+            if '--add "' in line
+        ]
+        self.assertTrue(
+            any("dmsquash-live" in line for line in add_lines),
             "Debian dracut cross-build must include --add 'dmsquash-live' "
             "for the live boot to work.",
         )
