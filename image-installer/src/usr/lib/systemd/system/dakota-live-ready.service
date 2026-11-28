@@ -1,0 +1,12 @@
+[Unit]
+Description=Dakota live: signal live session ready
+ConditionKernelCommandLine=dakota.live.installer=gnome-setup
+Requires=dakota-live-setup.service
+After=display-manager.service dakota-live-setup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c 'echo DAKOTA_LIVE_READY > /dev/ttyS0 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,924 @@
+diff --git a/src/sysinstall/sysinstall.c b/src/sysinstall/sysinstall.c
+--- a/src/sysinstall/sysinstall.c
++++ b/src/sysinstall/sysinstall.c
+@@ -51,6 +51,8 @@
+ #include "varlink-util.h"
+ #include "verbs.h"
+
++#define DAKOTA_DEFINITIONS "/run/dakota-live/repart.d"
++
+ static char *arg_node = NULL;
+ static bool arg_device_auto = false;
+ static usec_t arg_device_auto_timeout = 30 * USEC_PER_SEC;
+@@ -652,7 +654,9 @@
+         if ((p.progress != UINT_MAX || p.object) && result->context->link)
+                 (void) sysinstall_context_notify(result->context, PROGRESS_INSTALL_PARTITIONS, p.object, p.progress);
+
+-        return result->ret = 0;
++        if (!FLAGS_SET(flags, SD_VARLINK_REPLY_CONTINUES))
++                result->ret = 0;
++        return 0;
+ }
+
+ static int sysinstall_context_invoke_repart_run(SysInstallContext *context) {
+@@ -671,6 +675,7 @@
+                 return log_error_errno(r, "Failed to disable IPC timeout: %m");
+
+         RepartResult result = {
++                .ret = -EIO, /* A successful final reply is required, not merely progress. */
+                 .context = context,
+         };
+
+@@ -684,7 +689,7 @@
+                         context->repart_link,
+                         "io.systemd.Repart.Run",
+                         SD_JSON_BUILD_PAIR_STRING("node", context->node),
+-                        SD_JSON_BUILD_PAIR_STRING("empty", context->erase ? "force" : "allow"),
++                        SD_JSON_BUILD_PAIR_STRING("empty", context->erase ? "force" : (arg_varlink ? "require" : "allow")),
+                         SD_JSON_BUILD_PAIR_BOOLEAN("dryRun", false),
+                         SD_JSON_BUILD_PAIR_CONDITION(!!context->definitions, "definitions", SD_JSON_BUILD_STRV(context->definitions)),
+                         SD_JSON_BUILD_PAIR_BOOLEAN("deferPartitionsEmpty", true),
+@@ -767,7 +772,7 @@
+ static int invoke_repart(
+                 sd_varlink **link,
+                 const char *node,
+-                bool erase,
++                const char *empty,
+                 bool dry_run,
+                 char **definitions,
+                 uint64_t *min_size,        /* initialized both on success and error */
+@@ -803,7 +808,7 @@
+                         &reply,
+                         &error_id,
+                         SD_JSON_BUILD_PAIR_STRING("node", node),
+-                        SD_JSON_BUILD_PAIR_STRING("empty", erase ? "force" : "allow"),
++                        SD_JSON_BUILD_PAIR_STRING("empty", empty),
+                         SD_JSON_BUILD_PAIR_BOOLEAN("dryRun", dry_run),
+                         SD_JSON_BUILD_PAIR_CONDITION(!!definitions, "definitions", SD_JSON_BUILD_STRV(definitions)),
+                         SD_JSON_BUILD_PAIR_BOOLEAN("deferPartitionsEmpty", true),
+@@ -971,7 +976,7 @@
+                 r = invoke_repart(
+                                 repart_link,
+                                 node,
+-                                try_erase,
++                                try_erase ? "force" : "allow",
+                                 /* dry_run= */ true,
+                                 arg_definitions,
+                                 &min_size,
+@@ -1740,10 +1745,11 @@
+
+ DEFINE_TRIVIAL_CLEANUP_FUNC(ListCandidateDevicesContext*, list_candidate_devices_context_free);
+
+-static int list_candidate_devices_context_settle_definitions(ListCandidateDevicesContext *context,
+-                                                             char **definitions) {
+-
+-        return settle_definitions(definitions, &context->definitions);
++static bool dakota_definitions_valid(char **definitions) {
++        /* Older clients name the distribution's packaged alias; neither spelling is used as client input. */
++        return strv_isempty(definitions) ||
++                strv_equal(definitions, STRV_MAKE(DAKOTA_DEFINITIONS)) ||
++                strv_equal(definitions, STRV_MAKE("/usr/lib/gnome-setup/definitions"));
+ }
+
+ static void vl_on_disconnect(sd_varlink_server *server, sd_varlink *link, void *userdata) {
+@@ -1828,13 +1834,37 @@
+         r = invoke_repart(
+                         &context->dry_run_repart_link,
+                         p.node,
+-                        /* erase= */ false,
++                        "require",
+                         /* dry_run= */ true,
+                         context->definitions,
+                         &min_size,
+                         &current_size,
+                         &need_free,
+                         /* n_partitions= */ NULL);
++        if (r == -EHWPOISON) {
++                /* Find out whether an explicitly erased disk would fit. */
++                r = invoke_repart(
++                                &context->dry_run_repart_link,
++                                p.node,
++                                "force",
++                                /* dry_run= */ true,
++                                context->definitions,
++                                &min_size,
++                                &current_size,
++                                &need_free,
++                                /* n_partitions= */ NULL);
++                if (r >= 0)
++                        r = -EHWPOISON;
++        }
++        if (IN_SET(r, -EBUSY, -ENOENT, -ENODEV, -ENOMEDIUM, -ENOTBLK, -ENXIO, -EPERM, -EROFS)) {
++                if (context->subscribe)
++                        return sd_varlink_notifybo(context->link,
++                                        SD_JSON_BUILD_PAIR("action", JSON_BUILD_CONST_STRING("remove")),
++                                        SD_JSON_BUILD_PAIR_STRING("node", p.node));
++                if (FLAGS_SET(flags, SD_VARLINK_REPLY_CONTINUES))
++                        return 0;
++                return sd_varlink_reply(context->link, /* parameters= */ NULL);
++        }
+
+         DeviceFit fit;
+         if (r < 0) {
+@@ -1845,7 +1875,7 @@
+                 else if (r == -EHWPOISON)
+                         fit = DEVICE_FIT_CONFLICTING_DISK_LABEL_PRESENT;
+                 else
+-                        return r;
++                        return sd_varlink_error_errno(context->link, r);
+         } else
+                 fit = DEVICE_FIT_ENOUGH_FREE_SPACE;
+
+@@ -1904,7 +1934,7 @@
+         r = varlink_verify_polkit_async(
+                         link,
+                         /* bus= */ NULL,
+-                        "io.systemd.sysinstall.ListCandidateDevices",
++                        "org.projectbluefin.dakota.sysinstall.ListCandidateDevices",
+                         /* details= */ NULL,
+                         polkit_registry);
+         if (r <= 0)
+@@ -1921,12 +1951,15 @@
+         if (r != 0)
+                 return r;
+
++        if (!dakota_definitions_valid(p.definitions))
++                return sd_varlink_error_invalid_parameter_name(link, "definitions");
++
+         _cleanup_(list_candidate_devices_context_freep) ListCandidateDevicesContext* context = list_candidate_devices_context_new();
+         if (!context)
+                 return log_oom();
+
+         context->subscribe = p.subscribe;
+-        r = list_candidate_devices_context_settle_definitions(context, p.definitions);
++        r = settle_definitions(STRV_MAKE(DAKOTA_DEFINITIONS), &context->definitions);
+         if (r < 0)
+                 return r;
+
+@@ -2067,7 +2100,7 @@
+         r = varlink_verify_polkit_async(
+                         link,
+                         /* bus= */ NULL,
+-                        "io.systemd.sysinstall.Run",
++                        "org.projectbluefin.dakota.sysinstall.Run",
+                         /* details= */ NULL,
+                         polkit_registry);
+         if (r <= 0)
+@@ -2081,21 +2114,27 @@
+         if (r != 0)
+                 return r;
+
++        if (!dakota_definitions_valid(p.definitions))
++                return sd_varlink_error_invalid_parameter_name(link, "definitions");
++        if (p.kernel_image)
++                return sd_varlink_error_invalid_parameter_name(link, "kernelImagePath");
++        if (p.install_kernel > 0)
++                return sd_varlink_error_invalid_parameter_name(link, "installKernel");
++        if (p.install_boot_loader > 0)
++                return sd_varlink_error_invalid_parameter_name(link, "installBootLoader");
++        if (p.variables)
++                return sd_varlink_error_invalid_parameter_name(link, "variables");
++
+         _cleanup_(sysinstall_context_done) SysInstallContext context = (SysInstallContext) {
+                 .copy_locale = p.copy_locale,
+                 .copy_keymap = p.copy_keymap,
+                 .copy_timezone = p.copy_timezone,
+                 .erase = p.erase,
+-                .touch_variables = p.variables,
+-                /* If not specified by the caller, use what we have been invoked with, which allows the
+-                 * OS to change the defaults via the service's command line */
+-                .install_kernel = p.install_kernel >= 0 ? p.install_kernel : arg_install_kernel,
+-                .install_boot_loader = p.install_boot_loader >= 0 ? p.install_boot_loader : arg_install_boot_loader,
+                 .node = TAKE_PTR(p.node),
+                 .kernel_fd = -EBADF,
+         };
+
+-        r = sysinstall_context_settle_definitions(&context, p.definitions);
++        r = sysinstall_context_settle_definitions(&context, STRV_MAKE(DAKOTA_DEFINITIONS));
+         if (r < 0)
+                 return r;
+
+@@ -2107,10 +2146,6 @@
+                 return r;
+
+         r = sysinstall_context_read_credentials(&context);
+-        if (r < 0)
+-                return r;
+-
+-        r = sysinstall_context_settle_kernel_image(&context, p.kernel_image);
+         if (r < 0)
+                 return r;
+
+@@ -2237,7 +2272,7 @@
+                 r = invoke_repart(
+                                 &repart_link,
+                                 /* node= */ NULL,
+-                                /* erase= */ true,
++                                "force",
+                                 /* dry_run= */ true,
+                                 arg_definitions,
+                                 &min_size,
+diff --git a/src/repart/repart.c b/src/repart/repart.c
+--- a/src/repart/repart.c
++++ b/src/repart/repart.c
+@@ -618,6 +618,7 @@
+ };
+
+ struct Context {
++        bool dakota_raw;
+         char **definitions;
+
+         LIST_HEAD(Partition, partitions);
+@@ -5522,7 +5523,9 @@
+         }
+
+         if (arg_offline <= 0) {
+-                r = blockdev_partscan_enabled_fd(whole_fd);
++                /* Temporary loop slices let LUKS claim the future partition without releasing the
++                 * whole-disk claim or exposing incomplete partitions for mounting. */
++                r = context->dakota_raw ? 0 : blockdev_partscan_enabled_fd(whole_fd);
+                 if (r > 0) {
+                         _cleanup_close_ int dev_fd = -EBADF;
+                         _cleanup_free_ char *part_node = NULL;
+@@ -5589,8 +5592,9 @@
+                                 log_warning_errno(r, "Could not detect whether the device can be partitioned, assuming it cannot be: %m");
+                         /* Loopback block devices are not only useful to turn regular files into block devices, but
+                          * also to cut out sections of block devices into new block devices. */
+-                        r = loop_device_make(whole_fd, O_RDWR, p->offset, size, context->sector_size, /* loop_flags= */ 0, LOCK_EX, &d);
++                        r = loop_device_make(whole_fd, O_RDWR, p->offset, size, context->sector_size,
++                                             context->dakota_raw ? LOOP_DEVICE_PIN_BACKING_FD : 0, LOCK_EX, &d);
+-                        if (r < 0 && loop_device_error_is_fatal(p, r))
++                        if (r < 0 && (context->dakota_raw || loop_device_error_is_fatal(p, r)))
+                                 return log_error_errno(r, "Failed to make loopback device of future partition %" PRIu64 ": %m", p->partno);
+                         if (r >= 0) {
+                                 t->loop = TAKE_PTR(d);
+@@ -12766,6 +12770,168 @@
+         return 0;
+ }
+
++#define DAKOTA_RUN_DIR "dakota-live"
++#define DAKOTA_DEFINITIONS "/run/" DAKOTA_RUN_DIR "/repart.d"
++#define DAKOTA_RECEIPT "installed-disk"
++
++static int dakota_open_trusted_dir(int parent_fd, const char *name) {
++        _cleanup_close_ int fd = xopenat(parent_fd, name, O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
++        struct stat st;
++        if (fd < 0)
++                return fd;
++        if (fstat(fd, &st) < 0)
++                return -errno;
++        if (st.st_uid != 0 || (st.st_mode & 0022))
++                return -EPERM;
++        return TAKE_FD(fd);
++}
++
++static int dakota_open_runtime(void) {
++        if (geteuid() != 0)
++                return -EPERM;
++
++        _cleanup_close_ int run_fd = dakota_open_trusted_dir(AT_FDCWD, "/run");
++        if (run_fd < 0)
++                return run_fd;
++        _cleanup_close_ int runtime_fd = dakota_open_trusted_dir(run_fd, DAKOTA_RUN_DIR);
++        if (runtime_fd < 0)
++                return runtime_fd;
++        _cleanup_close_ int definitions_fd = dakota_open_trusted_dir(runtime_fd, "repart.d");
++        if (definitions_fd < 0)
++                return definitions_fd;
++
++        _cleanup_closedir_ DIR *definitions = take_fdopendir(&definitions_fd);
++        if (!definitions)
++                return -errno;
++        FOREACH_DIRENT_ALL(de, definitions, return -errno) {
++                struct stat st;
++                if (dot_or_dot_dot(de->d_name))
++                        continue;
++                if (fstatat(dirfd(definitions), de->d_name, &st, AT_SYMLINK_NOFOLLOW) < 0)
++                        return -errno;
++                if (!S_ISREG(st.st_mode) || st.st_uid != 0 || (st.st_mode & 0022))
++                        return -EPERM;
++        }
++
++        return TAKE_FD(runtime_fd);
++}
++
++static int dakota_open_target(Context *context, const char *node, dev_t *ret_root, dev_t *ret_medium) {
++        _cleanup_(sd_device_unrefp) sd_device *device = NULL;
++        _cleanup_close_ int fd = -EBADF;
++        dev_t root, medium, origin;
++        const char *devpath, *canonical;
++        struct stat st;
++        int r;
++
++        r = find_backing_devno("/sysroot", /* root= */ NULL, &root);
++        if (r < 0)
++                return log_error_errno(r, "Cannot identify the running Dakota medium: %m");
++        r = block_get_originating(root, &origin, /* recursive= */ true);
++        if (r >= 0)
++                root = origin;
++        else if (r != -ENOENT)
++                return r;
++        r = block_get_whole_disk(root, &medium);
++        if (r < 0)
++                return r;
++
++        if (!path_startswith(node, "/dev"))
++                return -ENOTBLK;
++        r = block_device_new_from_path(node, /* flags= */ 0, &device);
++        if (r < 0)
++                return r;
++        r = block_device_is_whole_disk(device);
++        if (r <= 0)
++                return r < 0 ? r : -ENOTBLK;
++        r = sd_device_get_devpath(device, &devpath);
++        if (r < 0)
++                return r;
++        if (path_startswith(devpath, "/devices/virtual"))
++                return -ENOTBLK; /* Stacked/loop devices are not independent raw disks. */
++        r = sd_device_get_devname(device, &canonical);
++        if (r < 0)
++                return r;
++
++        fd = sd_device_open(device, context_open_mode(context)|O_EXCL|O_CLOEXEC|O_NONBLOCK|O_NOCTTY);
++        if (fd < 0)
++                return fd; /* Including mounted partitions or other kernel holders. */
++        if (fstat(fd, &st) < 0)
++                return -errno;
++        if (st.st_rdev == medium)
++                return -EPERM;
++        r = blockdev_partscan_enabled_fd(fd);
++        if (r <= 0)
++                return r < 0 ? r : -ENOTBLK;
++        if (flock(fd, (context->dry_run ? LOCK_SH : LOCK_EX)|LOCK_NB) < 0)
++                return errno == EWOULDBLOCK ? -EBUSY : -errno;
++
++        r = strdup_to(&context->node, canonical);
++        if (r < 0)
++                return r;
++        context->backing_fd = TAKE_FD(fd);
++        *ret_root = root;
++        *ret_medium = medium;
++        return 0;
++}
++
++static int dakota_target_is_blank(int fd) {
++#if HAVE_BLKID
++        _cleanup_(blkid_free_probep) blkid_probe probe = NULL;
++        int r;
++
++        r = dlopen_libblkid(LOG_ERR);
++        if (r < 0)
++                return r;
++        probe = sym_blkid_new_probe();
++        if (!probe)
++                return log_oom();
++
++        errno = 0;
++        if (sym_blkid_probe_set_device(probe, fd, /* off= */ 0, /* size= */ 0) < 0 ||
++            sym_blkid_probe_enable_superblocks(probe, true) < 0 ||
++            sym_blkid_probe_set_superblocks_flags(probe, BLKID_SUBLKS_MAGIC|BLKID_SUBLKS_BADCSUM) < 0 ||
++            sym_blkid_probe_enable_partitions(probe, true) < 0 ||
++            sym_blkid_probe_set_partitions_flags(probe, BLKID_PARTS_MAGIC) < 0)
++                return errno_or_else(EIO);
++
++        /* shortcut: unrecognized data is not detectable here; require explicit erase if full-device zero verification is needed. */
++        errno = 0;
++        r = sym_blkid_do_probe(probe);
++        return r < 0 ? errno_or_else(EIO) : r > 0;
++#else
++        return -EOPNOTSUPP;
++#endif
++}
++
++static int dakota_verify_sources(Context *context, dev_t root, dev_t medium) {
++        unsigned n_esp = 0;
++
++        if (context->n_partitions != 2)
++                return -EINVAL;
++
++        LIST_FOREACH(partitions, p, context->partitions) {
++                struct stat st;
++                dev_t disk;
++                bool esp = p->type.designator == PARTITION_ESP;
++
++                if (p->copy_blocks_fd < 0 || p->dropped || partition_defer(context, p))
++                        return -EINVAL;
++                if (fstat(p->copy_blocks_fd, &st) < 0)
++                        return -errno;
++                if (!S_ISBLK(st.st_mode))
++                        return -ENOTBLK;
++                int r = block_get_whole_disk(st.st_rdev, &disk);
++                if (r < 0)
++                        return r;
++                if (r == 0 || disk != medium || esp == (st.st_rdev == root))
++                        return -EPERM;
++                n_esp += esp;
++        }
++
++        return n_esp == 1 ? 0 : -EINVAL;
++}
++
+ static JSON_DISPATCH_ENUM_DEFINE(json_dispatch_empty_mode, EmptyMode, empty_mode_from_string);
+
+ typedef struct RunParameters {
+@@ -12818,6 +12984,34 @@
+         if (!p.node && !p.dry_run)
+                 return sd_varlink_error_invalid_parameter_name(link, "dryRun");
+
++        _cleanup_close_ int runtime_fd = -EBADF;
++        bool dakota_raw = strv_equal(p.definitions, STRV_MAKE(DAKOTA_DEFINITIONS));
++        uint64_t expected_seq = 0;
++        if (dakota_raw) {
++                if (!p.node)
++                        return sd_varlink_error_invalid_parameter_name(link, "node");
++                if (!IN_SET(p.empty, EMPTY_REQUIRE, EMPTY_FORCE))
++                        return sd_varlink_error_invalid_parameter_name(link, "empty");
++
++                runtime_fd = dakota_open_runtime();
++                if (runtime_fd < 0)
++                        return log_error_errno(runtime_fd, "Invalid Dakota installer runtime or definitions: %m");
++                if (!p.dry_run) {
++                        const char *seq = startswith(p.node, "/dev/disk/by-diskseq/");
++                        if (isempty(seq) || !in_charset(seq, DIGITS) ||
++                            safe_atou64_full(seq, 10, &expected_seq) < 0 || expected_seq == 0)
++                                return sd_varlink_error_invalid_parameter_name(link, "node");
++
++                        struct stat st;
++                        if (flock(runtime_fd, LOCK_EX|LOCK_NB) < 0)
++                                return log_error_errno(errno, "Another Dakota installation is in progress: %m");
++                        if (fstatat(runtime_fd, DAKOTA_RECEIPT, &st, AT_SYMLINK_NOFOLLOW) >= 0)
++                                return log_error_errno(SYNTHETIC_ERRNO(EALREADY), "Dakota has already been installed this boot.");
++                        if (errno != ENOENT)
++                                return log_error_errno(errno, "Cannot check for the Dakota installation receipt: %m");
++                }
++        }
++
+         _cleanup_(context_freep) Context* context = NULL;
+         context = context_new(
+                         p.definitions,
+@@ -12827,8 +13021,9 @@
+         if (!context)
+                 return log_oom();
+
+-        context->defer_partitions_empty = p.defer_partitions_empty;
+-        context->defer_partitions_factory_reset = p.defer_partitions_factory_reset;
++        context->dakota_raw = dakota_raw;
++        context->defer_partitions_empty = !dakota_raw && p.defer_partitions_empty;
++        context->defer_partitions_factory_reset = !dakota_raw && p.defer_partitions_factory_reset;
+
+         if (FLAGS_SET(flags, SD_VARLINK_METHOD_MORE))
+                 context->link = sd_varlink_ref(link);
+@@ -12841,10 +13036,22 @@
+         if (r < 0)
+                 return r;
+
++        dev_t dakota_root = 0, dakota_medium = 0;
+         if (p.node) {
+-                r = acquire_root_devno(p.node, /* root= */ NULL, context_open_mode(context), &context->node, &context->backing_fd);
+-                if (r < 0)
+-                        return log_error_errno(r, "Failed to open file or determine backing device of %s: %m", p.node);
++                if (dakota_raw)
++                        r = dakota_open_target(context, p.node, &dakota_root, &dakota_medium);
++                else
++                        r = acquire_root_devno(p.node, /* root= */ NULL, context_open_mode(context), &context->node, &context->backing_fd);
++                if (r < 0)
++                        return log_error_errno(r, "Failed to open an eligible target %s: %m", p.node);
++
++                if (dakota_raw && p.empty == EMPTY_REQUIRE) {
++                        r = dakota_target_is_blank(context->backing_fd);
++                        if (r < 0)
++                                return log_error_errno(r, "Cannot check %s for existing disk signatures: %m", context->node);
++                        if (r == 0)
++                                return sd_varlink_error(link, "io.systemd.Repart.ConflictingDiskLabelPresent", /* parameters= */ NULL);
++                }
+
+                 r = context_load_partition_table(context);
+                 if (r == -EHWPOISON)
+@@ -12922,6 +13129,12 @@
+         if (r < 0)
+                 return r;
+
++        if (dakota_raw) {
++                r = dakota_verify_sources(context, dakota_root, dakota_medium);
++                if (r < 0)
++                        return log_error_errno(r, "Expected copies of the running Dakota root and ESP: %m");
++        }
++
+         if (p.dry_run) {
+                 uint64_t minimal_size;
+
+@@ -12947,6 +13160,27 @@
+                                                              "partitionCount", SD_JSON_BUILD_UNSIGNED(n_partitions)));
+         }
+
++        _cleanup_fclose_ FILE *receipt = NULL;
++        _cleanup_free_ char *receipt_tmp = NULL;
++        CLEANUP_TMPFILE_AT(runtime_fd, receipt_tmp);
++        uint64_t installed_seq = 0;
++        if (dakota_raw) {
++                r = fopen_tmpfile_linkable_at_full(runtime_fd, DAKOTA_RECEIPT, O_WRONLY, 0600, &receipt_tmp, &receipt);
++                if (r < 0)
++                        return log_error_errno(r, "Cannot stage the Dakota install receipt: %m");
++                r = fd_get_diskseq(context->backing_fd, &installed_seq);
++                if (r < 0)
++                        return log_error_errno(r, "Cannot read the claimed Dakota target disk sequence: %m");
++                if (installed_seq != expected_seq)
++                        return log_error_errno(SYNTHETIC_ERRNO(ESTALE), "The confirmed Dakota target disk changed.");
++
++                if (fprintf(receipt, "%s\n%" PRIu64 "\n", context->node, installed_seq) < 0)
++                        return log_error_errno(errno_or_else(EIO), "Cannot write the staged Dakota install receipt: %m");
++                r = fflush_and_check(receipt);
++                if (r < 0)
++                        return log_error_errno(r, "Cannot write the staged Dakota install receipt: %m");
++        }
++
+         r = context_write_partition_table(context);
+         if (r < 0)
+                 return r;
+@@ -12955,7 +13189,33 @@
+         if (r < 0)
+                 return r;
+
++        if (dakota_raw) {
++                if (fsync(context->backing_fd) < 0)
++                        return log_error_errno(errno, "Cannot sync installed Dakota disk: %m");
++
++                /* Refuse to publish a path that no longer names the disk we wrote. */
++                _cleanup_close_ int current_fd = xopenat(AT_FDCWD, context->node, O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY);
++                if (current_fd < 0)
++                        return log_error_errno(current_fd, "Cannot reopen installed Dakota disk: %m");
++                uint64_t held_seq, current_seq;
++                r = fd_get_diskseq(context->backing_fd, &held_seq);
++                if (r < 0)
++                        return r;
++                r = fd_get_diskseq(current_fd, &current_seq);
++                if (r < 0)
++                        return r;
++                if (held_seq != installed_seq || current_seq != installed_seq)
++                        return log_error_errno(SYNTHETIC_ERRNO(ESTALE), "The Dakota target disk changed during installation.");
++
++                r = flink_tmpfile_at(receipt, runtime_fd, receipt_tmp, DAKOTA_RECEIPT, /* flags= */ 0);
++                if (r < 0)
++                        return log_error_errno(r, "Cannot publish the Dakota install receipt: %m");
++                receipt_tmp = mfree(receipt_tmp);
++        }
++
+         context_disarm_auto_removal(context);
++        if (dakota_raw)
++                context = context_free(context); /* Release the disk claim before post-install can start. */
+
+         return sd_varlink_reply(link, /* parameters= */ NULL);
+ }
+diff --git a/src/shared/loop-util.h b/src/shared/loop-util.h
+--- a/src/shared/loop-util.h
++++ b/src/shared/loop-util.h
+@@ -38,6 +38,9 @@
+  * this flag to force a real loopback device even when the device is currently unpartitioned. */
+ #define LOOP_DEVICE_MAY_POPULATE_PARTITION_TABLE (UINT32_C(1) << 16)
+
++/* Always attach exactly the supplied fd; never reopen its backing block inode. */
++#define LOOP_DEVICE_PIN_BACKING_FD (UINT32_C(1) << 17)
++
+ int loop_device_make(int fd, int open_flags, uint64_t offset, uint64_t size, uint32_t sector_size, uint32_t loop_flags, int lock_op, LoopDevice **ret);
+ int loop_device_make_by_path_at(int dir_fd, const char *path, int open_flags, uint32_t sector_size, uint32_t loop_flags, int lock_op, LoopDevice **ret);
+ static inline int loop_device_make_by_path(const char *path, int open_flags, uint32_t sector_size, uint32_t loop_flags, int lock_op, LoopDevice **ret) {
+diff --git a/src/shared/loop-util.c b/src/shared/loop-util.c
+--- a/src/shared/loop-util.c
++++ b/src/shared/loop-util.c
+@@ -551,6 +551,10 @@
+         if (f_flags < 0)
+                 return -errno;
+
++        if (FLAGS_SET(loop_flags, LOOP_DEVICE_PIN_BACKING_FD) &&
++            ((f_flags & (O_PATH|O_DIRECT)) || sector_size == UINT32_MAX))
++                return -EINVAL;
++
+         if (open_flags < 0) {
+                 /* If open_flags is unset, initialize it from the open fd */
+                 if (FLAGS_SET(f_flags, O_PATH))
+@@ -597,7 +601,8 @@
+                                 return probe_fd;
+                 }
+
+-                r = loop_device_can_shortcut(probe_fd, offset, size, sector_size, device_ssz, loop_flags);
++                r = FLAGS_SET(loop_flags, LOOP_DEVICE_PIN_BACKING_FD) ? 0 :
++                        loop_device_can_shortcut(probe_fd, offset, size, sector_size, device_ssz, loop_flags);
+                 if (r < 0)
+                         return r;
+                 if (r > 0)
+@@ -665,7 +670,8 @@
+                 .info = {
+                         /* Use the specified flags, but strip our systemd-internal flags and the read-only and
+                          * partscan flags (the latter handled separately below/above), and force autoclear */
+-                        .lo_flags = ((loop_flags & ~(LOOP_DEVICE_MAY_POPULATE_PARTITION_TABLE|LO_FLAGS_READ_ONLY|LO_FLAGS_PARTSCAN)) |
++                        .lo_flags = ((loop_flags & ~(LOOP_DEVICE_MAY_POPULATE_PARTITION_TABLE|LOOP_DEVICE_PIN_BACKING_FD|
++                                                    LO_FLAGS_READ_ONLY|LO_FLAGS_PARTSCAN)) |
+                                      ((open_flags & O_ACCMODE_STRICT) == O_RDONLY ? LO_FLAGS_READ_ONLY : 0) |
+                                      LO_FLAGS_AUTOCLEAR),
+                         .lo_offset = offset,
+@@ -794,6 +800,9 @@
+ static uint32_t loop_flags_mangle(uint32_t loop_flags) {
+         int r;
+
++        if (FLAGS_SET(loop_flags, LOOP_DEVICE_PIN_BACKING_FD))
++                return loop_flags & ~LO_FLAGS_DIRECT_IO;
++
+         r = getenv_bool("SYSTEMD_LOOP_DIRECT_IO");
+         if (r < 0 && r != -ENXIO)
+                 log_debug_errno(r, "Failed to parse $SYSTEMD_LOOP_DIRECT_IO, ignoring: %m");
+diff --git a/src/cryptenroll/cryptenroll-varlink.c b/src/cryptenroll/cryptenroll-varlink.c
+--- a/src/cryptenroll/cryptenroll-varlink.c
++++ b/src/cryptenroll/cryptenroll-varlink.c
+@@ -1,3 +1,8 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
+
++#include <fcntl.h>
++#include <sys/file.h>
++#include <sys/stat.h>
++
++#include "sd-device.h"
+ #include "sd-varlink.h"
+@@ -4,15 +9,19 @@
+
+ #include "alloc-util.h"
++#include "blockdev-util.h"
+ #include "bus-polkit.h"
+ #include "cryptenroll.h"
+ #include "cryptenroll-list.h"
+ #include "cryptenroll-varlink.h"
+ #include "cryptenroll-wipe.h"
+ #include "cryptsetup-util.h"
+ #include "fd-util.h"
++#include "fs-util.h"
+ #include "hashmap.h"
++#include "io-util.h"
+ #include "iovec-util.h"
+ #include "json-util.h"
+ #include "libfido2-util.h"
++#include "loop-util.h"
+ #include "path-util.h"
+ #include "recovery-key.h"
+@@ -151,6 +160,110 @@
+         }
+ }
+
++static bool dakota_cryptenroll(void) {
++        return secure_getenv("DAKOTA_CRYPTENROLL") != NULL;
++}
++
++static int dakota_open_trusted(int dir_fd, const char *path, bool directory) {
++        _cleanup_close_ int fd = xopenat(dir_fd, path,
++                                        O_RDONLY|O_NOFOLLOW|O_NONBLOCK|(directory ? O_DIRECTORY : 0));
++        struct stat st;
++        if (fd < 0)
++                return fd;
++        if (fstat(fd, &st) < 0)
++                return -errno;
++        if (!(directory ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode)) || st.st_uid != 0 || (st.st_mode & 0022))
++                return -EPERM;
++        return TAKE_FD(fd);
++}
++
++static int dakota_verify_receipt(int dir_fd, const char *name, const char *expected) {
++        _cleanup_close_ int fd = dakota_open_trusted(dir_fd, name, /* directory= */ false);
++        if (fd < 0)
++                return fd;
++        char buf[PATH_MAX + DECIMAL_STR_MAX(uint64_t) + 3];
++        size_t len = strlen(expected);
++        if (len >= sizeof(buf))
++                return -ENAMETOOLONG;
++        ssize_t n = loop_read(fd, buf, len + 1, /* do_poll= */ false);
++        if (n < 0)
++                return (int) n;
++        return (size_t) n == len && memcmp(buf, expected, len) == 0 ? 0 : -ESTALE;
++}
++
++static int dakota_open_recovery(
++                const char *node, int mode, char **ret_node, int *ret_runtime_fd, LoopDevice **ret_loop) {
++
++        _cleanup_close_ int run_fd = -EBADF, runtime_fd = -EBADF, fd = -EBADF;
++        _cleanup_(sd_device_unrefp) sd_device *partition = NULL;
++        _cleanup_(loop_device_unrefp) LoopDevice *loop = NULL;
++        _cleanup_free_ char *expected = NULL;
++        sd_device *disk;
++        const char *canonical, *whole, *partnum;
++        uint64_t seq;
++        int r;
++
++        if (!node || !startswith(node, "/dev/disk/by-diskseq/"))
++                return -EINVAL;
++        run_fd = dakota_open_trusted(AT_FDCWD, "/run", /* directory= */ true);
++        if (run_fd < 0)
++                return run_fd;
++        runtime_fd = dakota_open_trusted(run_fd, "dakota-live", /* directory= */ true);
++        if (runtime_fd < 0)
++                return runtime_fd;
++        if (flock(runtime_fd, LOCK_EX|LOCK_NB) < 0)
++                return errno == EWOULDBLOCK ? -EBUSY : -errno;
++
++        r = block_device_new_from_path(node, /* flags= */ 0, &partition);
++        if (r < 0)
++                return r;
++        r = sd_device_get_sysattr_value(partition, "partition", &partnum);
++        if (r < 0)
++                return r;
++        r = sd_device_get_devname(partition, &canonical);
++        if (r < 0)
++                return r;
++        if (asprintf(&expected, "%s\n", canonical) < 0)
++                return -ENOMEM;
++        r = dakota_verify_receipt(runtime_fd, "encrypted-root", expected);
++        if (r < 0)
++                return r;
++        fd = sd_device_open(partition, mode|O_EXCL|O_CLOEXEC|O_NONBLOCK|O_NOCTTY);
++        if (fd < 0)
++                return fd;
++        r = fd_get_diskseq(fd, &seq);
++        if (r < 0)
++                return r;
++        expected = mfree(expected);
++        if (asprintf(&expected, "/dev/disk/by-diskseq/%" PRIu64 "-part%s", seq, partnum) < 0)
++                return -ENOMEM;
++        if (!streq(node, expected))
++                return -ESTALE;
++        r = block_device_get_whole_disk(partition, &disk);
++        if (r < 0)
++                return r;
++        r = sd_device_get_devname(disk, &whole);
++        if (r < 0)
++                return r;
++        expected = mfree(expected);
++        if (asprintf(&expected, "%s\n%" PRIu64 "\n", whole, seq) < 0)
++                return -ENOMEM;
++        r = dakota_verify_receipt(runtime_fd, "installed-disk", expected);
++        if (r < 0)
++                return r;
++
++        /* crypt_init accepts only paths. The loop holds the checked block file, not a reopened dev_t. */
++        r = loop_device_make(fd, mode, 0, 0, 0, LOOP_DEVICE_PIN_BACKING_FD, LOCK_EX, &loop);
++        if (r < 0)
++                return r;
++        r = strdup_to(ret_node, loop->node);
++        if (r < 0)
++                return r;
++        *ret_runtime_fd = TAKE_FD(runtime_fd);
++        *ret_loop = TAKE_PTR(loop);
++        return 0;
++}
++
+ static int vl_method_enroll(
+                 sd_varlink *link,
+                 sd_json_variant *parameters,
+@@ -185,6 +298,9 @@
+                 .fido2_with_user_presence = -1,
+                 .fido2_with_user_verification = -1,
+         };
++        bool dakota = dakota_cryptenroll();
++        _cleanup_close_ int runtime_fd = -EBADF;
++        _cleanup_(loop_device_unrefp) LoopDevice *loop = NULL;
+         _cleanup_(crypt_freep) struct crypt_device *cd = NULL;
+         _cleanup_(iovec_done_erase) struct iovec vk = {};
+         _cleanup_close_ int keyfile_fd = -EBADF;
+@@ -203,7 +316,7 @@
+         r = varlink_verify_polkit_async(
+                         link,
+                         /* bus= */ NULL,
+-                        "io.systemd.cryptenroll.enroll",
++                        "org.projectbluefin.dakota.cryptenroll.enroll",
+                         /* details= */ NULL,
+                         polkit_registry);
+         if (r <= 0)
+@@ -215,7 +331,14 @@
+         c.enroll_type = p.mechanism;
+         c.unlock_type = _UNLOCK_TYPE_INVALID;
+
+-        if (!p.node) {
++        if (dakota) {
++                if (p.mechanism != ENROLL_RECOVERY || isempty(p.recovery_key) || !streq_ptr(p.unlock_password, "") ||
++                    p.unlock_keyfile || p.unlock_keyfile_fd_idx >= 0 || p.unlock_fido2_device || p.unlock_tpm2_device || p.wipe_types)
++                        return sd_varlink_error_errno(link, EPERM);
++                r = dakota_open_recovery(p.node, O_RDWR, &c.node, &runtime_fd, &loop);
++                if (r < 0)
++                        return sd_varlink_error_errno(link, r);
++        } else if (!p.node) {
+                 r = determine_default_node(&c.node);
+                 if (r == -ENXIO)
+                         return sd_varlink_error_invalid_parameter_name(link, "node");
+@@ -359,10 +482,12 @@
+         if (p.wipe_types) {
+                 r = parse_wipe_types(p.wipe_types, &c);
+                 if (r == -ENOMEM)
+                         return r;
+                 if (r < 0)
+                         return sd_varlink_error_invalid_parameter_name(link, "wipeTypes");
+         }
++        if (dakota && c.n_wipe_slots != 1)
++                return sd_varlink_error_invalid_parameter_name(link, "wipeSlots");
+
+         /* If the caller asked for 'more', remember the link so we can send progress (e.g. FIDO2 touch). */
+         if (FLAGS_SET(flags, SD_VARLINK_METHOD_MORE))
+@@ -375,9 +500,19 @@
+         r = prepare_luks(&c, &cd, &vk);
+         if (r < 0)
+                 return varlink_error_for_enroll(link, r);
++        if (dakota) {
++                r = sym_crypt_activate_by_passphrase(cd, NULL, c.wipe_slots[0], "", 0, 0);
++                if (r < 0)
++                        return varlink_error_for_enroll(link, r);
++        }
+
+         _cleanup_(erase_and_freep) char *recovery_key = NULL;
+         slot = enroll_now(&c, cd, &vk, &recovery_key);
+         if (slot < 0)
+                 return varlink_error_for_enroll(link, slot);
++        if (dakota) {
++                r = sym_crypt_activate_by_passphrase(cd, NULL, slot, c.recovery_key, c.recovery_key_size, 0);
++                if (r != slot)
++                        return varlink_error_for_enroll(link, r < 0 ? r : -EIO);
++        }
+
+@@ -388,6 +523,11 @@
+         r = wipe_slots(&c, cd, &wiped_slots, &n_wiped_slots);
+         if (r < 0)
+                 return varlink_error_for_enroll(link, r);
++        if (loop) {
++                r = loop_device_sync(loop);
++                if (r < 0)
++                        return varlink_error_for_enroll(link, r);
++        }
+
+         _cleanup_(sd_json_variant_unrefp) sd_json_variant *wiped_slots_json = NULL;
+         FOREACH_ARRAY(s, wiped_slots, n_wiped_slots) {
+@@ -425,6 +565,8 @@
+         };
+
+         _cleanup_(enroll_context_done) EnrollContext c = ENROLL_CONTEXT_NULL;
++        _cleanup_close_ int runtime_fd = -EBADF;
++        _cleanup_(loop_device_unrefp) LoopDevice *loop = NULL;
+         _cleanup_(crypt_freep) struct crypt_device *cd = NULL;
+         _cleanup_free_ EnrolledSlot *slots = NULL;
+         const char *node = NULL;
+@@ -444,7 +586,7 @@
+         r = varlink_verify_polkit_async(
+                         link,
+                         /* bus= */ NULL,
+-                        "io.systemd.cryptenroll.list-slots",
++                        "org.projectbluefin.dakota.cryptenroll.list-slots",
+                         /* details= */ NULL,
+                         polkit_registry);
+         if (r <= 0)
+@@ -452,7 +594,11 @@
+
+         c.interactive = false;
+
+-        if (!node) {
++        if (dakota_cryptenroll()) {
++                r = dakota_open_recovery(node, O_RDONLY, &c.node, &runtime_fd, &loop);
++                if (r < 0)
++                        return sd_varlink_error_errno(link, r);
++        } else if (!node) {
+                 r = determine_default_node(&c.node);
+                 if (r == -ENXIO)
+                         return sd_varlink_error_invalid_parameter_name(link, "node");
+diff --git a/src/sysinstall/io.systemd.sysinstall.policy b/src/sysinstall/io.systemd.sysinstall.policy
+--- a/src/sysinstall/io.systemd.sysinstall.policy
++++ b/src/sysinstall/io.systemd.sysinstall.policy
+@@ -18,7 +18,7 @@
+         <vendor>The systemd Project</vendor>
+         <vendor_url>https://systemd.io</vendor_url>
+
+-        <action id="io.systemd.sysinstall.Run">
++        <action id="org.projectbluefin.dakota.sysinstall.Run">
+                 <description gettext-domain="systemd">Install OS to disk</description>
+                 <message gettext-domain="systemd">Authentication is required to install an OS to disk.</message>
+                 <defaults>
+@@ -28,7 +28,7 @@
+                 </defaults>
+         </action>
+
+-        <action id="io.systemd.sysinstall.ListCandidateDevices">
++        <action id="org.projectbluefin.dakota.sysinstall.ListCandidateDevices">
+                 <description gettext-domain="systemd">List candidate devices</description>
+                 <message gettext-domain="systemd">Authentication is required to list device candidates.</message>
+                 <defaults>
+diff --git a/src/cryptenroll/io.systemd.cryptenroll.policy b/src/cryptenroll/io.systemd.cryptenroll.policy
+--- a/src/cryptenroll/io.systemd.cryptenroll.policy
++++ b/src/cryptenroll/io.systemd.cryptenroll.policy
+@@ -18,7 +18,7 @@
+         <vendor>The systemd Project</vendor>
+         <vendor_url>https://systemd.io</vendor_url>
+
+-        <action id="io.systemd.cryptenroll.enroll">
++        <action id="org.projectbluefin.dakota.cryptenroll.enroll">
+                 <description gettext-domain="systemd">Enroll an unlock mechanism into an encrypted volume</description>
+                 <message gettext-domain="systemd">Authentication is required to enroll a new unlock mechanism into an encrypted volume.</message>
+                 <defaults>
+@@ -28,7 +28,7 @@
+                 </defaults>
+         </action>
+
+-        <action id="io.systemd.cryptenroll.list-slots">
++        <action id="org.projectbluefin.dakota.cryptenroll.list-slots">
+                 <description gettext-domain="systemd">Enumerate the keyslots currently enrolled in a LUKS2 volume</description>
+                 <message gettext-domain="systemd">Authentication is required to enumerate currently enrolled keyslots in a LUKS2 volume.</message>
+                 <defaults>

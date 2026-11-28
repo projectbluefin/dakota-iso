@@ -1,0 +1,24 @@
+// Grant passwordless installer access only when the live setup created its runtime marker.
+polkit.addRule(function(action, subject) {
+    if (subject.user != "liveuser" || !subject.active || !subject.local)
+        return undefined;
+
+    var installAction = action.id == "org.projectbluefin.dakota.sysinstall.Run" ||
+        action.id == "org.projectbluefin.dakota.sysinstall.ListCandidateDevices" ||
+        action.id == "org.projectbluefin.dakota.cryptenroll.enroll" ||
+        action.id == "org.projectbluefin.dakota.cryptenroll.list-slots" ||
+        action.id == "org.freedesktop.locale1.set-locale" ||
+        action.id == "org.freedesktop.locale1.set-keyboard";
+    var postInstallAction = action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("verb") == "start" &&
+        /^dakota-sysinstall-post@[^/]+\.service$/.test(action.lookup("unit") || "");
+    if (!installAction && !postInstallAction)
+        return undefined;
+
+    try {
+        polkit.spawn(["/usr/bin/test", "-f", "/run/gnomeos/is-live"]);
+    } catch (error) {
+        return undefined;
+    }
+    return polkit.Result.YES;
+});

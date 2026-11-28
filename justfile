@@ -153,6 +153,21 @@ iso-sd-boot target:
     INSTALLER_CHANNEL={{installer_channel}} \
     COMPRESSION={{compression}} \
     bash scripts/iso-sd-boot.sh
+# Build an experimental raw medium offering gnome-setup on Dakota.
+# Preserves the existing ISO pipeline while exposing the new image-installer track.
+experimental-raw-medium out="output/dakota-raw.img":
+    #!/usr/bin/bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "Run with sudo just experimental-raw-medium from a terminal." >&2; exit 1; }
+    just experimental-raw-container
+    bash image-installer/build-raw-image.sh localhost/dakota-gnome-setup-live {{quote(out)}} "$(cat dakota/payload_ref)"
+
+experimental-raw-container:
+    #!/usr/bin/bash
+    set -euo pipefail
+    ref=$(scripts/verify-image-signature.sh "$(cat dakota/payload_ref)")
+    podman build --build-arg "SOURCE_IMAGE=${ref}" -t localhost/dakota-gnome-setup-live -f image-installer/Containerfile image-installer
+
 iso target:
     #!/usr/bin/bash
     set -euo pipefail

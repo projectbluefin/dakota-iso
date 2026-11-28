@@ -1,0 +1,13 @@
+[Unit]
+Description=Dakota live: finish installation on %f
+ConditionKernelCommandLine=dakota.live.installer=gnome-setup
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/dakota-sysinstall-post %f
+PrivateMounts=yes
+UMask=0022
+TimeoutStartSec=30min

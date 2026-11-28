@@ -1,0 +1,14 @@
+[Unit]
+Description=Dakota live: session setup for gnome-setup
+ConditionKernelCommandLine=dakota.live.installer=gnome-setup
+DefaultDependencies=no
+After=local-fs.target systemd-sysusers.service systemd-tmpfiles-setup.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/dakota-live-setup
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

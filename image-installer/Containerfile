@@ -1,0 +1,79 @@
+ARG SOURCE_IMAGE
+ARG BUILDER_IMAGE=registry.fedoraproject.org/fedora:43@sha256:a19e8544313a675e6529d3242f74f0015beebdd1834d0bf9b132e669f734f2bf
+ARG GNOME_BUILDER_IMAGE=registry.fedoraproject.org/fedora:44@sha256:4f9a6c2f1eef83984ab0a2365fa99b3c080b0b028a02884c42f74ef8cb39e2fc
+
+FROM ${BUILDER_IMAGE} AS sysinstall
+ARG SYSTEMD_REPO=https://github.com/hanthor/systemd.git
+ARG SYSTEMD_REF=38e1c76a8ee44a0ca671f832e2263f1a63cd7201
+COPY systemd-dakota.patch /tmp/systemd-dakota.patch
+RUN dnf -y install --setopt=install_weak_deps=False \
+        git gcc meson ninja-build gperf diffutils patchelf pkgconf-pkg-config python3-jinja2 \
+        libcap-devel libmount-devel libblkid-devel libfdisk-devel cryptsetup-devel \
+        openssl-devel tpm2-tss-devel libxcrypt-devel libselinux-devel libseccomp-devel && \
+    [[ "${SYSTEMD_REF}" =~ ^[0-9a-f]{40}$ ]] && \
+    git init -q /src && \
+    git -C /src fetch -q --depth 1 "${SYSTEMD_REPO}" "${SYSTEMD_REF}" && \
+    git -C /src checkout -q FETCH_HEAD && \
+    test "$(git -C /src rev-parse HEAD)" = "${SYSTEMD_REF}" && \
+    git -C /src apply /tmp/systemd-dakota.patch && \
+    meson setup /build /src --prefix=/usr --libdir=/usr/lib64 --buildtype=release \
+        -Dmode=release -Dshared-lib-tag=dakota-sysinstall -Dtests=false -Dman=disabled -Dhtml=disabled \
+        -Dbootloader=disabled -Dukify=disabled -Dtranslations=false -Dpolkit=enabled \
+        -Dtpm2=enabled -Dlibcryptsetup=enabled -Dfdisk=enabled -Dblkid=enabled -Dopenssl=enabled && \
+    ninja -C /build systemd-sysinstall systemd-repart systemd-cryptenroll && \
+    install -D -m 0755 -t /out/usr/libexec/dakota-sysinstall \
+        /build/systemd-sysinstall /build/systemd-repart /build/systemd-cryptenroll && \
+    install -D -m 0755 -t /out/usr/lib64/dakota-sysinstall /build/src/shared/libsystemd-shared-dakota-sysinstall.so && \
+    patchelf --set-rpath /usr/lib64/dakota-sysinstall /out/usr/libexec/dakota-sysinstall/systemd-* && \
+    install -D -m 0644 /src/src/sysinstall/io.systemd.sysinstall.policy \
+        /out/usr/share/polkit-1/actions/org.projectbluefin.dakota.sysinstall.policy && \
+    install -D -m 0644 /src/src/cryptenroll/io.systemd.cryptenroll.policy \
+        /out/usr/share/polkit-1/actions/org.projectbluefin.dakota.cryptenroll.policy && \
+    echo "${SYSTEMD_REF}" > /out/usr/libexec/dakota-sysinstall/SOURCE_REF
+
+# Translated Blueprint expressions require blueprint-compiler >= 0.20.
+FROM ${GNOME_BUILDER_IMAGE} AS gnome-setup
+ARG GNOME_SETUP_REPO=https://github.com/hanthor/gnome-setup.git
+ARG GNOME_SETUP_REF=d835929c1f16e2eab98f52f22a85ff31eae46fc5
+COPY gnome-setup-dakota.patch /tmp/gnome-setup-dakota.patch
+RUN dnf -y install --setopt=install_weak_deps=False \
+        git cargo rust meson ninja-build gcc gettext gettext-devel blueprint-compiler desktop-file-utils \
+        glib2-devel gtk4-devel libadwaita-devel gnome-desktop4-devel appstream-devel && \
+    [[ "${GNOME_SETUP_REF}" =~ ^[0-9a-f]{40}$ ]] && \
+    git init -q /src && \
+    git -C /src fetch -q --depth 1 "${GNOME_SETUP_REPO}" "${GNOME_SETUP_REF}" && \
+    git -C /src checkout -q FETCH_HEAD && \
+    test "$(git -C /src rev-parse HEAD)" = "${GNOME_SETUP_REF}" && \
+    git -C /src apply /tmp/gnome-setup-dakota.patch && \
+    meson setup /src/build /src --prefix=/usr --libdir=lib --buildtype=release && \
+    meson compile -C /src/build && \
+    meson install -C /src/build --destdir /out && \
+    install -d /out/usr/share/dakota/gnome-setup && \
+    mv /out/usr/share/applications/org.gnome.Setup.desktop /out/usr/share/dakota/gnome-setup/ && \
+    rm -rf /out/usr/lib/systemd/user /out/usr/lib/gnome-setup/definitions && \
+    ln -s /run/dakota-live/repart.d /out/usr/lib/gnome-setup/definitions && \
+    echo "${GNOME_SETUP_REF}" > /out/usr/share/dakota/gnome-setup/SOURCE_REF
+
+FROM ${SOURCE_IMAGE}
+COPY --from=sysinstall /out/usr/ /usr/
+COPY --from=gnome-setup /out/usr/ /usr/
+COPY src/usr/ /usr/
+
+RUN set -euxo pipefail; \
+    chmod 0755 /usr/libexec/dakota-live-setup /usr/libexec/dakota-sysinstall-post /usr/libexec/dakota-live-definitions /usr/libexec/dakota-live-definitions.py; \
+    install -m 0644 /usr/share/dakota/gnome-setup/pages.conf /usr/lib/gnome-setup/pages.conf; \
+    glib-compile-schemas /usr/share/glib-2.0/schemas; \
+    libs="$(ldd /usr/bin/gnome-setup /usr/libexec/dakota-sysinstall/systemd-*)"; \
+    if grep -F 'not found' <<<"${libs}"; then exit 1; fi; \
+    /usr/libexec/dakota-sysinstall/systemd-sysinstall --version; \
+    for unit in system/boot.automount system/efi.automount system/systemd-boot-random-seed.service \
+        system/systemd-boot-update.service system/dakota-secure-boot-update.service system/bluefin-remove-installer.service \
+        system/bootc-fetch-apply-updates.timer system/uupd.timer system/uupd-resume.timer system/uupd-on-ac.service \
+        system/uupd.service system/flatpak-preinstall.service system/flatpak-appstream-refresh.service \
+        system/ublue-booted-image.service system/brew-setup.service system/brew-update.timer \
+        system/brew-upgrade.timer user/brew-preinstall.service; do \
+        dir="/usr/lib/systemd/${unit}.d"; \
+        mkdir -p "${dir}"; \
+        printf '[Unit]\nConditionKernelCommandLine=!dakota.live.installer=gnome-setup\n' > "${dir}/50-dakota-live.conf"; \
+    done; \
+    systemctl enable dakota-live-setup.service dakota-live-ready.service dakota-sysinstall.socket dakota-cryptenroll.socket

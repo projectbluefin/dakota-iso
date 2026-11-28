@@ -314,3 +314,41 @@ sudo just debug=1 installer_channel=${{ matrix.installer_channel }} \
 only in filename (`org.bootcinstaller.Installer.flatpak` vs `...Installer.Devel.flatpak`);
 the bundle's SHA-256 must match the lock — see `TestInstallerChannelURLs` in
 `tests/test_live_build_invariants.py`. Bump with `scripts/bump-installer-bundle.sh`.
+
+### Experimental gnome-setup + systemd-sysinstall raw medium track (2026-11-21)
+
+[Utah #1437](https://github.com/projectbluefin/utah/pull/1437) uses GNOME Setup
+and `systemd-sysinstall` to install by block copy. Dakota builds its own ext4
+composefs raw disk with systemd-boot. Derive the live Type #1 BLS entry from the
+installed entry: keep the `composefs.digest` argument even when the original
+entry uses GPT auto-discovery and has no explicit `root=`. The live account,
+autologin and installer permission grants exist only in the live session.
+Use `/run/dakota-live/` sockets and Dakota-only Polkit actions. The base image
+already ships stock SysInstall and CryptEnroll sockets; sharing either the
+socket path or the authorization grant lets the live session reach the stock
+implementation instead of the guarded Dakota service.
+
+The live boot also inherits installed-system units from the base image.
+`image-installer/Containerfile` gates them on the live kernel argument: ESP
+automount and boot services must not mount or modify the source ESP, and update
+and package-preinstall jobs must not run in the transient session. Homebrew
+preinstall is a **user** unit; a system-manager drop-in does not gate it.
+
+`just experimental-raw-container` builds and checks the installer binaries.
+The frontend uses Fedora 44's Blueprint 0.20+ because older compilers reject
+the pinned GNOME Setup's translated expressions.
+From a root-capable terminal, `sudo just experimental-raw-medium <new-output-path>`
+uses the same Podman storage for the build and raw provisioning. The output
+filesystem needs hard links and space for the raw disk and staged OCI layout.
+Both recipes use `dakota/payload_ref`: the container build verifies and pins the
+downloaded digest; the installed disk tracks the published tag.
+
+The experimental installer requires explicit whole-disk erasure consent even
+if no filesystem or partition-table signature was detected. It does not
+install alongside another system. The installed boot entry stays unpublished
+until recovery is enrolled and the temporary empty-password slot is gone.
+Qualify in UEFI QEMU on disposable disks before using physical hardware. Verify GUI
+autologin, a confirmed install, recovery enrollment, and first boot with the
+source still attached. Test TPM unlock and recovery without the TPM, then
+verify `bootc` update and rollback on the installed disk. The release ISO
+continues to use Fisherman independently of this track.

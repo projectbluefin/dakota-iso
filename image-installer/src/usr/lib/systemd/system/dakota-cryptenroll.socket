@@ -1,0 +1,17 @@
+[Unit]
+Description=Dakota live: Disk Encryption Enrollment socket (io.systemd.CryptEnroll)
+ConditionKernelCommandLine=dakota.live.installer=gnome-setup
+DefaultDependencies=no
+Before=sockets.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Socket]
+ListenStream=/run/dakota-live/cryptenroll.sock
+FileDescriptorName=varlink
+SocketMode=0666
+Accept=yes
+MaxConnectionsPerSource=16
+
+[Install]
+WantedBy=sockets.target

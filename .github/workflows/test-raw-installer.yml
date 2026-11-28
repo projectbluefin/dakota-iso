@@ -1,0 +1,58 @@
+name: Prototype Raw Installer
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'image-installer/**'
+      - 'dakota/payload_ref'
+      - 'scripts/verify-image-signature.sh'
+      - 'justfile'
+      - '.github/workflows/test-raw-installer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  raw-boot:
+    name: Read-only raw medium boots
+    runs-on: ubuntu-26.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          tool-cache: true
+
+      - name: Install build and QEMU tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            just podman cpio qemu-system-x86 ovmf
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Build prototype from a signature-verified base
+        run: |
+          mkdir -p output
+          if ! sudo env -u XDG_RUNTIME_DIR "PATH=$PATH" just experimental-raw-medium output/dakota-raw.img; then
+            sudo journalctl -u systemd-udevd.service -n 80 --no-pager
+            exit 1
+          fi
+
+      - name: Boot the read-only medium without networking
+        run: |
+          sudo bash image-installer/test-raw-boot.sh output/dakota-raw.img \
+            /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_VARS_4M.fd output/raw-serial.log
+
+      - name: Upload diagnostic log only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: prototype-raw-serial
+          path: output/raw-serial.log
+          retention-days: 14

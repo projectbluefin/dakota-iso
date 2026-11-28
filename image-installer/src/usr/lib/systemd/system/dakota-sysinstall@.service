@@ -1,0 +1,11 @@
+[Unit]
+Description=Dakota live: System Install Tool
+DefaultDependencies=no
+Wants=modprobe@loop.service modprobe@dm_mod.service
+After=modprobe@loop.service modprobe@dm_mod.service systemd-tpm2-setup-early.service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Environment=SYSTEMD_REPART_PATH=/usr/libexec/dakota-sysinstall/systemd-repart
+ExecStart=/usr/libexec/dakota-sysinstall/systemd-sysinstall --install-kernel=no --install-boot-loader=no

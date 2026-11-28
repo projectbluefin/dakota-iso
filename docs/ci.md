@@ -38,10 +38,25 @@ gh workflow run build-iso.yml --ref main
 | LUKS E2E Test | `test-luks-install.yml` | Push to main (docs ignored), weekly Mon 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | Plain Install E2E | `test-plain-install.yml` | Push to main (docs ignored), merge queue (stable leg only), PRs (the `Plain E2E gate` check only), weekly Tue 04:00 UTC, `workflow_dispatch` — `dakota` matrix only |
 | GUI Installer E2E | `scheduled-gui-installer.yml` | Weekly Wed 04:00 UTC, `workflow_dispatch` |
+| Prototype Raw Installer | `test-raw-installer.yml` | Installer-input PRs to main, `workflow_dispatch`; serial diagnostics only |
 | ShellCheck Lint + Pinned fetches | `lint.yml` | PRs to main, push to main |
 | Python Unit Tests | `test.yml` | PRs to main, push to main |
 | R2 Download Stats | `r2-download-stats.yml` | Daily 06:00 UTC, `workflow_dispatch` — counts public ISO downloads from R2 Data Access Logs; needs `CF_OBSERVABILITY_TOKEN` secret |
 | Re-run E2E infra failures | `rerun-e2e-infra-failures.yml` | `workflow_run` of the four E2E lanes (Dakota build, Utah build, LUKS, Plain); `workflow_dispatch` with `run_id` classifies only |
+
+### Prototype raw medium boot (2026-11-22)
+
+Copy-on-write QEMU disks protect the host image but still appear writable to
+the guest. `image-installer/test-raw-boot.sh` attaches the unmodified prototype
+as a read-only disk and disables networking; it requires `DAKOTA_LIVE_READY`
+on the serial console. This is a boot smoke check, not the GUI install,
+recovery, or installed-boot gate. The workflow never publishes the image or
+touches the Fisherman ISO.
+
+Ubuntu's hosted runner returned no root `PARTTYPE` from `lsblk` even with
+blkid probing enabled. The raw builder fills missing loop partition types
+from `sfdisk --json` on the parent disk and leaves bootc's UUID validation in
+place. It does not replace reported types or change the installed tools.
 
 ### CI alert cancellation handling (2026-11-14)
 
