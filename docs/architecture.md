@@ -177,7 +177,7 @@ Unit tests live in `tests/` and run via `pytest tests/ -v` (gated on every PR by
 
 Run locally:
 ```bash
-pip install pytest
+pip install -r .github/requirements-ci.txt
 pytest tests/ -v
 ```
 
