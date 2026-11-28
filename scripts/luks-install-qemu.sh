@@ -82,8 +82,12 @@ printf 'live\n' | $SSH 'sudo -S -p "" bash -c "
     for entry in \$TMP/loader/entries/*.conf \$TMP/EFI/loader/entries/*.conf; do
         [[ -f \"\$entry\" ]] || continue
         if grep -q \"^options \" \"\$entry\" && ! grep -q \"console=tty0\" \"\$entry\"; then
-            if [[ -n \"\$LUKS_UUID\" ]]; then
+            # Add rd.luks.name only when the installer wrote no LUKS argument.
+            # fisherman writes it itself, and a second copy from here would let
+            # the luks-uuid check pass whatever the installer did.
+            if [[ -n \"\$LUKS_UUID\" ]] && ! grep -qF \"rd.luks.name=\" \"\$entry\" && ! grep -qF \"rd.luks.uuid=\" \"\$entry\"; then
                 sed -i \"s|^options .*|& console=tty0 console=ttyS0 rd.luks.name=\${LUKS_UUID}=root|\" \"\$entry\"
+                echo \"  harness added rd.luks.name (the installer wrote none): \$(basename \$entry)\"
             else
                 sed -i \"s|^options .*|& console=tty0 console=ttyS0|\" \"\$entry\"
             fi

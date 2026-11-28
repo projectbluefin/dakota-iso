@@ -10,8 +10,9 @@ LUKS-specific behaviour is:
 * the ``luks-passphrase`` encryption block in BOTH recipe templates
   (composefs and bootcDirect),
 * the remote BLS patch that appends ``rd.luks.name=<UUID>=root`` so the
-  installed disk can be unlocked, with a 2- vs 3-partition layout switch and
-  a fallback when ``cryptsetup luksUUID`` fails,
+  installed disk can be unlocked, but only when the entry has no
+  ``rd.luks.name=`` or ``rd.luks.uuid=`` yet, with a 2- vs 3-partition
+  layout switch and a fallback when ``cryptsetup luksUUID`` fails,
 * an extra ``systemd-oomd`` diagnostic on bootcDirect install failure.
 
 The script is executed for real. ``sshpass`` (fronting ``ssh``/``scp``),
@@ -475,6 +476,41 @@ class TestBlsLuksPatch(LuksInstallHarness):
         options = self.options_line("loader/entries/a.conf")
         self.assertTrue(options.endswith("console=tty0 console=ttyS0"), options)
         self.assertNotIn("rd.luks.name", options)
+
+    def test_installer_written_luks_name_is_not_added_twice(self):
+        """fisherman writes rd.luks.name itself; a second copy would hide a bad one."""
+        entry = (
+            "title Dakota\nlinux /vmlinuz\n"
+            f"options root=LABEL=root rw rd.luks.name={LUKS_UUID}=root\n"
+        )
+        self.enable_bls_execution({"loader/entries/a.conf": entry})
+        result = self.run_script(self.target, image_exists=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.options_line("loader/entries/a.conf"),
+            f"options root=LABEL=root rw rd.luks.name={LUKS_UUID}=root console=tty0 console=ttyS0",
+        )
+        self.assertIn("BLS patch: 1 entries updated", result.stdout)
+        self.assertNotIn("harness added rd.luks.name", result.stdout)
+
+    def test_installer_written_luks_uuid_is_left_for_the_check(self):
+        """A malformed installer argument must reach the luks-uuid check unchanged."""
+        entry = "title Dakota\nlinux /vmlinuz\noptions root=LABEL=root rd.luks.uuid=not-a-uuid\n"
+        self.enable_bls_execution({"loader/entries/a.conf": entry})
+        result = self.run_script(self.target, image_exists=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.options_line("loader/entries/a.conf"),
+            "options root=LABEL=root rd.luks.uuid=not-a-uuid console=tty0 console=ttyS0",
+        )
+
+    def test_harness_says_when_it_adds_the_luks_name(self):
+        self.enable_bls_execution({"loader/entries/a.conf": self.ENTRY})
+        result = self.run_script(self.target, image_exists=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "harness added rd.luks.name (the installer wrote none): a.conf", result.stdout
+        )
 
 
 if __name__ == "__main__":
