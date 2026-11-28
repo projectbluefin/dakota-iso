@@ -24,7 +24,7 @@ WORKFLOWS = REPO / ".github" / "workflows"
 REQUIREMENTS = REPO / ".github" / "requirements-ci.txt"
 
 # The run: text of a step, e.g. "pip install pytest PyYAML jsonschema".
-PIP_INSTALL_RE = re.compile(r"pip\s+install\s+(.*)$")
+PIP_INSTALL_RE = re.compile(r"\bpip3?\s+install\s+(.*)$")
 # A reference to a requirements file: "-r path" or "--requirement path".
 REQ_REF_RE = re.compile(r"(?:^|\s)(?:-r|--requirement)\s+(\S+)")
 # A package name, e.g. PyYAML or jsonschema.
@@ -53,12 +53,21 @@ def _uses_requirements_file(args):
     return bool(REQ_REF_RE.search(args))
 
 
+# Options whose next token is a file path, not a package name.
+FILE_OPTIONS = {"-r", "--requirement", "-c", "--constraint"}
+
+
 def _unpinned_direct_packages(args):
     """Directly named packages that are not pinned to one exact version."""
-    if _uses_requirements_file(args):
-        return []
     unpinned = []
+    skip_next = False
     for token in args.split():
+        if skip_next:
+            skip_next = False
+            continue
+        if token in FILE_OPTIONS:
+            skip_next = True
+            continue
         if token.startswith("-"):
             continue
         if not PINNED_RE.match(token):
@@ -121,6 +130,31 @@ class WorkflowPinningTest(unittest.TestCase):
                     f"{wf} runs `pip install {args}` instead of loading "
                     ".github/requirements-ci.txt",
                 )
+
+
+class GuardCasesTest(unittest.TestCase):
+    def test_extra_package_after_a_requirements_file_is_rejected(self):
+        self.assertEqual(
+            _unpinned_direct_packages("-r .github/requirements-ci.txt evilpkg"),
+            ["evilpkg"],
+        )
+
+    def test_a_requirements_file_alone_is_accepted(self):
+        self.assertEqual(_unpinned_direct_packages("-r .github/requirements-ci.txt"), [])
+
+    def test_pinned_packages_are_accepted(self):
+        self.assertEqual(
+            _unpinned_direct_packages("--disable-pip-version-check pyyaml==6.0.3"), []
+        )
+
+    def test_pip3_install_is_examined(self):
+        self.assertEqual(PIP_INSTALL_RE.search("pip3 install foo").group(1), "foo")
+        self.assertEqual(PIP_INSTALL_RE.search("python3 -m pip install foo").group(1), "foo")
+
+    def test_a_second_install_chained_on_the_same_line_is_rejected(self):
+        self.assertNotEqual(
+            _unpinned_direct_packages("-r .github/requirements-ci.txt && pip install evilpkg"), []
+        )
 
 
 if __name__ == "__main__":
