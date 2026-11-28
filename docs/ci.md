@@ -702,11 +702,13 @@ root filesystem which has ~14 GB free after `jlumbroso/free-disk-space` — not 
 if the image grows at all.
 
 **Fix:** `WORK` now uses `${SUPERISO_TMPDIR:-/var/tmp}`.  In CI, `build-iso.yml`
-sets `SUPERISO_TMPDIR: /var/iso-build` so all intermediates land on the 119 GB
-disk-backed path.  Locally the default `/var/tmp` still applies.
+passes `SUPERISO_TMPDIR=/var/iso-build` inside its `sudo env` command so all
+intermediates land on the 119 GB disk-backed path.  Locally the default `/var/tmp`
+still applies.
 
 **Prevention:** If squashfs build ENOSPC recurs in CI, verify `SUPERISO_TMPDIR`
-is set in the `Build live squashfs + boot tar` step env.
+is passed inside the `sudo env` command of the `Build live squashfs + boot tar`
+step. A step `env:` block does not reach the script on ubuntu-26.04.
 
 ### E2E plain install test requires sshd — production ISO has it disabled (2026-06)
 

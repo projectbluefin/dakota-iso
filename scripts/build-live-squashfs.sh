@@ -15,11 +15,16 @@
 #    Outputs: <dir>/<target>-live.squashfs  and  <dir>/<target>-boot-files.tar
 #
 # 2. Positional mode (used by build-iso.yml):
-#      sudo bash scripts/build-live-squashfs.sh \
+#      sudo env SUPERISO_COMPRESSION=release SUPERISO_TMPDIR=/var/iso-build \
+#          bash scripts/build-live-squashfs.sh \
 #          [--oci-image ghcr.io/projectbluefin/dakota-nvidia:stable] \
 #          localhost/dakota-nvidia-live:latest \
 #          /out/dakota-nvidia.rootfs.sfs \
 #          /out/dakota-nvidia-boot.tar
+#    SUPERISO_COMPRESSION=release gives zstd-15; without it the squashfs is
+#    zstd-3 and the ISO about 0.7 GB larger. SUPERISO_TMPDIR is the scratch
+#    directory and must already exist (default: /var/tmp). Pass both inside
+#    the sudo command: sudo-rs (ubuntu-26.04) drops the step environment.
 #    Exports a pre-built container image as squashfs. --oci-image embeds the
 #    prepared OCI layout once, bound by /etc/bootc-installer/media-input.json.
 #    The payload must already be present in the local podman store.
