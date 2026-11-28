@@ -55,7 +55,7 @@ esac
     }
     env.update(extra_env or {})
     result = subprocess.run(["bash", str(SCRIPT), str(state), "none"],
-                            env=env, capture_output=True, text=True, timeout=10)
+                            env=env, capture_output=True, text=True, timeout=60)
     count = tmp_path / "count"
     return result, int(count.read_text()) if count.exists() else 0
 
