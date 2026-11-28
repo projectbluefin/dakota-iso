@@ -1920,7 +1920,7 @@ class TestFishermanEnospcReport(unittest.TestCase):
             "df -h",
             'du -xah --max-depth=4 "$mnt"',
             "for mnt in /run /tmp /var/tmp /dev/shm",
-            'grep -qi "no space left on device" /tmp/fish.log',
+            'grep -qi "no space left on device" "$FISH_LOG"',
         ):
             self.assertIn(
                 needle, content,
