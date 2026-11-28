@@ -18,6 +18,7 @@ This is the feedback loop: lessons help every future agent and contributor.
 | [`luks-testing.md`](luks-testing.md) | LUKS E2E test — local QEMU, libvirt, CI-equivalent flow |
 | [`r2-promotion.md`](r2-promotion.md) | Promoting ISOs to production, rclone, named releases |
 | [`variants.md`](variants.md) | Adding/modifying variants, `payload_ref` pattern |
+| [`adr/0001-installer-design.md`](adr/0001-installer-design.md) | Proposed (undecided) installer design for Dakota and Utah |
 
 ## Process / agentic docs
 
