@@ -204,17 +204,18 @@ by default. The squash-to-1-layer + VFS embedding writes ~12 GB of
 intermediates; `/var/tmp` on ubuntu-24.04 CI runners has ~14 GB total.
 If the image grows, this overflows.
 
-**Fix:** Set `SUPERISO_TMPDIR=/var/iso-build` (119 GB) in the workflow env:
-```yaml
-- name: Build live squashfs + boot tar
-  env:
-    SUPERISO_COMPRESSION: release
-    SUPERISO_TMPDIR: /var/iso-build
+**Fix:** Set `SUPERISO_TMPDIR=/var/iso-build` (119 GB). Pass it inside the `sudo`
+command. A step `env:` block does not reach the script on ubuntu-26.04 (next section):
+```bash
+sudo env \
+  SUPERISO_COMPRESSION=release \
+  SUPERISO_TMPDIR=/var/iso-build \
+  bash scripts/build-live-squashfs.sh …
 ```
 
 ### sudo-rs ignores `sudo -E` on ubuntu-26.04 (2026-11-19)
 
-**Symptom:** the `env:` block above has no effect on ubuntu-26.04 runners — the
+**Symptom:** a step `env:` block has no effect on ubuntu-26.04 runners — the
 squashfs comes out zstd-3, not zstd-15, so the ISO is ~0.7 GB larger.
 
 **Root cause:** Ubuntu 25.10+/26.04 defaults to **sudo-rs**, which always sets
