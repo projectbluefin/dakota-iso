@@ -585,7 +585,7 @@ class TestPostInstallPatching(FishermanInstallHarness):
             layout="state/deploy/0123abcd/etc ostree/bootc/deploy/default/abc/etc",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("written to /tmp/", proc.stdout)
+        self.assertIn(f"written to {self.sandbox}/", proc.stdout)
         self.assertIn("/state/deploy/0123abcd/etc/hostname", proc.stdout)
 
     def test_debug_ssh_override_lands_in_composefs_native_etc(self):
@@ -725,6 +725,157 @@ class TestPostInstallPatching(FishermanInstallHarness):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual((self.deployed_etc() / "hostname").read_text().strip(),
                          "dakota-e2e")
+
+
+class TestTempPathIsolation(FishermanInstallHarness):
+    """Logs and temporary directories must honor TMPDIR and avoid fixed /tmp paths (#446)."""
+
+    def _install_mktemp_spy(self):
+        real_mktemp = shutil.which("mktemp")
+        self.assertIsNotNone(real_mktemp, "mktemp binary must be available")
+        mktemp_log = self.sandbox / "mktemp.log"
+        mktemp_log.write_text("")
+        self._stub("mktemp", f"""
+            out=$({shlex.quote(real_mktemp)} "$@")
+            printf '%s\\n' "$out" >> {shlex.quote(str(mktemp_log))}
+            printf '%s\\n' "$out"
+        """)
+        return mktemp_log
+
+    def _run_with_tmpdir(self, recipe_path, tmpdir_value, *, extra_setup=None, **stub_kwargs):
+        self._install_stubs(**stub_kwargs)
+        mktemp_log = self._install_mktemp_spy()
+        if extra_setup is not None:
+            extra_setup()
+        env = dict(os.environ)
+        env["PATH"] = f"{self.bindir}:{env['PATH']}"
+        env["FISHERMAN_BIN"] = str(self.bindir / "fisherman")
+        env["STUB_CALLS"] = str(self.calls)
+        env["STUB_MNT"] = str(self.mnt_record)
+        env["STUB_MAPPED"] = str(self.sandbox / "mapped")
+        if tmpdir_value is None:
+            env.pop("TMPDIR", None)
+        else:
+            env["TMPDIR"] = tmpdir_value
+        proc = subprocess.run(
+            ["bash", str(FISHERMAN_INSTALL), str(recipe_path)],
+            capture_output=True, text=True, env=env, cwd=self.sandbox,
+        )
+        proc.calls = self.calls.read_text()
+        proc.mktemp_paths = (
+            mktemp_log.read_text().splitlines() if mktemp_log.exists() else []
+        )
+        return proc
+
+    def test_no_fixed_tmp_log_paths_in_script(self):
+        """Regression for #446: fixed /tmp log paths break shared hosts and TMPDIR sandboxes."""
+        code = "\n".join(
+            line for line in FISHERMAN_INSTALL.read_text().splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        self.assertNotIn("/tmp/fish.log", code)
+        self.assertNotIn("/tmp/cryptsetup-err.log", code)
+        self.assertNotIn("mktemp -d /tmp/post-install-fix-", code)
+
+    def test_honors_tmpdir_with_spaces_and_cleans_up_log_dir(self):
+        """Script writes only under TMPDIR (even with spaces/trailing slash) and cleans up logs."""
+        custom_tmp = self.sandbox / "custom tmp"
+        custom_tmp.mkdir()
+        # Pre-create conflicting fixed names as directories so any write to
+        # $TMPDIR/fish.log or $TMPDIR/cryptsetup-err.log would fail even as root.
+        (custom_tmp / "fish.log").mkdir()
+        (custom_tmp / "cryptsetup-err.log").mkdir()
+
+        recipe = self._write_recipe(hostname="dakota-iso")
+        proc = self._run_with_tmpdir(
+            recipe,
+            f"{custom_tmp}/",
+            fish_rc=1,
+            fish_log=LOG_HOSTNAME_COMPOSEFS,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertGreaterEqual(len(proc.mktemp_paths), 2)
+        for created in proc.mktemp_paths:
+            self.assertEqual(
+                Path(created).parent,
+                custom_tmp,
+                f"mktemp path escaped TMPDIR: {created}",
+            )
+        self.assertEqual(
+            list(custom_tmp.glob("fisherman-install-*")),
+            [],
+            "per-run log directory was not cleaned up on exit",
+        )
+        self.assertTrue((custom_tmp / "fish.log").is_dir())
+        self.assertEqual((self.deployed_etc() / "hostname").read_text().strip(), "dakota-iso")
+
+    def test_luks_open_error_log_uses_tmpdir_and_is_cleaned_up(self):
+        """cryptsetup stderr is still captured and printed without touching /tmp/cryptsetup-err.log."""
+        custom_tmp = self.sandbox / "luks-tmp"
+        custom_tmp.mkdir()
+        (custom_tmp / "fish.log").mkdir()
+        (custom_tmp / "cryptsetup-err.log").mkdir()
+
+        def stub_luks_stderr():
+            self._stub("cryptsetup", """
+                if [ "$1" = "luksOpen" ]; then
+                    cat >/dev/null
+                    echo "No key available with this passphrase." >&2
+                    exit 2
+                fi
+                exit 1
+            """)
+
+        recipe = self._write_recipe(
+            hostname="crypt-box",
+            encryption={"passphrase": "wrong"},
+        )
+        proc = self._run_with_tmpdir(
+            recipe,
+            str(custom_tmp),
+            extra_setup=stub_luks_stderr,
+            fish_rc=0,
+            lsblk=LSBLK_LUKS,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("No key available with this passphrase.", proc.stdout)
+        self.assertTrue(proc.mktemp_paths)
+        for created in proc.mktemp_paths:
+            self.assertEqual(Path(created).parent, custom_tmp)
+        self.assertEqual(list(custom_tmp.glob("fisherman-install-*")), [])
+
+    def test_early_fisherman_failure_preserves_rc_and_cleans_up_log_dir(self):
+        """EXIT trap must preserve fisherman's exit code and still remove the log dir."""
+        custom_tmp = self.sandbox / "fail-tmp"
+        custom_tmp.mkdir()
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self._run_with_tmpdir(
+            recipe,
+            str(custom_tmp),
+            fish_rc=7,
+            fish_log="bootc: boom\n",
+        )
+        self.assertEqual(proc.returncode, 7)
+        self.assertIn("bootc: boom", proc.stdout)
+        self.assertEqual(list(custom_tmp.glob("fisherman-install-*")), [])
+
+    def test_unset_or_empty_tmpdir_falls_back_to_tmp(self):
+        """When TMPDIR is unset or empty, temporary files default to /tmp and clean up."""
+        recipe = self._write_recipe(hostname="dakota")
+        for tmpdir_val in (None, ""):
+            proc = self._run_with_tmpdir(recipe, tmpdir_val, fish_rc=0)
+            for p in proc.mktemp_paths:
+                if Path(p).name.startswith("post-install-fix-"):
+                    self.addCleanup(shutil.rmtree, p, ignore_errors=True)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            log_dirs = [
+                Path(p) for p in proc.mktemp_paths
+                if Path(p).name.startswith("fisherman-install-")
+            ]
+            self.assertTrue(log_dirs, "expected a per-run log directory under /tmp")
+            for log_dir in log_dirs:
+                self.assertEqual(log_dir.parent, Path("/tmp"))
+                self.assertFalse(log_dir.exists(), f"log dir leaked in /tmp: {log_dir}")
 
 
 if __name__ == "__main__":

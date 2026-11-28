@@ -33,6 +33,16 @@ FISHERMAN_BIN="${FISHERMAN_BIN:-/usr/local/bin/fisherman}"
 ENABLE_DEBUG_SSH=0
 [[ "${2:-}" == "--enable-debug-ssh" ]] && ENABLE_DEBUG_SSH=1
 
+# Keep per-run logs and temporary mountpoints under TMPDIR (default /tmp) in a
+# private directory so concurrent runs and unit tests never collide on fixed
+# /tmp paths or fail when another user owns /tmp/fish.log (#446).
+TMP_BASE="${TMPDIR:-/tmp}"
+TMP_BASE="${TMP_BASE%/}"
+LOG_DIR=$(mktemp -d "${TMP_BASE}/fisherman-install-XXXXXX")
+trap 'rm -rf "$LOG_DIR"' EXIT
+FISH_LOG="$LOG_DIR/fish.log"
+CRYPTSETUP_ERR_LOG="$LOG_DIR/cryptsetup-err.log"
+
 # When fisherman exits "No space left on device", print which RAM-backed live
 # mount filled before the script exits. Defined once and called on every
 # ENOSPC failure path so the retry and the non-retry exit both report it.
@@ -40,7 +50,7 @@ report_enospc() {
     # ENOSPC names no filesystem, and the RAM-backed live mounts (/run,
     # /tmp, /var/tmp, the overlay root) share one memory budget (#322).
     # Report what each one holds so the CI log shows which one filled.
-    if grep -qi "no space left on device" /tmp/fish.log; then
+    if grep -qi "no space left on device" "$FISH_LOG"; then
         echo "==> ENOSPC: filesystem usage at failure"
         df -h 2>&1 || true
         # One du per mount: du counts each inode once across all of its
@@ -58,12 +68,12 @@ report_enospc() {
 
 FISH_RC=1
 for attempt in 1 2 3; do
-    "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 && {
+    "$FISHERMAN_BIN" "$RECIPE" >"$FISH_LOG" 2>&1 && {
         FISH_RC=0
         break
     }
     FISH_RC=$?
-    if ! grep -Eiq "device or resource busy|re-reading the partition table|partition table.*busy" /tmp/fish.log ||
+    if ! grep -Eiq "device or resource busy|re-reading the partition table|partition table.*busy" "$FISH_LOG" ||
        [[ "$attempt" -eq 3 ]]; then
         break
     fi
@@ -71,7 +81,7 @@ for attempt in 1 2 3; do
     udevadm settle 2>/dev/null || true
     sleep 10
 done
-cat /tmp/fish.log
+cat "$FISH_LOG"
 
 PATCH_HOSTNAME=0
 
@@ -80,20 +90,20 @@ if [[ $FISH_RC -ne 0 ]]; then
     # Match two patterns:
     # 1. Old fisherman: exits via ostree admin --print-current-dir on composefs sysroots
     # 2. New fisherman: exits with "reading composefs deploy base" when state/deploy not found
-    if grep -q "writing hostname" /tmp/fish.log && \
-       { grep -q "ostree admin --print-current-dir" /tmp/fish.log || \
-         grep -q "composefs deploy\|state/deploy\|no such file or directory" /tmp/fish.log; }; then
+    if grep -q "writing hostname" "$FISH_LOG" && \
+       { grep -q "ostree admin --print-current-dir" "$FISH_LOG" || \
+         grep -q "composefs deploy\|state/deploy\|no such file or directory" "$FISH_LOG"; }; then
         echo "==> fisherman hostname write failed (composefs/ostree compat bug) — patching manually"
         PATCH_HOSTNAME=1
-    elif grep -A5 "Re-reading the partition table failed" /tmp/fish.log |
+    elif grep -A5 "Re-reading the partition table failed" "$FISH_LOG" |
           grep -q "Device or resource busy"; then
         echo "==> partition table still busy — waiting for udev and retrying fisherman"
         sync
         udevadm settle
         sleep 3
         FISH_RC=0
-        "$FISHERMAN_BIN" "$RECIPE" >/tmp/fish.log 2>&1 || FISH_RC=$?
-        cat /tmp/fish.log
+        "$FISHERMAN_BIN" "$RECIPE" >"$FISH_LOG" 2>&1 || FISH_RC=$?
+        cat "$FISH_LOG"
         if [[ $FISH_RC -ne 0 ]]; then
             echo "==> fisherman retry failed (rc=$FISH_RC) — propagating"
             report_enospc
@@ -116,7 +126,7 @@ LUKS_DEV=$(lsblk -nrpo NAME,FSTYPE /dev/vda \
 ROOT_DEV=$(lsblk -nrpo NAME,FSTYPE /dev/vda \
            | awk '$2=="btrfs"||$2=="xfs"{print $1;exit}')
 
-MNT=$(mktemp -d /tmp/post-install-fix-XXXX)
+MNT=$(mktemp -d "${TMP_BASE}/post-install-fix-XXXX")
 MAPPER="post-install-fix-$$"
 MOUNTED=0
 
@@ -154,17 +164,17 @@ print(d.get('encryption', {}).get('passphrase', ''))
     if [[ -z "$PASSPHRASE" ]]; then
         echo "ERROR: could not extract LUKS passphrase from recipe — post-install patch not applied"
     elif [[ "$MAPPER" == "$FISHERMAN_MAPPER" ]] ||
-         printf '%s' "$PASSPHRASE" | cryptsetup luksOpen --key-file=- --batch-mode "$LUKS_DEV" "$MAPPER" 2>/tmp/cryptsetup-err.log; then
+         printf '%s' "$PASSPHRASE" | cryptsetup luksOpen --key-file=- --batch-mode "$LUKS_DEV" "$MAPPER" 2>"$CRYPTSETUP_ERR_LOG"; then
         if mount "/dev/mapper/$MAPPER" "$MNT"; then
             MOUNTED=1
         else
             echo "ERROR: mount /dev/mapper/$MAPPER failed — post-install patch not applied"
-            cat /tmp/cryptsetup-err.log 2>/dev/null || true
+            cat "$CRYPTSETUP_ERR_LOG" 2>/dev/null || true
             cryptsetup luksClose "$MAPPER" || true
         fi
     else
         echo "ERROR: cryptsetup luksOpen $LUKS_DEV failed — post-install patch not applied"
-        cat /tmp/cryptsetup-err.log 2>/dev/null || true
+        cat "$CRYPTSETUP_ERR_LOG" 2>/dev/null || true
     fi
 elif [[ -n "$ROOT_DEV" ]]; then
     # Plain btrfs/xfs install: mount directly. No subvol=@ since we no longer
