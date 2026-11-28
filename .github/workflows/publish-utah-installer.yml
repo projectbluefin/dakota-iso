@@ -52,8 +52,11 @@ jobs:
       contents: read
     outputs:
       ref: ${{ steps.pin.outputs.ref }}
-      # The one switch for the ISO: its E2E legs and its publication. Null on schedule = on.
-      iso: ${{ inputs.iso != false }}
+      # The one switch for the ISO: its E2E legs and its publication. On for
+      # every run that is not a manual dispatch (the monthly schedule); a
+      # manual dispatch follows its iso input. Do not write `inputs.iso != false`:
+      # inputs.iso is null on schedule, and GitHub treats null and false as equal.
+      iso: ${{ github.event_name != 'workflow_dispatch' || inputs.iso }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

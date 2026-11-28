@@ -82,9 +82,13 @@ class PublishHybridIsoTests(unittest.TestCase):
     def test_the_iso_switch_is_on_for_schedules_and_by_default(self):
         flag = self.workflow[True]["workflow_dispatch"]["inputs"]["iso"]
         self.assertEqual((flag["type"], flag["default"]), ("boolean", True))
-        # inputs.iso is null on schedule: `!= false` turns that into on; only
-        # a dispatch with iso=false turns it off.
-        self.assertEqual(self.workflow["jobs"]["resolve"]["outputs"]["iso"], "${{ inputs.iso != false }}")
+        # inputs.iso is null on schedule, and GitHub treats null and false as
+        # equal, so `inputs.iso != false` would turn the ISO off there. Every
+        # run that is not a manual dispatch is on; a dispatch follows its input.
+        self.assertEqual(
+            self.workflow["jobs"]["resolve"]["outputs"]["iso"],
+            "${{ github.event_name != 'workflow_dispatch' || inputs.iso }}",
+        )
         self.assertEqual(self.workflow["jobs"]["publish"]["env"]["ISO"], "${{ needs.resolve.outputs.iso }}")
 
     def test_the_iso_is_published_only_after_its_e2e_legs(self):
