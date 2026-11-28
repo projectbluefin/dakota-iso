@@ -96,7 +96,8 @@ class FishermanInstallHarness(unittest.TestCase):
     def _install_stubs(self, *, fish_rc=0, fish_log="install complete\n",
                        lsblk=LSBLK_PLAIN, layout="ostree/bootc/deploy/default/abcdef/etc",
                        mount_rc=0, luks_open_rc=0, files=None,
-                       leftover_mapping=False, leftover_busy=False):
+                       leftover_mapping=False, leftover_busy=False,
+                       fish_runs=None):
         """Install recording shims for every external command the script calls.
 
         ``layout`` is the directory tree the stub ``mount`` materialises under
@@ -109,11 +110,26 @@ class FishermanInstallHarness(unittest.TestCase):
         ``fisherman-root`` mapping is still active, so opening the partition a
         second time fails the way real cryptsetup does.  ``leftover_busy``
         additionally makes every close of that mapping fail as still in use.
+
+        ``fish_runs`` is a list of ``(rc, log)`` pairs, one per fisherman
+        invocation in order, for the partition-busy retry paths; the last
+        pair repeats if the script calls fisherman more often than listed.
         """
+        runs = fish_runs or [(fish_rc, fish_log)]
+        cases = "\n".join(
+            f"{i}) printf '%s' {shlex.quote(log)}; exit {rc} ;;"
+            for i, (rc, log) in enumerate(runs, 1)
+        )
+        last_rc, last_log = runs[-1]
+        counter = self.sandbox / "fisherman-runs"
         self._stub("fisherman", f"""
-            printf '%s' {shlex.quote(fish_log)}
             echo "fisherman $*" >> "$STUB_CALLS"
-            exit {fish_rc}
+            n=$(( $(cat {shlex.quote(str(counter))} 2>/dev/null || echo 0) + 1 ))
+            echo "$n" > {shlex.quote(str(counter))}
+            case "$n" in
+            {cases}
+            *) printf '%s' {shlex.quote(last_log)}; exit {last_rc} ;;
+            esac
         """)
         self._stub("lsblk", f"""
             echo "lsblk $*" >> "$STUB_CALLS"
@@ -309,6 +325,104 @@ class TestFailureTriage(FishermanInstallHarness):
         self.assertTrue(
             (etc / "systemd/system/rechunker-group-fix.service.d/override.conf").exists()
         )
+
+
+# What fisherman prints when sfdisk cannot re-read a partition table udev
+# still holds open. The script retries on it instead of failing the gate.
+LOG_PARTITION_BUSY = (
+    "Re-reading the partition table failed.\n"
+    "Device or resource busy\n"
+)
+
+
+class TestPartitionBusyRetry(FishermanInstallHarness):
+    """Transient partition-table contention is retried, not reported as a pass.
+
+    Both retry paths (the three-attempt loop and the final retry after it)
+    only run when udev races fisherman in the VM, so no other test reaches
+    them.
+    """
+
+    def fisherman_calls(self, proc):
+        return [line for line in proc.calls.splitlines()
+                if line.startswith("fisherman ")]
+
+    def test_busy_then_success_retries_and_patches(self):
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(recipe, fish_runs=[
+            (1, LOG_PARTITION_BUSY),
+            (0, "install complete\n"),
+        ])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.fisherman_calls(proc)), 2)
+        self.assertIn("transient partition-table contention", proc.stdout)
+        self.assertIn("fisherman succeeded", proc.stdout)
+        calls = proc.calls.splitlines()
+        second = [i for i, c in enumerate(calls) if c.startswith("fisherman ")][1]
+        self.assertIn("udevadm settle", calls[:second],
+                      "retried without settling udev first")
+        self.assertTrue(
+            (self.deployed_etc()
+             / "systemd/system/rechunker-group-fix.service.d/override.conf").exists()
+        )
+
+    def test_retry_loop_stops_at_first_non_busy_failure(self):
+        """A real failure after a busy attempt must not be retried away."""
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(recipe, fish_runs=[
+            (1, LOG_PARTITION_BUSY),
+            (4, "bootc: bad image\n"),
+            (0, "install complete\n"),
+        ])
+        self.assertEqual(proc.returncode, 4)
+        self.assertEqual(len(self.fisherman_calls(proc)), 2)
+        self.assertIn("non-hostname reason", proc.stdout)
+
+    def test_final_retry_success_continues_to_patching(self):
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(recipe, fish_runs=[
+            (1, LOG_PARTITION_BUSY),
+            (1, LOG_PARTITION_BUSY),
+            (1, LOG_PARTITION_BUSY),
+            (0, "install complete\n"),
+        ])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(self.fisherman_calls(proc)), 4)
+        self.assertIn("partition table still busy", proc.stdout)
+        self.assertNotIn("retry failed", proc.stdout)
+        self.assertTrue(
+            (self.deployed_etc()
+             / "systemd/system/rechunker-group-fix.service.d/override.conf").exists()
+        )
+
+    def test_final_retry_failure_propagates_and_reports_enospc(self):
+        """The retry exit must stay red and say which mount filled (#433)."""
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(recipe, fish_runs=[
+            (1, LOG_PARTITION_BUSY),
+            (1, LOG_PARTITION_BUSY),
+            (1, LOG_PARTITION_BUSY),
+            (125, "writing blob: no space left on device\n"),
+        ])
+        self.assertEqual(proc.returncode, 125)
+        self.assertEqual(len(self.fisherman_calls(proc)), 4)
+        self.assertIn("fisherman retry failed (rc=125)", proc.stdout)
+        self.assertIn("100% /run", proc.stdout)
+        self.assertIn("/run/huge", proc.stdout)
+        self.assertIsNone(self.deployed_etc(),
+                          "wrapper mounted the target after a failed retry")
+
+    def test_final_retry_failure_without_enospc_skips_usage_report(self):
+        recipe = self._write_recipe(hostname="dakota")
+        proc = self.run_script(recipe, fish_runs=[
+            (1, LOG_PARTITION_BUSY),
+            (1, LOG_PARTITION_BUSY),
+            (1, LOG_PARTITION_BUSY),
+            (6, "bootc: bad image\n"),
+        ])
+        self.assertEqual(proc.returncode, 6)
+        self.assertIn("fisherman retry failed (rc=6)", proc.stdout)
+        self.assertNotIn("ENOSPC", proc.stdout)
 
 
 class TestTargetDiscovery(FishermanInstallHarness):
