@@ -36,9 +36,23 @@ class TestStrictPostBootContract(unittest.TestCase):
         # it; the LUKS recipe runs it under `set -e`, so a strict failure also
         # aborts the recipe with that rc. Either way the lane sees the exit.
         just = JUSTFILE.read_text()
-        self.assertIn('POST_BOOT_RC=0', just)
-        self.assertIn('exit "$POST_BOOT_RC"', just)
-        self.assertIn("scripts/verify-post-install.sh", just)
+        lines = [line.strip() for line in just.splitlines()]
+        # Whole lines, not fragments: an `|| true` on either call would keep
+        # every fragment and still drop the script's exit code.
+        required = (
+            ("POST_BOOT_RC=0",
+             "plain-verify-qemu must start POST_BOOT_RC at 0."),
+            ('bash "scripts/verify-post-install.sh" "{{plain-qemu-vsock-dir}}" "none" || POST_BOOT_RC=$?',
+             "plain-verify-qemu must keep verify-post-install.sh's exit code."),
+            ('exit "$POST_BOOT_RC"',
+             "plain-verify-qemu must exit with verify-post-install.sh's exit code."),
+            ('bash "scripts/verify-post-install.sh" "{{luks-qemu-vsock-dir}}" "luks-passphrase"',
+             "luks-verify-qemu must run verify-post-install.sh alone on its "
+             "line, so set -e passes its exit code on."),
+        )
+        for line, message in required:
+            # assertTrue, not assertIn: assertIn would print the whole justfile.
+            self.assertTrue(line in lines, f"{message} Missing line: {line}")
 
     def test_e2e_steps_are_not_waved_through(self):
         # A strict assertion can only gate the lane if the step running the
